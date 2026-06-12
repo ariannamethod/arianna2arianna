@@ -1,12 +1,12 @@
 # arianna2arianna — single-file C heart. Punk: no external deps, just cc + libm.
-# The whole organism is arianna-q.c (GGUF + SentencePiece + Llama forward + δ-field).
+# (GGUF + SentencePiece + Llama forward + δ-field).
 # Build:  make            Run one voice:  make run            δ-field chorus:  make field
 
 CC     ?= cc
 CFLAGS ?= -O2 -Wall
 LDLIBS := -lm
-BIN    := arianna-q
-SRC    := arianna-q.c
+BIN    := ariannameethod
+SRC    := arianna2arianna.c
 MODEL  ?= weights/nanoarianna89m_full_v4_step2750_f16.gguf
 PROMPT ?= What is resonance?
 
