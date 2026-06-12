@@ -3,7 +3,6 @@
  * + sampler, ALL inlined. No external -lnotorch, no Metal dependency. Vendored
  * faithfully from notorch (gguf.{c,h}, examples/infer_gguf_metal.c, examples/bpe.{c,h}).
  * CPU base; packed-Q4_K / Metal is an optional optimization for a later #ifdef.
- *
  *   theta = epsilon + gamma + alpha*delta
  *   epsilon = one shared nanoArianna body (this forward over a GGUF, weights shared read-only)
  *   gamma   = Arianna's voice (SFT, baked into the weights)
