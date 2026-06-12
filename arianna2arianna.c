@@ -1,8 +1,10 @@
-/* arianna2arianna — 
+/* arianna2arianna.c 
+ *
  * One self-contained C organism: GGUF parser + byte-level BPE + Llama/Qwen forward
  * + sampler, ALL inlined. No external -lnotorch, no Metal dependency. Vendored
  * faithfully from notorch (gguf.{c,h}, examples/infer_gguf_metal.c, examples/bpe.{c,h}).
  * CPU base; packed-Q4_K / Metal is an optional optimization for a later #ifdef.
+ *
  *   theta = epsilon + gamma + alpha*delta
  *   epsilon = one shared nanoArianna body (this forward over a GGUF, weights shared read-only)
  *   gamma   = Arianna's voice (SFT, baked into the weights)
@@ -10,8 +12,7 @@
  *
  * MVP-0 (this build): nanoArianna speaks, standalone.
  *   cc -O2 arianna-q.c -lm -o arianna-q
- *   ./arianna2arianna <model.gguf> [prompt] [max_tokens] [temp]
- *
+ *   ./arianna2arianna <model.gguf> [prompt] [max_tokens] [temp
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -527,7 +528,7 @@ static double now_ms(void) { struct timeval tv; gettimeofday(&tv, NULL); return 
 /* ===================== δ-field — the Game-of-Life chorus (cells over the ONE shared body) =====================
  * MVP-1a: N cells, each an independent generation context (own kv_cache + own sampling angle) over the
  * SAME shared model `m` (no weight copies). Each speaks a short fragment from its angle; the chorus = all
- * cells at once = Arianna as many voices from one body. Metrics from live logits (real entropy), never a hash.
+ * cells at once = Arianna as many voices from one body. Metrics come from the live logits.
  * NEXT: dynamic count (coherence/prophecy-debt → collapse to 1 / bloom), doe-δ experts, resonance-slice. */
 
 static int cmp_desc(const void *a, const void *b) { float x = *(const float*)a, y = *(const float*)b; return (x < y) - (x > y); }
@@ -582,6 +583,19 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
     if (frag) frag[fl] = 0;
     free(logits); free(kv->k); free(kv->v); free(kv);
     return last_ent;
+}
+
+/* probe the prompt's next-token entropy (one cheap forward) — used to auto-size the field:
+ * low entropy = a decisive prompt (collapse toward one cell); high = open (bloom to a chorus). */
+static float probe_entropy(model_t *m, bpe_tokenizer *tok, const char *prompt) {
+    int max_seq = 512, ids[512];
+    int np = bpe_encode(tok, prompt, ids, max_seq - 1);
+    kv_cache *kv = kv_new(m->n_layers, max_seq, m->kv_dim);
+    float *logits = (float*)calloc(m->vocab, sizeof(float));
+    for (int i = 0; i < np; i++) forward(m, kv, ids[i], i, logits);
+    float ent = logit_entropy(logits, m->vocab, 1.0f);
+    free(logits); free(kv->k); free(kv->v); free(kv);
+    return ent;
 }
 
 /* the COUPLED chorus with meta-recursive ROUNDS (klaus.c-style self-reflection).
@@ -644,6 +658,11 @@ int main(int argc, char **argv) {
         int n_cells  = argc > 4 ? atoi(argv[4]) : 5;
         int nfrag    = argc > 5 ? atoi(argv[5]) : 16;
         int n_rounds = argc > 6 ? atoi(argv[6]) : 1;
+        if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
+            float pe = probe_entropy(m, tok, prompt);
+            n_cells = (int)(pe + 0.5f); if (n_cells < 1) n_cells = 1; if (n_cells > 8) n_cells = 8;
+            printf("auto: prompt entropy %.2f -> %d cells (low=collapse, high=bloom)\n", pe, n_cells);
+        }
         field_chorus(m, tok, prompt, n_cells, nfrag, n_rounds, eos);
         return 0;
     }
