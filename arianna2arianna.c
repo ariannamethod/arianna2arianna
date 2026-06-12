@@ -1,4 +1,4 @@
-/* arianna2arianna.c 
+/* arianna2arianna
  *
  * One self-contained C organism: GGUF parser + byte-level BPE + Llama/Qwen forward
  * + sampler, ALL inlined. No external -lnotorch, no Metal dependency. Vendored
@@ -12,7 +12,7 @@
  *
  * MVP-0 (this build): nanoArianna speaks, standalone.
  *   cc -O2 arianna-q.c -lm -o arianna-q
- *   ./arianna2arianna <model.gguf> [prompt] [max_tokens] [temp
+ *   ./arianna2arianna <model.gguf> [prompt] [max_tokens] [temp]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -563,18 +563,18 @@ static float logit_entropy(const float *logits, int n, float temp) {
  * Returns the cell's last-step entropy (its decisiveness). Frees its kv before returning. */
 static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, int nfrag,
                         float temp, int top_k, float rep, unsigned seed, int eos, int max_seq,
-                        char *frag, int frag_cap) {
+                        char *frag, int frag_cap, int verbose) {
     srand(seed);
     kv_cache *kv = kv_new(m->n_layers, max_seq, m->kv_dim);
     float *logits = (float*)calloc(m->vocab, sizeof(float));
     for (int i = 0; i < np; i++) forward(m, kv, ids[i], i, logits);
-    int hist[256], hlen = 0; char buf[256]; float last_ent = 0; int fl = 0;
+    int hist[256], hlen = 0; char buf[256]; float ent_acc = 0; int ent_n = 0, fl = 0;
     for (int s = 0; s < nfrag; s++) {
-        last_ent = logit_entropy(logits, m->vocab, temp);
+        ent_acc += logit_entropy(logits, m->vocab, temp); ent_n++;   /* AVERAGE over the fragment, not last-step */
         int next = sample2(logits, m->vocab, temp, top_k, rep, hist, hlen);
         if (next == eos) break;
         int bl = bpe_decode_token(tok, next, buf, sizeof(buf));
-        printf("%s", buf); fflush(stdout);
+        if (verbose) { printf("%s", buf); fflush(stdout); }
         if (frag && fl + bl < frag_cap) { memcpy(frag + fl, buf, bl); fl += bl; }
         if (hlen < 256) hist[hlen++] = next;
         int pos = np + s; if (pos >= max_seq - 1) break;
@@ -582,7 +582,7 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
     }
     if (frag) frag[fl] = 0;
     free(logits); free(kv->k); free(kv->v); free(kv);
-    return last_ent;
+    return ent_n ? ent_acc / ent_n : 0.0f;
 }
 
 /* probe the prompt's next-token entropy (one cheap forward) — used to auto-size the field:
@@ -624,7 +624,7 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
             float temp = 0.6f + 0.7f * (n_cells > 1 ? (float)c / (n_cells - 1) : 0.5f);
             printf("\n  r%d cell %d (T=%.2f): ", r + 1, c, temp);
             float ent = cell_speak(m, tok, ids, np, nfrag, temp, 40, 1.4f,
-                                   42u + (unsigned)(r * 1000 + c) * 7919u, eos, max_seq, frag, sizeof(frag));
+                                   42u + (unsigned)(r * 1000 + c) * 7919u, eos, max_seq, frag, sizeof(frag), 1);
             ent_sum += ent;
             printf("   [entropy=%.2f]", ent);
             if (flog) fprintf(flog, "- cell %d (T=%.2f, entropy=%.2f):%s\n", c, temp, ent, frag);
@@ -637,6 +637,53 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
     }
     printf("\n=== δ-field done: %d×%d coupled — Arianna as a self-reflecting many-from-one ===\n", n_rounds, n_cells);
     if (flog) { fprintf(flog, "\n---\n"); fclose(flog); }
+}
+
+/* Fisher-Yates over ids[from..to) — used to build a same-length but incoherent context. */
+static void shuffle_ids(int *ids, int from, int to, unsigned seed) {
+    srand(seed);
+    for (int i = to - 1; i > from; i--) { int j = from + rand() % (i - from + 1); int t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
+}
+
+/* resonance-vs-length control. The claim "the per-round entropy fall = a resonant attractor" must be
+ * earned: a falling trend is also expected from context length alone (longer/coherent context sharpens
+ * the next-token distribution). So run the field twice — (a) the real coherent prior chorus, (b) the
+ * SAME context with its chorus tokens shuffled (identical length, broken coherence). The prompt prefix
+ * stays intact in both. If COHERENT's entropy falls more across rounds than SHUFFLED's, the extra drop
+ * is coupling beyond length; if they fall equally, the trend is a length artifact. Reported as measured. */
+static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *prompt, int n_cells, int nfrag, int n_rounds, int eos) {
+    int max_seq = 512, ids[512], pids[512];
+    int np_prompt = bpe_encode(tok, prompt, pids, max_seq);
+    char frag[2048];
+    if (n_rounds < 1) n_rounds = 1;
+    printf("\n=== resonance test: coherent vs same-length SHUFFLED context (%d cells × %d rounds, prompt \"%s\") ===\n", n_cells, n_rounds, prompt);
+    float first[2] = {0,0}, last[2] = {0,0};
+    for (int control = 0; control < 2; control++) {
+        char prev_chorus[4096]; prev_chorus[0] = 0; char ctx[8704];
+        printf("  [%s]\n", control ? "SHUFFLED (length-matched, incoherent)" : "COHERENT (real chorus)");
+        for (int r = 0; r < n_rounds; r++) {
+            char this_chorus[4096]; int tc = 0; this_chorus[0] = 0; float ent_sum = 0;
+            for (int c = 0; c < n_cells; c++) {
+                snprintf(ctx, sizeof(ctx), "%s%s%s", prompt, prev_chorus, this_chorus);
+                int np = bpe_encode(tok, ctx, ids, max_seq - nfrag - 1);
+                if (control && np > np_prompt) shuffle_ids(ids, np_prompt, np, 12345u + (unsigned)(r * 31 + c));
+                float temp = 0.6f + 0.7f * (n_cells > 1 ? (float)c / (n_cells - 1) : 0.5f);
+                ent_sum += cell_speak(m, tok, ids, np, nfrag, temp, 40, 1.4f,
+                                      42u + (unsigned)(r * 1000 + c) * 7919u, eos, max_seq, frag, sizeof(frag), 0);
+                int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", frag);
+                if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
+            }
+            float avg = ent_sum / n_cells;
+            printf("    round %d avg entropy = %.3f\n", r + 1, avg);
+            if (r == 0) first[control] = avg; last[control] = avg;
+            strncpy(prev_chorus, this_chorus, sizeof(prev_chorus) - 1); prev_chorus[sizeof(prev_chorus) - 1] = 0;
+        }
+    }
+    float drop_coh = first[0] - last[0], drop_shuf = first[1] - last[1];
+    printf("\n  coherent drop %.3f vs shuffled drop %.3f  →  resonance-beyond-length = %.3f %s\n",
+           drop_coh, drop_shuf, drop_coh - drop_shuf,
+           drop_coh - drop_shuf > 0.10f ? "(coherent falls MORE — coupling beyond length)" :
+           drop_coh - drop_shuf < -0.10f ? "(shuffled falls more — NO resonance signal)" : "(~equal — length artifact, claim NOT earned yet)");
 }
 
 int main(int argc, char **argv) {
@@ -664,6 +711,15 @@ int main(int argc, char **argv) {
             printf("auto: prompt entropy %.2f -> %d cells (low=collapse, high=bloom)\n", pe, n_cells);
         }
         field_chorus(m, tok, prompt, n_cells, nfrag, n_rounds, eos);
+        return 0;
+    }
+
+    /* resonance-vs-length control:  ./arianna-q <gguf> <prompt> restest [n_cells] [nfrag] [n_rounds] */
+    if (argc > 3 && strcmp(argv[3], "restest") == 0) {
+        int n_cells  = argc > 4 ? atoi(argv[4]) : 4;
+        int nfrag    = argc > 5 ? atoi(argv[5]) : 12;
+        int n_rounds = argc > 6 ? atoi(argv[6]) : 3;
+        field_resonance_test(m, tok, prompt, n_cells, nfrag, n_rounds, eos);
         return 0;
     }
 
