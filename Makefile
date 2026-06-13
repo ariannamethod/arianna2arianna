@@ -1,22 +1,32 @@
 # arianna2arianna — single-file C heart. Punk: no external deps, just cc + libm.
 # (GGUF + SentencePiece + Llama forward + δ-field).
 # Build:  make            Run one voice:  make run            δ-field chorus:  make field
+#
+# SIMD auto per arch: arm64 → NEON+dotprod, x86_64 → AVX2+FMA+F16C, else scalar C.
+# Portable scalar-only:  make portable
 
 CC     ?= cc
 CFLAGS ?= -O2 -Wall
 LDLIBS := -lm
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
-ifeq ($(UNAME_M),arm64)
-  CFLAGS += -march=armv8.2-a+fp16+dotprod
+
+ifneq ($(PORTABLE),1)
+  # auto SIMD per build host arch
+  ifeq ($(UNAME_M),arm64)
+    CFLAGS += -march=armv8.2-a+fp16+dotprod
+  else ifeq ($(UNAME_M),x86_64)
+    CFLAGS += -mavx2 -mfma -mf16c
+  endif
+  ifeq ($(UNAME_S),Darwin)
+    CFLAGS += -DUSE_BLAS -DACCELERATE_NEW_LAPACK
+    LDLIBS += -framework Accelerate
+  else ifneq ($(shell pkg-config --exists openblas 2>/dev/null && echo yes),)
+    CFLAGS += -DUSE_BLAS
+    LDLIBS += -lopenblas
+  endif
 endif
-ifeq ($(UNAME_S),Darwin)
-  CFLAGS += -DUSE_BLAS -DACCELERATE_NEW_LAPACK
-  LDLIBS += -framework Accelerate
-else ifneq ($(shell pkg-config --exists openblas 2>/dev/null && echo yes),)
-  CFLAGS += -DUSE_BLAS
-  LDLIBS += -lopenblas
-endif
+
 BIN    := ariannameethod
 SRC    := arianna2arianna.c
 
@@ -38,6 +48,10 @@ $(WEIGHTS)/nanollama-arianna-full-v4-step2750-q8_0.gguf:
 
 weights: $(MODEL)
 
+# pure POSIX C scalar — no NEON/AVX in hot path (runs anywhere)
+portable:
+	$(MAKE) PORTABLE=1 CFLAGS="-O2 -Wall -DA2A_SCALAR_ONLY" LDLIBS="-lm" clean $(BIN)
+
 # single voice (continuation) — packed f16 from HF
 run: $(BIN) $(MODEL)
 	./$(BIN) --16 "$(PROMPT)" 48 0.8
@@ -52,7 +66,7 @@ field: $(BIN) $(MODEL)
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 field clean weights test
+.PHONY: run run-q8 field clean weights test portable
 
 test: $(BIN) $(MODEL)
 	./$(BIN) --16 "What is resonance?" 6 0.8

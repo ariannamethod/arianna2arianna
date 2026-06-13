@@ -411,15 +411,150 @@ static int bpe_decode_token(const bpe_tokenizer *t, int id, char *buf, int cap) 
     buf[n] = 0; return n;
 }
 
-/* ===================== packed matvec (vendored: notorch.c nt_qmatvec + NEON) ===================== */
+/* ===================== packed matvec (notorch nt_qmatvec + arch SIMD) ===================== */
+/* ARM: NEON fp16 vfmaq + dotprod.  x86: AVX2+FMA+F16C.  Else: silent scalar C. */
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
 #endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__AVX2__)
+#include <immintrin.h>
+#endif
 
 typedef void (*qrows_fn)(float *, const uint8_t *, const float *, int, int, int);
 
-/* x[k] -> per-32-block symmetric int8 (for NEON dotprod matvec on Q8/Q4). */
+static float dot_f32_scalar(const float *r, const float *x, int k) {
+    float acc = 0.0f;
+    for (int j = 0; j < k; j++) acc += r[j] * x[j];
+    return acc;
+}
+
+#if !defined(A2A_SCALAR_ONLY) && defined(__AVX2__) && defined(__FMA__)
+static float hsum_ps256(__m256 v) {
+    __m128 lo = _mm256_castps256_ps128(v);
+    __m128 hi = _mm256_extractf128_ps(v, 1);
+    __m128 s = _mm_add_ps(lo, hi);
+    s = _mm_add_ps(s, _mm_movehl_ps(s, s));
+    s = _mm_add_ss(s, _mm_shuffle_ps(s, s, 1));
+    return _mm_cvtss_f32(s);
+}
+
+static float dot_f32_avx2(const float *r, const float *x, int k) {
+    __m256 sum = _mm256_setzero_ps();
+    int j = 0;
+    for (; j + 8 <= k; j += 8)
+        sum = _mm256_fmadd_ps(_mm256_loadu_ps(r + j), _mm256_loadu_ps(x + j), sum);
+    float acc = hsum_ps256(sum);
+    for (; j < k; j++) acc += r[j] * x[j];
+    return acc;
+}
+#endif
+
+static float dot_f32(const float *r, const float *x, int k) {
+#if !defined(A2A_SCALAR_ONLY) && defined(__AVX2__) && defined(__FMA__)
+    return dot_f32_avx2(r, x, k);
+#elif !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON)
+    float32x4_t s = vdupq_n_f32(0);
+    int j = 0;
+    for (; j + 4 <= k; j += 4)
+        s = vfmaq_f32(s, vld1q_f32(r + j), vld1q_f32(x + j));
+    float acc = vaddvq_f32(s);
+    for (; j < k; j++) acc += r[j] * x[j];
+    return acc;
+#else
+    return dot_f32_scalar(r, x, k);
+#endif
+}
+
+static float dot_f16_scalar(const uint16_t *h, const float *x, int k) {
+    float acc = 0.0f;
+    for (int j = 0; j < k; j++) acc += f16_to_f32(h[j]) * x[j];
+    return acc;
+}
+
+static float dot_f16(const uint16_t *h, const float *x, int k) {
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+    float32x4_t s0 = vdupq_n_f32(0), s1 = vdupq_n_f32(0);
+    int j = 0;
+    for (; j + 8 <= k; j += 8) {
+        float16x8_t wh = vld1q_f16((const __fp16 *)(h + j));
+        s0 = vfmaq_f32(s0, vcvt_f32_f16(vget_low_f16(wh)),  vld1q_f32(x + j));
+        s1 = vfmaq_f32(s1, vcvt_f32_f16(vget_high_f16(wh)), vld1q_f32(x + j + 4));
+    }
+    float acc = vaddvq_f32(vaddq_f32(s0, s1));
+    for (; j < k; j++) acc += f16_to_f32(h[j]) * x[j];
+    return acc;
+#elif !defined(A2A_SCALAR_ONLY) && defined(__F16C__) && defined(__AVX2__) && defined(__FMA__)
+    __m256 sum = _mm256_setzero_ps();
+    int j = 0;
+    for (; j + 8 <= k; j += 8) {
+        __m128i h8 = _mm_loadu_si128((const __m128i *)(h + j));
+        __m256  wf = _mm256_cvtph_ps(h8);
+        sum = _mm256_fmadd_ps(wf, _mm256_loadu_ps(x + j), sum);
+    }
+    float acc = hsum_ps256(sum);
+    for (; j < k; j++) acc += f16_to_f32(h[j]) * x[j];
+    return acc;
+#else
+    return dot_f16_scalar(h, x, k);
+#endif
+}
+
+static int32_t dot_i8_32_scalar(const int8_t *w, const int8_t *a) {
+    int32_t s = 0;
+    for (int i = 0; i < 32; i++) s += (int32_t)w[i] * (int32_t)a[i];
+    return s;
+}
+
+static int32_t dot_i8_32(const int8_t *w, const int8_t *a) {
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    int8x16_t w0 = vld1q_s8(w), w1 = vld1q_s8(w + 16);
+    int8x16_t a0 = vld1q_s8(a), a1 = vld1q_s8(a + 16);
+    int32x4_t s4 = vdupq_n_s32(0);
+    s4 = vdotq_s32(s4, w0, a0);
+    s4 = vdotq_s32(s4, w1, a1);
+    return (int32_t)vaddvq_s32(s4);
+#elif !defined(A2A_SCALAR_ONLY) && defined(__AVX2__)
+    __m256i w16 = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)w));
+    __m256i a16 = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)a));
+    __m256i p0  = _mm256_mullo_epi16(w16, a16);
+    __m256i w16b = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)(w + 16)));
+    __m256i a16b = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)(a + 16)));
+    __m256i p1  = _mm256_mullo_epi16(w16b, a16b);
+    __m256i s0 = _mm256_add_epi32(_mm256_cvtepi16_epi32(_mm256_castsi256_si128(p0)),
+                                  _mm256_cvtepi16_epi32(_mm256_extracti128_si256(p0, 1)));
+    __m256i s1 = _mm256_add_epi32(_mm256_cvtepi16_epi32(_mm256_castsi256_si128(p1)),
+                                  _mm256_cvtepi16_epi32(_mm256_extracti128_si256(p1, 1)));
+    __m256i st = _mm256_add_epi32(s0, s1);
+    int32_t out[8];
+    _mm256_storeu_si256((__m256i *)out, st);
+    return out[0] + out[1] + out[2] + out[3] + out[4] + out[5] + out[6] + out[7];
+#else
+    return dot_i8_32_scalar(w, a);
+#endif
+}
+
+static void accel_suffix(char *buf, size_t n) {
+    buf[0] = 0;
+#ifdef USE_BLAS
+    strncat(buf, " +BLAS", n - 1 - strlen(buf));
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+    strncat(buf, " +NEON-f16", n - 1 - strlen(buf));
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    strncat(buf, " +NEON-dot", n - 1 - strlen(buf));
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__AVX2__) && defined(__FMA__)
+    strncat(buf, " +AVX2", n - 1 - strlen(buf));
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__F16C__)
+    strncat(buf, " +F16C", n - 1 - strlen(buf));
+#endif
+    (void)n;
+}
+
+/* x[k] -> per-32-block symmetric int8 (for int8-dot matvec on Q8). */
 static void quant_act_q8(const float *x, int k, int8_t *qa, float *da) {
     int nb = k / 32;
     for (int b = 0; b < nb; b++) {
@@ -438,52 +573,21 @@ static void quant_act_q8(const float *x, int k, int8_t *qa, float *da) {
 
 static void q_f16_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
     const uint16_t *Wh = (const uint16_t *)W;
-    for (int row = r0; row < r1; row++) {
-        const uint16_t *r = Wh + (long)row * k;
-        float acc = 0.0f;
-#if defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
-        float32x4_t s0 = vdupq_n_f32(0), s1 = vdupq_n_f32(0);
-        int j = 0;
-        for (; j + 8 <= k; j += 8) {
-            float16x8_t wh = vld1q_f16((const __fp16 *)(r + j));
-            s0 = vfmaq_f32(s0, vcvt_f32_f16(vget_low_f16(wh)),  vld1q_f32(x + j));
-            s1 = vfmaq_f32(s1, vcvt_f32_f16(vget_high_f16(wh)), vld1q_f32(x + j + 4));
-        }
-        acc = vaddvq_f32(vaddq_f32(s0, s1));
-        for (; j < k; j++) acc += f16_to_f32(r[j]) * x[j];
-#else
-        for (int j = 0; j < k; j++) acc += f16_to_f32(r[j]) * x[j];
-#endif
-        out[row] = acc;
-    }
+    for (int row = r0; row < r1; row++)
+        out[row] = dot_f16(Wh + (long)row * k, x, k);
 }
 
 static void q_f32_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
     const float *Wf = (const float *)W;
-    int rows = r1 - r0;
 #ifdef USE_BLAS
-    cblas_sgemv(CblasRowMajor, CblasNoTrans, rows, k, 1.0f,
+    cblas_sgemv(CblasRowMajor, CblasNoTrans, r1 - r0, k, 1.0f,
                 Wf + (long)r0 * k, k, x, 1, 0.0f, out + r0, 1);
 #else
-    for (int row = r0; row < r1; row++) {
-        const float *r = Wf + (long)row * k;
-        float acc = 0.0f;
-#if defined(__ARM_NEON)
-        float32x4_t s = vdupq_n_f32(0);
-        int j = 0;
-        for (; j + 4 <= k; j += 4)
-            s = vfmaq_f32(s, vld1q_f32(r + j), vld1q_f32(x + j));
-        acc = vaddvq_f32(s);
-        for (; j < k; j++) acc += r[j] * x[j];
-#else
-        for (int j = 0; j < k; j++) acc += r[j] * x[j];
-#endif
-        out[row] = acc;
-    }
+    for (int row = r0; row < r1; row++)
+        out[row] = dot_f32(Wf + (long)row * k, x, k);
 #endif
 }
 
-#if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
 static void q_q8_0_rows_i8(float *out, const uint8_t *W, const int8_t *qa,
                            const float *da, int r0, int r1, int k) {
     int nb = k / 32;
@@ -493,24 +597,15 @@ static void q_q8_0_rows_i8(float *out, const uint8_t *W, const int8_t *qa,
         for (int b = 0; b < nb; b++) {
             const uint8_t *blk = rb + (long)b * 34;
             float d_w = f16_to_f32((uint16_t)(blk[0] | (blk[1] << 8)));
-            const int8_t *qab = qa + (long)b * 32;
-            int8x16_t w0 = vld1q_s8((const int8_t *)(blk + 2));
-            int8x16_t w1 = vld1q_s8((const int8_t *)(blk + 2 + 16));
-            int8x16_t a0 = vld1q_s8(qab);
-            int8x16_t a1 = vld1q_s8(qab + 16);
-            int32x4_t s4 = vdupq_n_s32(0);
-            s4 = vdotq_s32(s4, w0, a0);
-            s4 = vdotq_s32(s4, w1, a1);
-            acc += d_w * da[b] * (float)vaddvq_s32(s4);
+            acc += d_w * da[b] * (float)dot_i8_32((const int8_t *)(blk + 2), qa + (long)b * 32);
         }
         out[row] = acc;
     }
 }
-#endif
 
 static void q_q8_0_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
     int nb = k / 32;
-#if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+#if !defined(A2A_SCALAR_ONLY) && (defined(__AVX2__) || (defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)))
     if (k <= 2048) {
         int8_t qa[2048];
         float da[64];
@@ -593,20 +688,30 @@ static void wt_matvec(float *y, const wt_t *w, const float *x) {
         fprintf(stderr, "wt_matvec: unsupported dtype %d (m=%d k=%d)\n", w->dtype, w->m, w->k);
 }
 
+static void f16_to_f32_buf(const uint16_t *h, float *x, int n) {
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+    int j = 0;
+    for (; j + 8 <= n; j += 8) {
+        float16x8_t v = vld1q_f16((const __fp16 *)(h + j));
+        vst1q_f32(x + j,     vcvt_f32_f16(vget_low_f16(v)));
+        vst1q_f32(x + j + 4, vcvt_f32_f16(vget_high_f16(v)));
+    }
+    for (; j < n; j++) x[j] = f16_to_f32(h[j]);
+#elif !defined(A2A_SCALAR_ONLY) && defined(__F16C__) && defined(__AVX2__)
+    int j = 0;
+    for (; j + 8 <= n; j += 8) {
+        __m128i h8 = _mm_loadu_si128((const __m128i *)(h + j));
+        _mm256_storeu_ps(x + j, _mm256_cvtph_ps(h8));
+    }
+    for (; j < n; j++) x[j] = f16_to_f32(h[j]);
+#else
+    for (int j = 0; j < n; j++) x[j] = f16_to_f32(h[j]);
+#endif
+}
+
 static void embed_row(const wt_t *emb, int token, float *x, int E) {
     if (emb->dtype == GGUF_TYPE_F16) {
-        const uint16_t *h = (const uint16_t *)(emb->q + (long)token * E * 2);
-#if defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
-        int j = 0;
-        for (; j + 8 <= E; j += 8) {
-            float16x8_t v = vld1q_f16((const __fp16 *)(h + j));
-            vst1q_f32(x + j,     vcvt_f32_f16(vget_low_f16(v)));
-            vst1q_f32(x + j + 4, vcvt_f32_f16(vget_high_f16(v)));
-        }
-        for (; j < E; j++) x[j] = f16_to_f32(h[j]);
-#else
-        for (int j = 0; j < E; j++) x[j] = f16_to_f32(h[j]);
-#endif
+        f16_to_f32_buf((const uint16_t *)(emb->q + (long)token * E * 2), x, E);
     } else if (emb->dtype == GGUF_TYPE_F32) {
         memcpy(x, emb->q + (long)token * E * 4, (size_t)E * sizeof(float));
     } else if (emb->dtype == GGUF_TYPE_Q8_0 && (E % 32) == 0) {
@@ -697,16 +802,8 @@ static model_t *model_load(gguf_file *gf) {
         #undef LD1D
     }
     int wdtype = m->L[0].wq.dtype;
-    char accel[64]; accel[0] = 0;
-#ifdef USE_BLAS
-    strcat(accel, " +BLAS");
-#endif
-#if defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
-    strcat(accel, " +NEON-f16");
-#endif
-#if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
-    strcat(accel, " +NEON-dot");
-#endif
+    char accel[64];
+    accel_suffix(accel, sizeof(accel));
     printf("model: arch=%s E=%d H=%d KV=%d HD=%d Q=%d FFN=%d V=%d L=%d | %s rope%s%s | weights=%s%s\n",
            gf->arch, m->embed, m->n_heads, m->n_kv_heads, m->head_dim, m->q_dim, m->ffn, m->vocab, m->n_layers,
            m->neox ? "NEOX" : "interleaved", m->is_qwen3 ? " +qk-norm" : "", m->has_output ? "" : " tied",
