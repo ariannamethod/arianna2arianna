@@ -7,7 +7,7 @@ make              # build (SIMD auto per arch)
 make run          # single voice, packed f16
 make field        # δ-field demo
 make sweep        # batch experiment CSV
-make test         # f16 + q8 smoke
+make test         # full integration suite (tests/)
 make portable     # scalar-only fallback
 ```
 

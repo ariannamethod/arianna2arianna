@@ -66,8 +66,7 @@ clean:
 .PHONY: run run-q8 field sweep clean weights test portable bench
 
 test: $(BIN) $(MODEL)
-	./$(BIN) --16 "What is resonance?" 6 0.8
-	./$(BIN) --q8 "What is resonance?" 6 0.8
+	bash tests/run.sh
 
 bench: $(BIN) $(MODEL)
 	./$(BIN) --16 "What is resonance?" 24 0.8
