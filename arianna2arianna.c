@@ -411,16 +411,49 @@ static int bpe_decode_token(const bpe_tokenizer *t, int id, char *buf, int cap) 
     buf[n] = 0; return n;
 }
 
-/* ===================== packed matvec (vendored: notorch.c nt_qmatvec) ===================== */
+/* ===================== packed matvec (vendored: notorch.c nt_qmatvec + NEON) ===================== */
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 typedef void (*qrows_fn)(float *, const uint8_t *, const float *, int, int, int);
+
+/* x[k] -> per-32-block symmetric int8 (for NEON dotprod matvec on Q8/Q4). */
+static void quant_act_q8(const float *x, int k, int8_t *qa, float *da) {
+    int nb = k / 32;
+    for (int b = 0; b < nb; b++) {
+        const float *xb = x + (long)b * 32;
+        float amax = 0.0f;
+        for (int i = 0; i < 32; i++) { float a = fabsf(xb[i]); if (a > amax) amax = a; }
+        float d = amax / 127.0f, id = (d > 0.0f) ? 1.0f / d : 0.0f;
+        da[b] = d;
+        for (int i = 0; i < 32; i++) {
+            int q = (int)lrintf(xb[i] * id);
+            if (q > 127) q = 127; else if (q < -127) q = -127;
+            qa[(long)b * 32 + i] = (int8_t)q;
+        }
+    }
+}
 
 static void q_f16_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
     const uint16_t *Wh = (const uint16_t *)W;
     for (int row = r0; row < r1; row++) {
         const uint16_t *r = Wh + (long)row * k;
         float acc = 0.0f;
+#if defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+        float32x4_t s0 = vdupq_n_f32(0), s1 = vdupq_n_f32(0);
+        int j = 0;
+        for (; j + 8 <= k; j += 8) {
+            float16x8_t wh = vld1q_f16((const __fp16 *)(r + j));
+            s0 = vfmaq_f32(s0, vcvt_f32_f16(vget_low_f16(wh)),  vld1q_f32(x + j));
+            s1 = vfmaq_f32(s1, vcvt_f32_f16(vget_high_f16(wh)), vld1q_f32(x + j + 4));
+        }
+        acc = vaddvq_f32(vaddq_f32(s0, s1));
+        for (; j < k; j++) acc += f16_to_f32(r[j]) * x[j];
+#else
         for (int j = 0; j < k; j++) acc += f16_to_f32(r[j]) * x[j];
+#endif
         out[row] = acc;
     }
 }
@@ -435,14 +468,57 @@ static void q_f32_rows(float *out, const uint8_t *W, const float *x, int r0, int
     for (int row = r0; row < r1; row++) {
         const float *r = Wf + (long)row * k;
         float acc = 0.0f;
+#if defined(__ARM_NEON)
+        float32x4_t s = vdupq_n_f32(0);
+        int j = 0;
+        for (; j + 4 <= k; j += 4)
+            s = vfmaq_f32(s, vld1q_f32(r + j), vld1q_f32(x + j));
+        acc = vaddvq_f32(s);
+        for (; j < k; j++) acc += r[j] * x[j];
+#else
         for (int j = 0; j < k; j++) acc += r[j] * x[j];
+#endif
         out[row] = acc;
     }
 #endif
 }
 
+#if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+static void q_q8_0_rows_i8(float *out, const uint8_t *W, const int8_t *qa,
+                           const float *da, int r0, int r1, int k) {
+    int nb = k / 32;
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 34;
+        float acc = 0.0f;
+        for (int b = 0; b < nb; b++) {
+            const uint8_t *blk = rb + (long)b * 34;
+            float d_w = f16_to_f32((uint16_t)(blk[0] | (blk[1] << 8)));
+            const int8_t *qab = qa + (long)b * 32;
+            int8x16_t w0 = vld1q_s8((const int8_t *)(blk + 2));
+            int8x16_t w1 = vld1q_s8((const int8_t *)(blk + 2 + 16));
+            int8x16_t a0 = vld1q_s8(qab);
+            int8x16_t a1 = vld1q_s8(qab + 16);
+            int32x4_t s4 = vdupq_n_s32(0);
+            s4 = vdotq_s32(s4, w0, a0);
+            s4 = vdotq_s32(s4, w1, a1);
+            acc += d_w * da[b] * (float)vaddvq_s32(s4);
+        }
+        out[row] = acc;
+    }
+}
+#endif
+
 static void q_q8_0_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
     int nb = k / 32;
+#if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    if (k <= 2048) {
+        int8_t qa[2048];
+        float da[64];
+        quant_act_q8(x, k, qa, da);
+        q_q8_0_rows_i8(out, W, qa, da, r0, r1, k);
+        return;
+    }
+#endif
     for (int row = r0; row < r1; row++) {
         const uint8_t *rb = W + (long)row * nb * 34;
         float acc = 0.0f;
@@ -520,7 +596,17 @@ static void wt_matvec(float *y, const wt_t *w, const float *x) {
 static void embed_row(const wt_t *emb, int token, float *x, int E) {
     if (emb->dtype == GGUF_TYPE_F16) {
         const uint16_t *h = (const uint16_t *)(emb->q + (long)token * E * 2);
+#if defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+        int j = 0;
+        for (; j + 8 <= E; j += 8) {
+            float16x8_t v = vld1q_f16((const __fp16 *)(h + j));
+            vst1q_f32(x + j,     vcvt_f32_f16(vget_low_f16(v)));
+            vst1q_f32(x + j + 4, vcvt_f32_f16(vget_high_f16(v)));
+        }
+        for (; j < E; j++) x[j] = f16_to_f32(h[j]);
+#else
         for (int j = 0; j < E; j++) x[j] = f16_to_f32(h[j]);
+#endif
     } else if (emb->dtype == GGUF_TYPE_F32) {
         memcpy(x, emb->q + (long)token * E * 4, (size_t)E * sizeof(float));
     } else if (emb->dtype == GGUF_TYPE_Q8_0 && (E % 32) == 0) {
@@ -611,16 +697,20 @@ static model_t *model_load(gguf_file *gf) {
         #undef LD1D
     }
     int wdtype = m->L[0].wq.dtype;
+    char accel[64]; accel[0] = 0;
+#ifdef USE_BLAS
+    strcat(accel, " +BLAS");
+#endif
+#if defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+    strcat(accel, " +NEON-f16");
+#endif
+#if defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    strcat(accel, " +NEON-dot");
+#endif
     printf("model: arch=%s E=%d H=%d KV=%d HD=%d Q=%d FFN=%d V=%d L=%d | %s rope%s%s | weights=%s%s\n",
            gf->arch, m->embed, m->n_heads, m->n_kv_heads, m->head_dim, m->q_dim, m->ffn, m->vocab, m->n_layers,
            m->neox ? "NEOX" : "interleaved", m->is_qwen3 ? " +qk-norm" : "", m->has_output ? "" : " tied",
-           dtype_name(wdtype),
-#ifdef USE_BLAS
-           " +BLAS"
-#else
-           ""
-#endif
-    );
+           dtype_name(wdtype), accel);
     if (!m->tok_emb.q || !m->out_norm) { fprintf(stderr, "missing tok_emb/out_norm\n"); return NULL; }
     return m;
 }

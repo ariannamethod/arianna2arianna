@@ -6,6 +6,10 @@ CC     ?= cc
 CFLAGS ?= -O2 -Wall
 LDLIBS := -lm
 UNAME_S := $(shell uname -s)
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),arm64)
+  CFLAGS += -march=armv8.2-a+fp16+dotprod
+endif
 ifeq ($(UNAME_S),Darwin)
   CFLAGS += -DUSE_BLAS -DACCELERATE_NEW_LAPACK
   LDLIBS += -framework Accelerate
