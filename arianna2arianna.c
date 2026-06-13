@@ -12,7 +12,7 @@
  *   delta   = the field of ephemeral transformer-cells (NEXT layer — scaffold at bottom)
  *
  * MVP-0 (this build): nanoArianna speaks, standalone.
- *   cc -O2 arianna-q.c -lm -o arianna-q
+ *   cc -O2 arianna2arianna.c -lm -o arianna2arianna
  *   ./arianna2arianna <model.gguf> [prompt] [max_tokens] [temp]
  */
 #include <stdio.h>
