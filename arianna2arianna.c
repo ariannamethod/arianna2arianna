@@ -1,9 +1,10 @@
-/* arianna2arianna
+/* arianna2arianna 
  *
  * One self-contained C organism: GGUF parser + byte-level BPE + Llama/Qwen forward
  * + sampler, ALL inlined. No external -lnotorch, no Metal dependency. Vendored
  * faithfully from notorch (gguf.{c,h}, examples/infer_gguf_metal.c, examples/bpe.{c,h}).
- * CPU base; packed-Q4_K / Metal is an optional optimization for a later #ifdef.
+ * Packed weights (f16 / Q8_0 / …) stay in GGUF layout; matvec dequants per block inline.
+ * Optional USE_BLAS (Accelerate / OpenBLAS). --16 / --q8 fetch default HF weights.
  *
  *   theta = epsilon + gamma + alpha*delta
  *   epsilon = one shared nanoArianna body (this forward over a GGUF, weights shared read-only)
@@ -11,7 +12,7 @@
  *   delta   = the field of ephemeral transformer-cells (NEXT layer — scaffold at bottom)
  *
  * MVP-0 (this build): nanoArianna speaks, standalone.
- *   cc -O2 arianna2arianna.c -lm -o arianna2arianna
+ *   cc -O2 arianna-q.c -lm -o arianna-q
  *   ./arianna2arianna <model.gguf> [prompt] [max_tokens] [temp]
  */
 #include <stdio.h>
@@ -23,6 +24,14 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#ifdef USE_BLAS
+#ifdef __APPLE__
+#include <Accelerate/Accelerate.h>
+#else
+#include <cblas.h>
+#endif
+#endif
 
 /* ===================== GGUF parser (vendored: notorch/gguf.{c,h}) ===================== */
 
@@ -402,9 +411,325 @@ static int bpe_decode_token(const bpe_tokenizer *t, int id, char *buf, int cap) 
     buf[n] = 0; return n;
 }
 
-/* ===================== forward (vendored: infer_gguf_metal.c, CPU f32) ===================== */
-/* CPU base: all weights dequantized to f32 at load (nano f16 -> f32 ~= 352MB, fits 8GB).
- * Packed-Q4_K / Metal (weights stay packed, no f32 blow-up) is the later #ifdef optimization. */
+/* ===================== packed matvec (notorch nt_qmatvec + arch SIMD) ===================== */
+/* ARM: NEON fp16 vfmaq + dotprod.  x86: AVX2+FMA+F16C.  Else: silent scalar C. */
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__AVX2__)
+#include <immintrin.h>
+#endif
+
+typedef void (*qrows_fn)(float *, const uint8_t *, const float *, int, int, int);
+
+static float dot_f32_scalar(const float *r, const float *x, int k) {
+    float acc = 0.0f;
+    for (int j = 0; j < k; j++) acc += r[j] * x[j];
+    return acc;
+}
+
+#if !defined(A2A_SCALAR_ONLY) && defined(__AVX2__) && defined(__FMA__)
+static float hsum_ps256(__m256 v) {
+    __m128 lo = _mm256_castps256_ps128(v);
+    __m128 hi = _mm256_extractf128_ps(v, 1);
+    __m128 s = _mm_add_ps(lo, hi);
+    s = _mm_add_ps(s, _mm_movehl_ps(s, s));
+    s = _mm_add_ss(s, _mm_shuffle_ps(s, s, 1));
+    return _mm_cvtss_f32(s);
+}
+
+static float dot_f32_avx2(const float *r, const float *x, int k) {
+    __m256 sum = _mm256_setzero_ps();
+    int j = 0;
+    for (; j + 8 <= k; j += 8)
+        sum = _mm256_fmadd_ps(_mm256_loadu_ps(r + j), _mm256_loadu_ps(x + j), sum);
+    float acc = hsum_ps256(sum);
+    for (; j < k; j++) acc += r[j] * x[j];
+    return acc;
+}
+#endif
+
+static float dot_f32(const float *r, const float *x, int k) {
+#if !defined(A2A_SCALAR_ONLY) && defined(__AVX2__) && defined(__FMA__)
+    return dot_f32_avx2(r, x, k);
+#elif !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON)
+    float32x4_t s = vdupq_n_f32(0);
+    int j = 0;
+    for (; j + 4 <= k; j += 4)
+        s = vfmaq_f32(s, vld1q_f32(r + j), vld1q_f32(x + j));
+    float acc = vaddvq_f32(s);
+    for (; j < k; j++) acc += r[j] * x[j];
+    return acc;
+#else
+    return dot_f32_scalar(r, x, k);
+#endif
+}
+
+static float dot_f16_scalar(const uint16_t *h, const float *x, int k) {
+    float acc = 0.0f;
+    for (int j = 0; j < k; j++) acc += f16_to_f32(h[j]) * x[j];
+    return acc;
+}
+
+static float dot_f16(const uint16_t *h, const float *x, int k) {
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+    float32x4_t s0 = vdupq_n_f32(0), s1 = vdupq_n_f32(0);
+    int j = 0;
+    for (; j + 8 <= k; j += 8) {
+        float16x8_t wh = vld1q_f16((const __fp16 *)(h + j));
+        s0 = vfmaq_f32(s0, vcvt_f32_f16(vget_low_f16(wh)),  vld1q_f32(x + j));
+        s1 = vfmaq_f32(s1, vcvt_f32_f16(vget_high_f16(wh)), vld1q_f32(x + j + 4));
+    }
+    float acc = vaddvq_f32(vaddq_f32(s0, s1));
+    for (; j < k; j++) acc += f16_to_f32(h[j]) * x[j];
+    return acc;
+#elif !defined(A2A_SCALAR_ONLY) && defined(__F16C__) && defined(__AVX2__) && defined(__FMA__)
+    __m256 sum = _mm256_setzero_ps();
+    int j = 0;
+    for (; j + 8 <= k; j += 8) {
+        __m128i h8 = _mm_loadu_si128((const __m128i *)(h + j));
+        __m256  wf = _mm256_cvtph_ps(h8);
+        sum = _mm256_fmadd_ps(wf, _mm256_loadu_ps(x + j), sum);
+    }
+    float acc = hsum_ps256(sum);
+    for (; j < k; j++) acc += f16_to_f32(h[j]) * x[j];
+    return acc;
+#else
+    return dot_f16_scalar(h, x, k);
+#endif
+}
+
+static int32_t dot_i8_32_scalar(const int8_t *w, const int8_t *a) {
+    int32_t s = 0;
+    for (int i = 0; i < 32; i++) s += (int32_t)w[i] * (int32_t)a[i];
+    return s;
+}
+
+static int32_t dot_i8_32(const int8_t *w, const int8_t *a) {
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    int8x16_t w0 = vld1q_s8(w), w1 = vld1q_s8(w + 16);
+    int8x16_t a0 = vld1q_s8(a), a1 = vld1q_s8(a + 16);
+    int32x4_t s4 = vdupq_n_s32(0);
+    s4 = vdotq_s32(s4, w0, a0);
+    s4 = vdotq_s32(s4, w1, a1);
+    return (int32_t)vaddvq_s32(s4);
+#elif !defined(A2A_SCALAR_ONLY) && defined(__AVX2__)
+    __m256i w16 = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)w));
+    __m256i a16 = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)a));
+    __m256i p0  = _mm256_mullo_epi16(w16, a16);
+    __m256i w16b = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)(w + 16)));
+    __m256i a16b = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)(a + 16)));
+    __m256i p1  = _mm256_mullo_epi16(w16b, a16b);
+    __m256i s0 = _mm256_add_epi32(_mm256_cvtepi16_epi32(_mm256_castsi256_si128(p0)),
+                                  _mm256_cvtepi16_epi32(_mm256_extracti128_si256(p0, 1)));
+    __m256i s1 = _mm256_add_epi32(_mm256_cvtepi16_epi32(_mm256_castsi256_si128(p1)),
+                                  _mm256_cvtepi16_epi32(_mm256_extracti128_si256(p1, 1)));
+    __m256i st = _mm256_add_epi32(s0, s1);
+    int32_t out[8];
+    _mm256_storeu_si256((__m256i *)out, st);
+    return out[0] + out[1] + out[2] + out[3] + out[4] + out[5] + out[6] + out[7];
+#else
+    return dot_i8_32_scalar(w, a);
+#endif
+}
+
+static void accel_suffix(char *buf, size_t n) {
+    buf[0] = 0;
+#ifdef USE_BLAS
+    strncat(buf, " +BLAS", n - 1 - strlen(buf));
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+    strncat(buf, " +NEON-f16", n - 1 - strlen(buf));
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+    strncat(buf, " +NEON-dot", n - 1 - strlen(buf));
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__AVX2__) && defined(__FMA__)
+    strncat(buf, " +AVX2", n - 1 - strlen(buf));
+#endif
+#if !defined(A2A_SCALAR_ONLY) && defined(__F16C__)
+    strncat(buf, " +F16C", n - 1 - strlen(buf));
+#endif
+    (void)n;
+}
+
+/* x[k] -> per-32-block symmetric int8 (for int8-dot matvec on Q8). */
+static void quant_act_q8(const float *x, int k, int8_t *qa, float *da) {
+    int nb = k / 32;
+    for (int b = 0; b < nb; b++) {
+        const float *xb = x + (long)b * 32;
+        float amax = 0.0f;
+        for (int i = 0; i < 32; i++) { float a = fabsf(xb[i]); if (a > amax) amax = a; }
+        float d = amax / 127.0f, id = (d > 0.0f) ? 1.0f / d : 0.0f;
+        da[b] = d;
+        for (int i = 0; i < 32; i++) {
+            int q = (int)lrintf(xb[i] * id);
+            if (q > 127) q = 127; else if (q < -127) q = -127;
+            qa[(long)b * 32 + i] = (int8_t)q;
+        }
+    }
+}
+
+static void q_f16_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    const uint16_t *Wh = (const uint16_t *)W;
+    for (int row = r0; row < r1; row++)
+        out[row] = dot_f16(Wh + (long)row * k, x, k);
+}
+
+static void q_f32_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    const float *Wf = (const float *)W;
+#ifdef USE_BLAS
+    cblas_sgemv(CblasRowMajor, CblasNoTrans, r1 - r0, k, 1.0f,
+                Wf + (long)r0 * k, k, x, 1, 0.0f, out + r0, 1);
+#else
+    for (int row = r0; row < r1; row++)
+        out[row] = dot_f32(Wf + (long)row * k, x, k);
+#endif
+}
+
+static void q_q8_0_rows_i8(float *out, const uint8_t *W, const int8_t *qa,
+                           const float *da, int r0, int r1, int k) {
+    int nb = k / 32;
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 34;
+        float acc = 0.0f;
+        for (int b = 0; b < nb; b++) {
+            const uint8_t *blk = rb + (long)b * 34;
+            float d_w = f16_to_f32((uint16_t)(blk[0] | (blk[1] << 8)));
+            acc += d_w * da[b] * (float)dot_i8_32((const int8_t *)(blk + 2), qa + (long)b * 32);
+        }
+        out[row] = acc;
+    }
+}
+
+static void q_q8_0_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    int nb = k / 32;
+#if !defined(A2A_SCALAR_ONLY) && (defined(__AVX2__) || (defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)))
+    if (k <= 2048) {
+        int8_t qa[2048];
+        float da[64];
+        quant_act_q8(x, k, qa, da);
+        q_q8_0_rows_i8(out, W, qa, da, r0, r1, k);
+        return;
+    }
+#endif
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 34;
+        float acc = 0.0f;
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 34;
+            float d = f16_to_f32((uint16_t)(b[0] | (b[1] << 8)));
+            const float *xb = x + (long)blk * 32;
+            for (int i = 0; i < 32; i++)
+                acc += d * (float)(int8_t)b[2 + i] * xb[i];
+        }
+        out[row] = acc;
+    }
+}
+
+static void q_q4_0_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    int nb = k / 32;
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 18;
+        float acc = 0.0f;
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 18;
+            float d = f16_to_f32((uint16_t)(b[0] | (b[1] << 8)));
+            const float *xb = x + (long)blk * 32;
+            for (int i = 0; i < 16; i++) {
+                int lo = (int)(b[2 + i] & 0x0F) - 8;
+                int hi = (int)(b[2 + i] >> 4)   - 8;
+                acc += d * (float)lo * xb[i];
+                acc += d * (float)hi * xb[i + 16];
+            }
+        }
+        out[row] = acc;
+    }
+}
+
+static qrows_fn qrows_for(int dtype, int k) {
+    switch (dtype) {
+    case GGUF_TYPE_F32:  return q_f32_rows;
+    case GGUF_TYPE_F16:  return q_f16_rows;
+    case GGUF_TYPE_Q4_0: return (k % 32) ? NULL : q_q4_0_rows;
+    case GGUF_TYPE_Q8_0: return (k % 32) ? NULL : q_q8_0_rows;
+    default: return NULL;
+    }
+}
+
+static int qmatvec(float *out, const uint8_t *Wq, int dtype, const float *x, int m, int k) {
+    qrows_fn fn = qrows_for(dtype, k);
+    if (!fn) return -1;
+    fn(out, Wq, x, 0, m, k);
+    return 0;
+}
+
+typedef struct {
+    const uint8_t *q;
+    int dtype, m, k;
+} wt_t;
+
+static wt_t wt_bind(const gguf_file *gf, int idx) {
+    wt_t w = {0};
+    if (!gf || idx < 0) return w;
+    const gguf_tensor_info *ti = &gf->tensors[idx];
+    w.q = gf->data + ti->offset;
+    w.dtype = ti->dtype;
+    /* GGUF 2D weights: shape[0]=in (k), shape[1]=out (m) — same as notorch load_weight */
+    if (ti->ndim >= 2) { w.k = (int)ti->shape[0]; w.m = (int)ti->shape[1]; }
+    else { w.m = 1; w.k = (int)ti->n_elements; }
+    return w;
+}
+
+static void wt_matvec(float *y, const wt_t *w, const float *x) {
+    if (!w->q) { memset(y, 0, (size_t)w->m * sizeof(float)); return; }
+    if (qmatvec(y, w->q, w->dtype, x, w->m, w->k) != 0)
+        fprintf(stderr, "wt_matvec: unsupported dtype %d (m=%d k=%d)\n", w->dtype, w->m, w->k);
+}
+
+static void f16_to_f32_buf(const uint16_t *h, float *x, int n) {
+#if !defined(A2A_SCALAR_ONLY) && defined(__ARM_NEON) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+    int j = 0;
+    for (; j + 8 <= n; j += 8) {
+        float16x8_t v = vld1q_f16((const __fp16 *)(h + j));
+        vst1q_f32(x + j,     vcvt_f32_f16(vget_low_f16(v)));
+        vst1q_f32(x + j + 4, vcvt_f32_f16(vget_high_f16(v)));
+    }
+    for (; j < n; j++) x[j] = f16_to_f32(h[j]);
+#elif !defined(A2A_SCALAR_ONLY) && defined(__F16C__) && defined(__AVX2__)
+    int j = 0;
+    for (; j + 8 <= n; j += 8) {
+        __m128i h8 = _mm_loadu_si128((const __m128i *)(h + j));
+        _mm256_storeu_ps(x + j, _mm256_cvtph_ps(h8));
+    }
+    for (; j < n; j++) x[j] = f16_to_f32(h[j]);
+#else
+    for (int j = 0; j < n; j++) x[j] = f16_to_f32(h[j]);
+#endif
+}
+
+static void embed_row(const wt_t *emb, int token, float *x, int E) {
+    if (emb->dtype == GGUF_TYPE_F16) {
+        f16_to_f32_buf((const uint16_t *)(emb->q + (long)token * E * 2), x, E);
+    } else if (emb->dtype == GGUF_TYPE_F32) {
+        memcpy(x, emb->q + (long)token * E * 4, (size_t)E * sizeof(float));
+    } else if (emb->dtype == GGUF_TYPE_Q8_0 && (E % 32) == 0) {
+        int nb = E / 32;
+        const uint8_t *rb = emb->q + (long)token * nb * 34;
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 34;
+            float d = f16_to_f32((uint16_t)(b[0] | (b[1] << 8)));
+            for (int i = 0; i < 32; i++)
+                x[blk * 32 + i] = d * (float)(int8_t)b[2 + i];
+        }
+    } else {
+        fprintf(stderr, "embed_row: dtype %d not supported for lookup\n", emb->dtype);
+        memset(x, 0, (size_t)E * sizeof(float));
+    }
+}
+
+/* ===================== forward (packed weights + optional BLAS) ===================== */
 
 static void rmsnorm(float *out, const float *x, const float *w, int n, float eps) {
     float ss = 0; for (int i = 0; i < n; i++) ss += x[i]*x[i];
@@ -413,9 +738,6 @@ static void rmsnorm(float *out, const float *x, const float *w, int n, float eps
 static void softmax(float *x, int n) {
     float mx = x[0]; for (int i = 1; i < n; i++) if (x[i] > mx) mx = x[i];
     float s = 0; for (int i = 0; i < n; i++) { x[i] = expf(x[i]-mx); s += x[i]; } for (int i = 0; i < n; i++) x[i] /= s;
-}
-static void matvec(float *y, const float *W, const float *x, int m, int k) {
-    for (int i = 0; i < m; i++) { const float *row = W + (long)i*k; float s = 0; for (int j = 0; j < k; j++) s += row[j]*x[j]; y[i] = s; }
 }
 static void rope_interleaved(float *x, int pos, int hd, float base) {
     for (int i = 0; i < hd/2; i++) { float a = pos/powf(base, 2.0f*i/hd), c = cosf(a), s = sinf(a); float x0 = x[2*i], x1 = x[2*i+1]; x[2*i] = x0*c - x1*s; x[2*i+1] = x0*s + x1*c; }
@@ -427,11 +749,28 @@ static void rope_neox(float *x, int pos, int hd, float base) {
 typedef struct {
     int n_layers, n_heads, n_kv_heads, embed, ffn, vocab, head_dim, kv_dim, q_dim;
     float rope_base, rms_eps; int has_output, is_qwen3, neox;
-    float *tok_emb, *out_norm, *output;   /* output == tok_emb if tied */
-    struct { float *attn_norm, *ffn_norm, *wq, *wk, *wv, *wo, *wgate, *wup, *wdown, *q_norm, *k_norm; } *L;
+    wt_t tok_emb, output;
+    float *out_norm;
+    struct {
+        float *attn_norm, *ffn_norm, *q_norm, *k_norm;
+        wt_t wq, wk, wv, wo, wgate, wup, wdown;
+    } *L;
 } model_t;
 
-static float *deq(gguf_file *gf, const char *name) { int ti = gguf_find_tensor(gf, name); return ti >= 0 ? gguf_dequant(gf, ti) : NULL; }
+static float *deq1d(gguf_file *gf, const char *name) {
+    int ti = gguf_find_tensor(gf, name);
+    return ti >= 0 ? gguf_dequant(gf, ti) : NULL;
+}
+
+static const char *dtype_name(int d) {
+    switch (d) {
+    case GGUF_TYPE_F32: return "f32";
+    case GGUF_TYPE_F16: return "f16-packed";
+    case GGUF_TYPE_Q8_0: return "q8-packed";
+    case GGUF_TYPE_Q4_0: return "q4-packed";
+    default: return "packed";
+    }
+}
 
 static model_t *model_load(gguf_file *gf) {
     model_t *m = (model_t*)calloc(1, sizeof(model_t));
@@ -445,24 +784,31 @@ static model_t *model_load(gguf_file *gf) {
     m->neox = (strstr(gf->arch, "qwen") || strstr(gf->arch, "gemma") || strstr(gf->arch, "phi")) ? 1 : 0;
     m->is_qwen3 = (gguf_find_tensor(gf, "blk.0.attn_q_norm.weight") >= 0) ? 1 : 0;
 
-    m->tok_emb  = deq(gf, "token_embd.weight");
-    m->out_norm = deq(gf, "output_norm.weight");
-    float *out = deq(gf, "output.weight");
-    if (out) { m->output = out; m->has_output = 1; } else { m->output = m->tok_emb; m->has_output = 0; }
+    m->tok_emb = wt_bind(gf, gguf_find_tensor(gf, "token_embd.weight"));
+    m->out_norm = deq1d(gf, "output_norm.weight");
+    ti = gguf_find_tensor(gf, "output.weight");
+    if (ti >= 0) { m->output = wt_bind(gf, ti); m->has_output = 1; }
+    else { m->output = m->tok_emb; m->has_output = 0; }
 
     m->L = calloc(m->n_layers, sizeof(*m->L)); char nm[160];
     for (int l = 0; l < m->n_layers; l++) {
-        #define LD(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); m->L[l].f = deq(gf, nm); } while(0)
-        LD(attn_norm, "blk.%d.attn_norm.weight"); LD(ffn_norm, "blk.%d.ffn_norm.weight");
-        LD(wq, "blk.%d.attn_q.weight"); LD(wk, "blk.%d.attn_k.weight"); LD(wv, "blk.%d.attn_v.weight"); LD(wo, "blk.%d.attn_output.weight");
-        LD(wgate, "blk.%d.ffn_gate.weight"); LD(wup, "blk.%d.ffn_up.weight"); LD(wdown, "blk.%d.ffn_down.weight");
-        LD(q_norm, "blk.%d.attn_q_norm.weight"); LD(k_norm, "blk.%d.attn_k_norm.weight");
-        #undef LD
+        #define LDWT(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); m->L[l].f = wt_bind(gf, gguf_find_tensor(gf, nm)); } while(0)
+        #define LD1D(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); m->L[l].f = deq1d(gf, nm); } while(0)
+        LD1D(attn_norm, "blk.%d.attn_norm.weight"); LD1D(ffn_norm, "blk.%d.ffn_norm.weight");
+        LDWT(wq, "blk.%d.attn_q.weight"); LDWT(wk, "blk.%d.attn_k.weight"); LDWT(wv, "blk.%d.attn_v.weight"); LDWT(wo, "blk.%d.attn_output.weight");
+        LDWT(wgate, "blk.%d.ffn_gate.weight"); LDWT(wup, "blk.%d.ffn_up.weight"); LDWT(wdown, "blk.%d.ffn_down.weight");
+        LD1D(q_norm, "blk.%d.attn_q_norm.weight"); LD1D(k_norm, "blk.%d.attn_k_norm.weight");
+        #undef LDWT
+        #undef LD1D
     }
-    printf("model: arch=%s E=%d H=%d KV=%d HD=%d Q=%d FFN=%d V=%d L=%d | %s rope%s%s\n",
+    int wdtype = m->L[0].wq.dtype;
+    char accel[64];
+    accel_suffix(accel, sizeof(accel));
+    printf("model: arch=%s E=%d H=%d KV=%d HD=%d Q=%d FFN=%d V=%d L=%d | %s rope%s%s | weights=%s%s\n",
            gf->arch, m->embed, m->n_heads, m->n_kv_heads, m->head_dim, m->q_dim, m->ffn, m->vocab, m->n_layers,
-           m->neox ? "NEOX" : "interleaved", m->is_qwen3 ? " +qk-norm" : "", m->has_output ? "" : " tied");
-    if (!m->tok_emb || !m->out_norm) { fprintf(stderr, "missing tok_emb/out_norm\n"); return NULL; }
+           m->neox ? "NEOX" : "interleaved", m->is_qwen3 ? " +qk-norm" : "", m->has_output ? "" : " tied",
+           dtype_name(wdtype), accel);
+    if (!m->tok_emb.q || !m->out_norm) { fprintf(stderr, "missing tok_emb/out_norm\n"); return NULL; }
     return m;
 }
 
@@ -479,14 +825,14 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
     int KVD = m->kv_dim, FFN = m->ffn, QD = m->q_dim, gqa = H / KV; float eps = m->rms_eps;
     void (*ropef)(float*,int,int,float) = m->neox ? rope_neox : rope_interleaved;
 
-    float *x = calloc(E, sizeof(float)); memcpy(x, m->tok_emb + (long)token*E, E*sizeof(float));
+    float *x = calloc(E, sizeof(float)); embed_row(&m->tok_emb, token, x, E);
     float *xn = calloc(E, sizeof(float)), *q = calloc(QD, sizeof(float)), *kk = calloc(KVD, sizeof(float));
     float *vv = calloc(KVD, sizeof(float)), *ao = calloc(QD, sizeof(float)), *g = calloc(FFN, sizeof(float));
     float *u = calloc(FFN, sizeof(float)), *t = calloc(E, sizeof(float)), *sc = calloc(kv->max_seq, sizeof(float));
 
     for (int l = 0; l < m->n_layers; l++) {
         rmsnorm(xn, x, m->L[l].attn_norm, E, eps);
-        matvec(q, m->L[l].wq, xn, QD, E); matvec(kk, m->L[l].wk, xn, KVD, E); matvec(vv, m->L[l].wv, xn, KVD, E);
+        wt_matvec(q, &m->L[l].wq, xn); wt_matvec(kk, &m->L[l].wk, xn); wt_matvec(vv, &m->L[l].wv, xn);
         if (m->is_qwen3) {
             for (int h = 0; h < H;  h++) rmsnorm(q + h*HD, q + h*HD, m->L[l].q_norm, HD, eps);
             for (int h = 0; h < KV; h++) rmsnorm(kk + h*HD, kk + h*HD, m->L[l].k_norm, HD, eps);
@@ -505,15 +851,15 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
             softmax(sc, pos + 1); float *oh = ao + h*HD;
             for (int j = 0; j <= pos; j++) { float *vj = kv->v + base + (long)j*KVD + kvh*HD, w = sc[j]; for (int t2 = 0; t2 < HD; t2++) oh[t2] += w*vj[t2]; }
         }
-        matvec(t, m->L[l].wo, ao, E, QD); for (int i = 0; i < E; i++) x[i] += t[i];
+        wt_matvec(t, &m->L[l].wo, ao); for (int i = 0; i < E; i++) x[i] += t[i];
 
         rmsnorm(xn, x, m->L[l].ffn_norm, E, eps);
-        matvec(g, m->L[l].wgate, xn, FFN, E); matvec(u, m->L[l].wup, xn, FFN, E);
+        wt_matvec(g, &m->L[l].wgate, xn); wt_matvec(u, &m->L[l].wup, xn);
         for (int i = 0; i < FFN; i++) { float gi = g[i]; g[i] = (gi/(1.0f+expf(-gi)))*u[i]; }
-        matvec(t, m->L[l].wdown, g, E, FFN); for (int i = 0; i < E; i++) x[i] += t[i];
+        wt_matvec(t, &m->L[l].wdown, g); for (int i = 0; i < E; i++) x[i] += t[i];
     }
     rmsnorm(xn, x, m->out_norm, E, eps);
-    matvec(logits, m->output, xn, m->vocab, E);
+    wt_matvec(logits, &m->output, xn);
     free(x); free(xn); free(q); free(kk); free(vv); free(ao); free(g); free(u); free(t); free(sc);
 }
 
@@ -651,7 +997,7 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
         ent_acc += logit_entropy(logits, m->vocab, temp); ent_n++;   /* RAW forward entropy (pre-injection) — clean for Δ_R */
         if (out_commit && s < 64) out_commit[s] = argmax(logits, m->vocab);  /* committed direction (raw argmax) — the order-true signal */
         if (fproj) {                                  /* soma coupling steers SAMPLING only, not the entropy metric */
-            matvec(fproj, m->tok_emb, g_field_dir, m->vocab, m->embed);
+            wt_matvec(fproj, &m->tok_emb, g_field_dir);
             for (int i = 0; i < m->vocab; i++) logits[i] += g_field_alpha * fproj[i];
         }
         int next = sample2(logits, m->vocab, temp, top_k, rep, hist, hlen);
@@ -661,8 +1007,9 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
         if (frag && fl + bl < frag_cap) { memcpy(frag + fl, buf, bl); fl += bl; }
         if (hlen < 256) hist[hlen++] = next;
         if (g_field_on) {                             /* the chorus updates the shared field (EMA) */
-            const float *e = m->tok_emb + (long)next * m->embed;
-            for (int i = 0; i < m->embed && i < 8192; i++) g_field_dir[i] = g_field_dir[i]*0.92f + e[i]*0.08f;
+            float ebuf[8192];
+            embed_row(&m->tok_emb, next, ebuf, m->embed);
+            for (int i = 0; i < m->embed && i < 8192; i++) g_field_dir[i] = g_field_dir[i]*0.92f + ebuf[i]*0.08f;
         }
         int pos = np + s; if (pos >= max_seq - 1) break;
         forward(m, kv, next, pos, logits);
@@ -746,7 +1093,11 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         for (int i = 0; i < cell_n; i++) if (cell_ids[i] >= 0 && cell_ids[i] < m->vocab) hist[cell_ids[i]]++;
         if (cent) {                                  /* this cell's fragment centroid in embedding space */
             float *cc = cent + (size_t)c * m->embed;
-            for (int i = 0; i < cell_n; i++) { const float *e = m->tok_emb + (long)cell_ids[i] * m->embed; for (int d = 0; d < m->embed; d++) cc[d] += e[d]; }
+            for (int i = 0; i < cell_n; i++) {
+                float ebuf[8192];
+                embed_row(&m->tok_emb, cell_ids[i], ebuf, m->embed);
+                for (int d = 0; d < m->embed; d++) cc[d] += ebuf[d];
+            }
             if (cell_n) for (int d = 0; d < m->embed; d++) cc[d] /= cell_n;
         }
         if (out_shuf) {                              /* Δ_R shadow: same ctx, tail shuffled, field OFF, raw entropy */
@@ -884,27 +1235,75 @@ static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *pro
            drop_coh - drop_shuf < -0.10f ? "(shuffled falls more — NO resonance signal)" : "(~equal — length artifact, claim NOT earned yet)");
 }
 
+#define HF_BASE "https://huggingface.co/ataeff/ariannamethod/resolve/main/weights"
+#define WF16 "weights/nanollama-arianna-full-v4-step2750-f16.gguf"
+#define WQ8  "weights/nanollama-arianna-full-v4-step2750-q8_0.gguf"
+
+static int hf_ensure(const char *local, const char *remote_name) {
+    struct stat st;
+    if (stat(local, &st) == 0 && st.st_size > 1000000) return 0;
+    char cmd[1200];
+    snprintf(cmd, sizeof(cmd),
+             "mkdir -p weights && curl -fL -o '%s' '%s/%s'", local, HF_BASE, remote_name);
+    fprintf(stderr, "hf: fetching %s ...\n", remote_name);
+    fflush(stderr);
+    return system(cmd) != 0;
+}
+
+static void usage(const char *prog) {
+    printf("usage:\n");
+    printf("  %s [--16|--q8] [<model.gguf>] [prompt] [max_tokens] [temp]\n", prog);
+    printf("  %s [--16|--q8] [<model.gguf>] <prompt> field [n_cells] [nfrag] [n_rounds]\n", prog);
+    printf("  %s [--16|--q8] [<model.gguf>] <prompt> restest [n_cells] [nfrag] [n_rounds]\n", prog);
+    printf("  --16  packed f16 weights from HF (default nanoArianna v4)\n");
+    printf("  --q8  packed Q8_0 weights from HF (~half RAM vs f16)\n");
+}
+
 int main(int argc, char **argv) {
-    if (argc < 2) { printf("usage: %s <model.gguf> [prompt] [max_tokens] [temp]\n", argv[0]); return 1; }
-    const char *prompt = argc > 2 ? argv[2] : "What is resonance?";
-    int max_tokens = argc > 3 ? atoi(argv[3]) : 48;
-    float temp = argc > 4 ? (float)atof(argv[4]) : 0.8f;
+    if (argc < 2) { usage(argv[0]); return 1; }
+
+    const char *model = NULL;
+    int a = 1;
+    while (a < argc && argv[a][0] == '-') {
+        if (!strcmp(argv[a], "--16")) {
+            model = WF16;
+            if (hf_ensure(WF16, "nanollama-arianna-full-v4-step2750-f16.gguf")) return 1;
+            a++;
+        } else if (!strcmp(argv[a], "--q8")) {
+            model = WQ8;
+            if (hf_ensure(WQ8, "nanollama-arianna-full-v4-step2750-q8_0.gguf")) return 1;
+            a++;
+        } else {
+            fprintf(stderr, "unknown flag: %s\n", argv[a]);
+            usage(argv[0]);
+            return 1;
+        }
+    }
+    if (!model) {
+        if (a >= argc) { usage(argv[0]); return 1; }
+        model = argv[a++];
+    }
+    int pos = a;
+    const char *prompt = pos < argc ? argv[pos] : "What is resonance?";
+    int max_tokens = (pos + 1 < argc) ? atoi(argv[pos + 1]) : 48;
+    float temp = (pos + 2 < argc) ? (float)atof(argv[pos + 2]) : 0.8f;
     srand(42);
 
     double t0 = now_ms();
-    gguf_file *gf = gguf_open(argv[1]); if (!gf) return 1;
+    gguf_file *gf = gguf_open(model); if (!gf) return 1;
     model_t *m = model_load(gf); if (!m) return 1;
-    bpe_tokenizer *tok = bpe_load(argv[1]); if (!tok) { fprintf(stderr, "bpe_load failed\n"); return 1; }
+    bpe_tokenizer *tok = bpe_load(model); if (!tok) { fprintf(stderr, "bpe_load failed\n"); return 1; }
     int eos = -1; const gguf_kv *e = gguf_get_kv(gf, "tokenizer.ggml.eos_token_id"); if (e) eos = (int)e->val.u32;
-    printf("loaded in %.0f ms (vocab=%d eos=%d) -- arianna.q heart, single file, no -lnotorch\n", now_ms() - t0, bpe_n_vocab(tok), eos);
+    printf("loaded in %.0f ms (vocab=%d eos=%d) -- arianna2arianna packed heart, single file\n",
+           now_ms() - t0, bpe_n_vocab(tok), eos);
 
-    /* δ-field chorus mode:  ./arianna-q <gguf> <prompt> field [n_cells] [nfrag] [n_rounds] */
-    if (argc > 3 && strcmp(argv[3], "field") == 0) {
-        int n_cells  = argc > 4 ? atoi(argv[4]) : 5;
-        int nfrag    = argc > 5 ? atoi(argv[5]) : 16;
-        int n_rounds = argc > 6 ? atoi(argv[6]) : 1;
-        float alpha  = argc > 7 ? (float)atof(argv[7]) : 0.0f;   /* soma coupling strength (0 = text-only baseline) */
-        g_leap_mode  = argc > 8 ? atoi(argv[8]) : 0;             /* 1 = dissonance-into-forward leap (arm C) */
+    /* δ-field chorus mode */
+    if (pos + 1 < argc && strcmp(argv[pos + 1], "field") == 0) {
+        int n_cells  = pos + 2 < argc ? atoi(argv[pos + 2]) : 5;
+        int nfrag    = pos + 3 < argc ? atoi(argv[pos + 3]) : 16;
+        int n_rounds = pos + 4 < argc ? atoi(argv[pos + 4]) : 1;
+        float alpha  = pos + 5 < argc ? (float)atof(argv[pos + 5]) : 0.0f;   /* soma coupling strength */
+        g_leap_mode  = pos + 6 < argc ? atoi(argv[pos + 6]) : 0;             /* dissonance-into-forward leap */
         if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
             float pe = probe_entropy(m, tok, prompt);
             n_cells = (int)(pe + 0.5f); if (n_cells < 1) n_cells = 1; if (n_cells > 8) n_cells = 8;
@@ -914,11 +1313,10 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    /* resonance-vs-length control:  ./arianna-q <gguf> <prompt> restest [n_cells] [nfrag] [n_rounds] */
-    if (argc > 3 && strcmp(argv[3], "restest") == 0) {
-        int n_cells  = argc > 4 ? atoi(argv[4]) : 4;
-        int nfrag    = argc > 5 ? atoi(argv[5]) : 12;
-        int n_rounds = argc > 6 ? atoi(argv[6]) : 3;
+    if (pos + 1 < argc && strcmp(argv[pos + 1], "restest") == 0) {
+        int n_cells  = pos + 2 < argc ? atoi(argv[pos + 2]) : 4;
+        int nfrag    = pos + 3 < argc ? atoi(argv[pos + 3]) : 12;
+        int n_rounds = pos + 4 < argc ? atoi(argv[pos + 4]) : 3;
         field_resonance_test(m, tok, prompt, n_cells, nfrag, n_rounds, eos);
         return 0;
     }
