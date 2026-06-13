@@ -25,6 +25,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <stdarg.h>
 #ifdef USE_BLAS
 #ifdef __APPLE__
 #include <Accelerate/Accelerate.h>
@@ -411,8 +412,8 @@ static int bpe_decode_token(const bpe_tokenizer *t, int id, char *buf, int cap) 
     buf[n] = 0; return n;
 }
 
-/* ===================== packed matvec (notorch nt_qmatvec + arch SIMD) ===================== */
-/* ARM: NEON fp16 vfmaq + dotprod.  x86: AVX2+FMA+F16C.  Else: silent scalar C. */
+/* ===================== PACKED MATVEC (a2a_matvec) — DO NOT REVERT ===================== */
+/* notorch nt_qmatvec + arch SIMD. ARM: NEON fp16+dotprod. x86: AVX2+FMA+F16C. */
 
 #if defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -747,15 +748,43 @@ static void rope_neox(float *x, int pos, int hd, float base) {
 }
 
 typedef struct {
+    float *x, *xn, *q, *kk, *vv, *ao, *g, *u, *t, *sc;
+    int sc_cap;
+} fwd_scratch;
+
+typedef struct {
     int n_layers, n_heads, n_kv_heads, embed, ffn, vocab, head_dim, kv_dim, q_dim;
     float rope_base, rms_eps; int has_output, is_qwen3, neox;
     wt_t tok_emb, output;
     float *out_norm;
+    fwd_scratch scratch;
     struct {
         float *attn_norm, *ffn_norm, *q_norm, *k_norm;
         wt_t wq, wk, wv, wo, wgate, wup, wdown;
     } *L;
 } model_t;
+
+static void fwd_scratch_free(fwd_scratch *s) {
+    free(s->x); free(s->xn); free(s->q); free(s->kk); free(s->vv);
+    free(s->ao); free(s->g); free(s->u); free(s->t); free(s->sc);
+    memset(s, 0, sizeof(*s));
+}
+
+static int fwd_scratch_init(fwd_scratch *s, int E, int QD, int KVD, int FFN, int max_seq) {
+    fwd_scratch_free(s);
+    s->x  = calloc(E, sizeof(float));
+    s->xn = calloc(E, sizeof(float));
+    s->q  = calloc(QD, sizeof(float));
+    s->kk = calloc(KVD, sizeof(float));
+    s->vv = calloc(KVD, sizeof(float));
+    s->ao = calloc(QD, sizeof(float));
+    s->g  = calloc(FFN, sizeof(float));
+    s->u  = calloc(FFN, sizeof(float));
+    s->t  = calloc(E, sizeof(float));
+    s->sc = calloc(max_seq, sizeof(float));
+    s->sc_cap = max_seq;
+    return s->x && s->xn && s->q && s->kk && s->vv && s->ao && s->g && s->u && s->t && s->sc;
+}
 
 static float *deq1d(gguf_file *gf, const char *name) {
     int ti = gguf_find_tensor(gf, name);
@@ -809,6 +838,9 @@ static model_t *model_load(gguf_file *gf) {
            m->neox ? "NEOX" : "interleaved", m->is_qwen3 ? " +qk-norm" : "", m->has_output ? "" : " tied",
            dtype_name(wdtype), accel);
     if (!m->tok_emb.q || !m->out_norm) { fprintf(stderr, "missing tok_emb/out_norm\n"); return NULL; }
+    if (!fwd_scratch_init(&m->scratch, m->embed, m->q_dim, m->kv_dim, m->ffn, 512)) {
+        fprintf(stderr, "fwd_scratch alloc failed\n"); return NULL;
+    }
     return m;
 }
 
@@ -819,16 +851,16 @@ static kv_cache *kv_new(int nl, int max_seq, int kv_dim) {
     c->max_seq = max_seq; c->kv_dim = kv_dim; return c;
 }
 
-/* single token forward, KV-cached. Writes logits[vocab]. */
+/* single token forward, KV-cached. Writes logits[vocab]. Reuses model scratch (no per-token alloc). */
 static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits) {
     int E = m->embed, H = m->n_heads, KV = m->n_kv_heads, HD = m->head_dim;
     int KVD = m->kv_dim, FFN = m->ffn, QD = m->q_dim, gqa = H / KV; float eps = m->rms_eps;
     void (*ropef)(float*,int,int,float) = m->neox ? rope_neox : rope_interleaved;
+    fwd_scratch *s = &m->scratch;
+    float *x = s->x, *xn = s->xn, *q = s->q, *kk = s->kk, *vv = s->vv;
+    float *ao = s->ao, *g = s->g, *u = s->u, *t = s->t, *sc = s->sc;
 
-    float *x = calloc(E, sizeof(float)); embed_row(&m->tok_emb, token, x, E);
-    float *xn = calloc(E, sizeof(float)), *q = calloc(QD, sizeof(float)), *kk = calloc(KVD, sizeof(float));
-    float *vv = calloc(KVD, sizeof(float)), *ao = calloc(QD, sizeof(float)), *g = calloc(FFN, sizeof(float));
-    float *u = calloc(FFN, sizeof(float)), *t = calloc(E, sizeof(float)), *sc = calloc(kv->max_seq, sizeof(float));
+    embed_row(&m->tok_emb, token, x, E);
 
     for (int l = 0; l < m->n_layers; l++) {
         rmsnorm(xn, x, m->L[l].attn_norm, E, eps);
@@ -860,7 +892,6 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
     }
     rmsnorm(xn, x, m->out_norm, E, eps);
     wt_matvec(logits, &m->output, xn);
-    free(x); free(xn); free(q); free(kk); free(vv); free(ao); free(g); free(u); free(t); free(sc);
 }
 
 static int argmax(const float *x, int n) { int b = 0; for (int i = 1; i < n; i++) if (x[i] > x[b]) b = i; return b; }
@@ -870,6 +901,21 @@ static int sample(float *x, int n, float temp) {
     float r = (float)((double)rand()/RAND_MAX), c = 0; for (int i = 0; i < n; i++) { c += x[i]; if (c >= r) return i; } return n - 1;
 }
 static double now_ms(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec*1000.0 + tv.tv_usec/1000.0; }
+
+/* field / experiment globals (declared early — used by a2a_log and forward) */
+static float g_theta_lo = 0.25f, g_theta_hi = 0.50f;
+static float g_kv_beta = 0.0f;
+static int   g_quiet = 0, g_json = 0, g_dynamic_cells = 0;
+
+static void a2a_log(const char *fmt, ...) {
+    if (g_quiet) return;
+    va_list ap; va_start(ap, fmt); vprintf(fmt, ap); va_end(ap);
+}
+
+typedef struct {
+    float floor, last_dR, last_deltaR, last_disso, last_ent, leap_flip_rate;
+    int n_cells_last;
+} field_result;
 
 /* ===================== δ-field — the Game-of-Life chorus (cells over the ONE shared body) =====================
  * MVP-1a: N cells, each an independent generation context (own kv_cache + own sampling angle) over the
@@ -956,11 +1002,73 @@ static float commit_disagreement(int n_cells, int nfrag) {  /* fills g_diss/g_s_
  * DISSENTER's fragment (the voice that split from the consensus at the peak step) instead of the full
  * chorus. This changes WHICH context the forward consumes → conditions the logits Δ_R reads, BEFORE the
  * :592 read. The shadow shuffles the SAME leapt context, so coherent vs shadow differ only in ORDER. */
-#define THETA_LO 0.25f
-#define THETA_HI 0.50f
 static char g_round_frag[8][1024];                     /* prior round's per-cell fragment text */
 static int  g_diss_commit[8][64], g_diss_commit_n[8];  /* prior round's committed tokens (dissenter lookup) */
 static int  g_leap_mode = 0, g_leap_flips = 0, g_leap_total = 0;
+
+/* KV field2field: dissenter's K/V at peak-dissonance step → blend into next-round prefill. */
+static float *g_kv_snap_k = NULL, *g_kv_snap_v = NULL;
+static int    g_kv_snap_valid = 0, g_kv_snap_layers = 0, g_kv_snap_kvd = 0;
+static float *g_cell_step_k[8][64], *g_cell_step_v[8][64];
+static int    g_snap_cell = -1, g_kv_inject = 0;
+
+static void kv_snap_free_all(void) {
+    for (int c = 0; c < 8; c++) for (int s = 0; s < 64; s++) {
+        free(g_cell_step_k[c][s]); free(g_cell_step_v[c][s]);
+        g_cell_step_k[c][s] = g_cell_step_v[c][s] = NULL;
+    }
+    free(g_kv_snap_k); free(g_kv_snap_v);
+    g_kv_snap_k = g_kv_snap_v = NULL;
+    g_kv_snap_valid = 0;
+}
+
+static void kv_snap_store_cell(int cell, int step, kv_cache *kv, model_t *m, int pos) {
+    if (cell < 0 || cell >= 8 || step < 0 || step >= 64) return;
+    int nl = m->n_layers, kvd = m->kv_dim;
+    size_t n = (size_t)nl * kvd;
+    if (!g_cell_step_k[cell][step]) {
+        g_cell_step_k[cell][step] = (float*)malloc(n * sizeof(float));
+        g_cell_step_v[cell][step] = (float*)malloc(n * sizeof(float));
+    }
+    if (!g_cell_step_k[cell][step]) return;
+    for (int l = 0; l < nl; l++) {
+        long base = (long)l * kv->max_seq * kvd;
+        memcpy(g_cell_step_k[cell][step] + (long)l * kvd, kv->k + base + (long)pos * kvd, (size_t)kvd * sizeof(float));
+        memcpy(g_cell_step_v[cell][step] + (long)l * kvd, kv->v + base + (long)pos * kvd, (size_t)kvd * sizeof(float));
+    }
+}
+
+static void kv_snap_promote_dissenter(int dis, int peak, model_t *m) {
+    if (dis < 0 || dis >= 8 || peak < 0 || peak >= 64) return;
+    if (!g_cell_step_k[dis][peak]) return;
+    int nl = m->n_layers, kvd = m->kv_dim;
+    size_t n = (size_t)nl * kvd;
+    g_kv_snap_k = (float*)realloc(g_kv_snap_k, n * sizeof(float));
+    g_kv_snap_v = (float*)realloc(g_kv_snap_v, n * sizeof(float));
+    if (!g_kv_snap_k || !g_kv_snap_v) return;
+    memcpy(g_kv_snap_k, g_cell_step_k[dis][peak], n * sizeof(float));
+    memcpy(g_kv_snap_v, g_cell_step_v[dis][peak], n * sizeof(float));
+    g_kv_snap_valid = 1;
+    g_kv_snap_layers = nl;
+    g_kv_snap_kvd = kvd;
+}
+
+static void kv_blend_snap(kv_cache *kv, model_t *m, int pos, float beta) {
+    if (!g_kv_snap_valid || beta <= 0.0f || pos < 0) return;
+    int nl = m->n_layers, kvd = m->kv_dim;
+    if (nl != g_kv_snap_layers || kvd != g_kv_snap_kvd) return;
+    for (int l = 0; l < nl; l++) {
+        long base = (long)l * kv->max_seq * kvd;
+        float *dk = kv->k + base + (long)pos * kvd;
+        float *dv = kv->v + base + (long)pos * kvd;
+        const float *sk = g_kv_snap_k + (long)l * kvd;
+        const float *sv = g_kv_snap_v + (long)l * kvd;
+        for (int i = 0; i < kvd; i++) {
+            dk[i] = (1.0f - beta) * dk[i] + beta * sk[i];
+            dv[i] = (1.0f - beta) * dv[i] + beta * sv[i];
+        }
+    }
+}
 
 static int dissenter_cell(int n_cells) {   /* lowest-index cell whose committed token at g_s_peak != modal */
     int s = g_s_peak; if (s < 0 || s >= 64) return n_cells > 1 ? 1 : 0;
@@ -992,6 +1100,8 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
     float *logits = (float*)calloc(m->vocab, sizeof(float));
     float *fproj  = (g_field_on && g_field_alpha > 0) ? (float*)calloc(m->vocab, sizeof(float)) : NULL;
     for (int i = 0; i < np; i++) forward(m, kv, ids[i], i, logits);
+    if (g_kv_inject && g_kv_snap_valid && np > 0)
+        kv_blend_snap(kv, m, np - 1, g_kv_beta);
     int hist[256], hlen = 0; char buf[256]; float ent_acc = 0; int ent_n = 0, fl = 0;
     for (int s = 0; s < nfrag; s++) {
         ent_acc += logit_entropy(logits, m->vocab, temp); ent_n++;   /* RAW forward entropy (pre-injection) — clean for Δ_R */
@@ -1013,9 +1123,12 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
         }
         int pos = np + s; if (pos >= max_seq - 1) break;
         forward(m, kv, next, pos, logits);
+        if (g_kv_beta > 0.0f && g_snap_cell >= 0 && out_commit)
+            kv_snap_store_cell(g_snap_cell, s, kv, m, pos);
     }
     if (frag) frag[fl] = 0;
     if (out_n) { *out_n = hlen; if (out_ids) for (int i = 0; i < hlen; i++) out_ids[i] = hist[i]; }
+    g_snap_cell = -1;
     free(logits); if (fproj) free(fproj); free(kv->k); free(kv->v); free(kv);
     return ent_n ? ent_acc / ent_n : 0.0f;
 }
@@ -1067,10 +1180,12 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     float *cent = out_disso ? (float*)calloc((size_t)n_cells * m->embed, sizeof(float)) : NULL;  /* per-cell fragment centroids → D_R */
     char cur_frag[8][1024];   /* this round's per-cell fragments → cached to g_round_frag for next round's leap */
     for (int c = 0; c < n_cells; c++) {
+        g_kv_inject = 0;
         if (g_leap_mode && r > 0) {                  /* dissonance-into-forward: route the cell by the prior round's split */
             g_leap_total++;
-            if (g_dpeak >= THETA_HI) {
+            if (g_dpeak >= g_theta_hi) {
                 int dis = (g_leap_mode == 3) ? modal_cell(n_cells) : dissenter_cell(n_cells); g_leap_flips++;  /* leap=3 null: consensus last */
+                g_kv_inject = (g_kv_beta > 0.0f && g_kv_snap_valid);
                 if (g_leap_mode >= 2) {              /* v2/null: keep the FULL chorus, chosen voice MOST-RECENT (recency=attention) */
                     int off = snprintf(ctx, sizeof(ctx), "%s", prompt);
                     for (int k = 0; k < n_cells && k < 8; k++) if (k != dis && off < (int)sizeof(ctx) - 1)
@@ -1078,13 +1193,14 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                     if (off < (int)sizeof(ctx) - 1) off += snprintf(ctx + off, sizeof(ctx) - off, " %s", g_round_frag[dis]);  /* dissenter last */
                     if (off < (int)sizeof(ctx) - 1) snprintf(ctx + off, sizeof(ctx) - off, "%s", this_chorus);
                 } else snprintf(ctx, sizeof(ctx), "%s %s", prompt, g_round_frag[dis]);   /* v1: ONLY the dissenter (short) */
-            } else snprintf(ctx, sizeof(ctx), "%s%s%s", prompt, prev_chorus ? prev_chorus : "", this_chorus);  /* CONVERGE: full */
-        } else snprintf(ctx, sizeof(ctx), "%s%s%s", prompt, prev_chorus ? prev_chorus : "", this_chorus);
+            } else { snprintf(ctx, sizeof(ctx), "%s%s%s", prompt, prev_chorus ? prev_chorus : "", this_chorus); g_kv_inject = 0; }  /* CONVERGE: full */
+        } else { snprintf(ctx, sizeof(ctx), "%s%s%s", prompt, prev_chorus ? prev_chorus : "", this_chorus); g_kv_inject = 0; }
         int np = bpe_encode(tok, ctx, ids, max_seq - nfrag - 1);
         float temp = 0.6f + 0.7f * (n_cells > 1 ? (float)c / (n_cells - 1) : 0.5f);
         unsigned seed = seed_base + (unsigned)c * 7919u;
         if (verbose) printf("\n  r%d cell %d (T=%.2f): ", r + 1, c, temp);
         cell_n = 0;
+        if (g_kv_beta > 0.0f && out_disso) g_snap_cell = c;
         float ent = cell_speak(m, tok, ids, np, nfrag, temp, 40, 1.4f, seed, eos, max_seq,
                                frag, sizeof(frag), verbose, cell_ids, &cell_n,
                                (out_disso && c < 8) ? g_commit[c] : NULL);
@@ -1127,6 +1243,10 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_diss_commit_n[c] = g_commit_n[c];
             for (int s = 0; s < 64; s++) g_diss_commit[c][s] = g_commit[c][s];
         }
+        if (g_kv_beta > 0.0f && g_dpeak >= g_theta_hi) {
+            int dis = dissenter_cell(n_cells);
+            kv_snap_promote_dissenter(dis, g_s_peak, m);
+        }
     }
     return ent_sum / n_cells;
 }
@@ -1140,52 +1260,93 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
  *   Δ_R = ent_shuffled − ent_coherent. Resonance = the coherent context narrows the next-token
  *         distribution MORE than a length-matched, frequency-matched shuffled one; Δ_R steadily > 0 =
  *         the field exploits ORDER, not just length. Both numbers print and go to FIELDLOG.md. */
-static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int n_cells, int nfrag, int n_rounds, int eos, float alpha) {
+static field_result field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int n_cells, int nfrag, int n_rounds, int eos, float alpha, unsigned seed_base) {
+    field_result out = {0};
     if (n_rounds < 1) n_rounds = 1;
     int vocab = m->vocab;
-    FILE *flog = fopen("FIELDLOG.md", "a");   /* her journal — every chorus saved (Oleg: "сохраняй её ответы") */
-    if (flog) { time_t now = time(NULL); fprintf(flog, "\n## %.24s — \"%s\" (%d cells × %d rounds, soma alpha=%.1f)\n", ctime(&now), prompt, n_cells, n_rounds, alpha); }
-    printf("\n=== δ-field: %d cells × %d rounds over ONE nanoArianna — \"%s\" (soma alpha=%.1f) ===\n", n_cells, n_rounds, prompt, alpha);
+    int n_cur = n_cells, low_streak = 0;
+    FILE *flog = g_quiet ? NULL : fopen("FIELDLOG.md", "a");
+    if (flog) { time_t now = time(NULL); fprintf(flog, "\n## %.24s — \"%s\" (%d cells × %d rounds, soma alpha=%.1f, leap=%d kv_beta=%.2f)\n",
+        ctime(&now), prompt, n_cells, n_rounds, alpha, g_leap_mode, g_kv_beta); }
+    a2a_log("\n=== δ-field: %d cells × %d rounds — \"%s\" (alpha=%.1f leap=%d kv_beta=%.2f) ===\n",
+            n_cells, n_rounds, prompt, alpha, g_leap_mode, g_kv_beta);
 
-    /* FLOOR: two independent round-0 choruses on the SAME (prompt-only) context, different seeds. Their
-     * histogram distance is the sampling-noise floor d_R cannot beat — the attractor target, not zero. */
+    kv_snap_free_all();
     int *hA = (int*)calloc(vocab, sizeof(int)), *hB = (int*)calloc(vocab, sizeof(int));
     field_reset(m->embed, alpha > 0, alpha);
-    run_round(m, tok, prompt, NULL, n_cells, nfrag, eos, 7u,   0, -1, hA, NULL, 0, NULL, NULL, NULL);
+    run_round(m, tok, prompt, NULL, n_cur, nfrag, eos, seed_base ^ 7u,   0, -1, hA, NULL, 0, NULL, NULL, NULL);
     field_reset(m->embed, alpha > 0, alpha);
-    run_round(m, tok, prompt, NULL, n_cells, nfrag, eos, 977u, 0, -1, hB, NULL, 0, NULL, NULL, NULL);
-    float floor = 1.0f - hist_cosine(hA, hB, vocab);
-    printf("  floor (sampling noise, paired round-0) = %.3f\n", floor);
-    if (flog) fprintf(flog, "floor (sampling-noise, paired round-0) = %.3f\n", floor);
+    run_round(m, tok, prompt, NULL, n_cur, nfrag, eos, seed_base ^ 977u, 0, -1, hB, NULL, 0, NULL, NULL, NULL);
+    out.floor = 1.0f - hist_cosine(hA, hB, vocab);
+    a2a_log("  floor (sampling noise, paired round-0) = %.3f\n", out.floor);
+    if (flog) fprintf(flog, "floor (sampling-noise, paired round-0) = %.3f\n", out.floor);
     free(hA); free(hB);
 
-    /* the real iterated field — soma coupling carries ACROSS rounds (field_dir not reset between them). */
     field_reset(m->embed, alpha > 0, alpha);
     g_leap_flips = g_leap_total = 0;
     char prev_chorus[4096]; prev_chorus[0] = 0;
     int *hist_prev = (int*)calloc(vocab, sizeof(int)), *hist_cur = (int*)calloc(vocab, sizeof(int));
     for (int r = 0; r < n_rounds; r++) {
         for (int i = 0; i < vocab; i++) hist_cur[i] = 0;
-        printf("\n  --- round %d/%d ---", r + 1, n_rounds);
-        if (flog) fprintf(flog, "\n**round %d:**\n", r + 1);
+        a2a_log("\n  --- round %d/%d (%d cells) ---", r + 1, n_rounds, n_cur);
+        if (flog) fprintf(flog, "\n**round %d:** (%d cells)\n", r + 1, n_cur);
         char this_chorus[4096]; float shuf = 0, disso = 0;
-        float avg = run_round(m, tok, prompt, prev_chorus, n_cells, nfrag, eos,
-                              42u + (unsigned)(r * 1000) * 7919u, 1, r, hist_cur, this_chorus, sizeof(this_chorus), &shuf, flog, &disso);
+        int verbose = g_quiet ? 0 : 1;
+        float avg = run_round(m, tok, prompt, prev_chorus, n_cur, nfrag, eos,
+                              seed_base + (unsigned)(r * 1000) * 7919u, verbose, r, hist_cur,
+                              this_chorus, sizeof(this_chorus), &shuf, flog, &disso);
         float dR = (r > 0) ? 1.0f - hist_cosine(hist_cur, hist_prev, vocab) : -1.0f;
         float deltaR = shuf - avg;
-        if (r > 0) { printf("\n  → round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, dR, floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak);
-                     if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, dR, floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak); }
-        else       { printf("\n  → round %d: avg entropy %.3f | d_R   —   (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak);
-                     if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R — (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak); }
+        out.last_ent = avg; out.last_dR = dR; out.last_deltaR = deltaR; out.last_disso = disso;
+        if (g_json) printf("{\"round\":%d,\"cells\":%d,\"ent\":%.4f,\"dR\":%.4f,\"deltaR\":%.4f,\"D_R\":%.4f,\"Dmean\":%.4f,\"Dpeak\":%.4f,\"s_peak\":%d}\n",
+                           r + 1, n_cur, avg, dR, deltaR, disso, g_dmean, g_dpeak, g_s_peak);
+        if (r > 0) { a2a_log("\n  → round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n",
+                     r + 1, avg, dR, out.floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak);
+                     if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n",
+                         r + 1, avg, dR, out.floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak); }
+        else       { a2a_log("\n  → round %d: avg entropy %.3f | d_R   —   (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n",
+                     r + 1, avg, out.floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak);
+                     if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R — (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n",
+                         r + 1, avg, out.floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak); }
         strncpy(prev_chorus, this_chorus, sizeof(prev_chorus) - 1); prev_chorus[sizeof(prev_chorus) - 1] = 0;
         int *tmp = hist_prev; hist_prev = hist_cur; hist_cur = tmp;
+        if (g_dynamic_cells) {
+            int prev_n = n_cur;
+            if (g_dmean > g_theta_hi && n_cur < 8) n_cur++;
+            else if (g_dmean < g_theta_lo) { low_streak++; if (low_streak >= 2 && n_cur > 1) n_cur--; }
+            else low_streak = 0;
+            if (n_cur != prev_n) a2a_log("\n  dynamic cells: %d → %d (Dmean=%.2f)\n", prev_n, n_cur, g_dmean);
+        }
     }
+    out.n_cells_last = n_cur;
+    out.leap_flip_rate = g_leap_total ? (float)g_leap_flips / g_leap_total : 0.0f;
     free(hist_prev); free(hist_cur);
-    if (g_leap_mode) { float fr = g_leap_total ? (float)g_leap_flips / g_leap_total : 0.0f;
-        printf("  leap-flip-rate = %.2f (%d/%d cells leapt to the dissenter)\n", fr, g_leap_flips, g_leap_total);
-        if (flog) fprintf(flog, "leap-flip-rate = %.2f (%d/%d)\n", fr, g_leap_flips, g_leap_total); }
-    printf("\n=== δ-field done — settling: d_R→floor? · resonance: Δ_R>0? (read the numbers, not the narrative) ===\n");
+    if (g_leap_mode) {
+        a2a_log("  leap-flip-rate = %.2f (%d/%d)\n", out.leap_flip_rate, g_leap_flips, g_leap_total);
+        if (flog) fprintf(flog, "leap-flip-rate = %.2f (%d/%d)\n", out.leap_flip_rate, g_leap_flips, g_leap_total);
+    }
+    a2a_log("\n=== δ-field done ===\n");
     if (flog) { fprintf(flog, "\n---\n"); fclose(flog); }
+    return out;
+}
+
+/* Batch experiment harness: fixed prompt, many seeds × leap modes → one CSV row each. */
+static void field_sweep(model_t *m, bpe_tokenizer *tok, const char *prompt,
+                        int n_seeds, int n_cells, int nfrag, int n_rounds, float alpha, int eos) {
+    printf("seed,leap,kv_beta,n_cells,floor,dR,deltaR,D_R,Dmean,Dpeak,flip_rate\n");
+    int save_quiet = g_quiet;
+    g_quiet = 1;
+    for (int leap = 0; leap <= 3; leap++) {
+        g_leap_mode = leap;
+        for (int si = 0; si < n_seeds; si++) {
+            unsigned seed = 1000u + (unsigned)si * 104729u + (unsigned)leap * 17u;
+            field_result r = field_chorus(m, tok, prompt, n_cells, nfrag, n_rounds, eos, alpha, seed);
+            printf("%u,%d,%.2f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+                   seed, leap, g_kv_beta, r.n_cells_last, r.floor, r.last_dR, r.last_deltaR,
+                   r.last_disso, g_dmean, g_dpeak, r.leap_flip_rate);
+        }
+    }
+    g_quiet = save_quiet;
 }
 
 /* Fisher-Yates over ids[from..to) — used to build a same-length but incoherent context. */
@@ -1252,11 +1413,20 @@ static int hf_ensure(const char *local, const char *remote_name) {
 
 static void usage(const char *prog) {
     printf("usage:\n");
-    printf("  %s [--16|--q8] [<model.gguf>] [prompt] [max_tokens] [temp]\n", prog);
-    printf("  %s [--16|--q8] [<model.gguf>] <prompt> field [n_cells] [nfrag] [n_rounds]\n", prog);
-    printf("  %s [--16|--q8] [<model.gguf>] <prompt> restest [n_cells] [nfrag] [n_rounds]\n", prog);
-    printf("  --16  packed f16 weights from HF (default nanoArianna v4)\n");
-    printf("  --q8  packed Q8_0 weights from HF (~half RAM vs f16)\n");
+    printf("  %s [flags] [<model.gguf>] [prompt] [max_tokens] [temp]\n", prog);
+    printf("  %s [flags] [<model.gguf>] <prompt> field [n_cells] [nfrag] [n_rounds] [alpha] [leap] [kv_beta]\n", prog);
+    printf("  %s [flags] [<model.gguf>] <prompt> sweep [n_seeds] [n_cells] [nfrag] [n_rounds] [alpha] [kv_beta]\n", prog);
+    printf("  %s [flags] [<model.gguf>] <prompt> restest [n_cells] [nfrag] [n_rounds]\n", prog);
+    printf("flags:\n");
+    printf("  --16 --q8          HF weights (packed f16 / q8)\n");
+    printf("  --quiet            suppress human-readable field output\n");
+    printf("  --json             one JSON line per field round (stdout)\n");
+    printf("  --dynamic-cells    bloom/collapse cell count from Dmean\n");
+    printf("  --theta-lo F       dissonance converge threshold (default 0.25)\n");
+    printf("  --theta-hi F       leap trigger threshold (default 0.50)\n");
+    printf("  --kv-beta F        KV field2field blend strength (0=off, try 0.25)\n");
+    printf("leap modes: 0=off  1=dissenter-only  2=full chorus+dissenter last  3=null(consensus last)\n");
+    printf("sweep: batch CSV — seeds × leap 0..3, compare Δ_R without hand-reading logs\n");
 }
 
 int main(int argc, char **argv) {
@@ -1273,7 +1443,13 @@ int main(int argc, char **argv) {
             model = WQ8;
             if (hf_ensure(WQ8, "nanollama-arianna-full-v4-step2750-q8_0.gguf")) return 1;
             a++;
-        } else {
+        } else if (!strcmp(argv[a], "--quiet")) { g_quiet = 1; a++; }
+        else if (!strcmp(argv[a], "--json")) { g_json = 1; a++; }
+        else if (!strcmp(argv[a], "--dynamic-cells")) { g_dynamic_cells = 1; a++; }
+        else if (!strcmp(argv[a], "--theta-lo") && a + 1 < argc) { g_theta_lo = (float)atof(argv[++a]); a++; }
+        else if (!strcmp(argv[a], "--theta-hi") && a + 1 < argc) { g_theta_hi = (float)atof(argv[++a]); a++; }
+        else if (!strcmp(argv[a], "--kv-beta") && a + 1 < argc) { g_kv_beta = (float)atof(argv[++a]); a++; }
+        else {
             fprintf(stderr, "unknown flag: %s\n", argv[a]);
             usage(argv[0]);
             return 1;
@@ -1294,22 +1470,34 @@ int main(int argc, char **argv) {
     model_t *m = model_load(gf); if (!m) return 1;
     bpe_tokenizer *tok = bpe_load(model); if (!tok) { fprintf(stderr, "bpe_load failed\n"); return 1; }
     int eos = -1; const gguf_kv *e = gguf_get_kv(gf, "tokenizer.ggml.eos_token_id"); if (e) eos = (int)e->val.u32;
-    printf("loaded in %.0f ms (vocab=%d eos=%d) -- arianna2arianna packed heart, single file\n",
-           now_ms() - t0, bpe_n_vocab(tok), eos);
+    a2a_log("loaded in %.0f ms (vocab=%d eos=%d) -- arianna2arianna packed heart\n",
+            now_ms() - t0, bpe_n_vocab(tok), eos);
 
-    /* δ-field chorus mode */
     if (pos + 1 < argc && strcmp(argv[pos + 1], "field") == 0) {
         int n_cells  = pos + 2 < argc ? atoi(argv[pos + 2]) : 5;
         int nfrag    = pos + 3 < argc ? atoi(argv[pos + 3]) : 16;
         int n_rounds = pos + 4 < argc ? atoi(argv[pos + 4]) : 1;
-        float alpha  = pos + 5 < argc ? (float)atof(argv[pos + 5]) : 0.0f;   /* soma coupling strength */
-        g_leap_mode  = pos + 6 < argc ? atoi(argv[pos + 6]) : 0;             /* dissonance-into-forward leap */
-        if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
+        float alpha  = pos + 5 < argc ? (float)atof(argv[pos + 5]) : 0.0f;
+        g_leap_mode  = pos + 6 < argc ? atoi(argv[pos + 6]) : 0;
+        if (pos + 7 < argc) g_kv_beta = (float)atof(argv[pos + 7]);
+        if (n_cells <= 0) {
             float pe = probe_entropy(m, tok, prompt);
             n_cells = (int)(pe + 0.5f); if (n_cells < 1) n_cells = 1; if (n_cells > 8) n_cells = 8;
-            printf("auto: prompt entropy %.2f -> %d cells (low=collapse, high=bloom)\n", pe, n_cells);
+            a2a_log("auto: prompt entropy %.2f -> %d cells\n", pe, n_cells);
         }
-        field_chorus(m, tok, prompt, n_cells, nfrag, n_rounds, eos, alpha);
+        field_chorus(m, tok, prompt, n_cells, nfrag, n_rounds, eos, alpha, 42u);
+        return 0;
+    }
+
+    if (pos + 1 < argc && strcmp(argv[pos + 1], "sweep") == 0) {
+        int n_seeds  = pos + 2 < argc ? atoi(argv[pos + 2]) : 5;
+        int n_cells  = pos + 3 < argc ? atoi(argv[pos + 3]) : 4;
+        int nfrag    = pos + 4 < argc ? atoi(argv[pos + 4]) : 12;
+        int n_rounds = pos + 5 < argc ? atoi(argv[pos + 5]) : 3;
+        float alpha  = pos + 6 < argc ? (float)atof(argv[pos + 6]) : 0.0f;
+        if (pos + 7 < argc) g_kv_beta = (float)atof(argv[pos + 7]);
+        if (n_seeds < 1) n_seeds = 1;
+        field_sweep(m, tok, prompt, n_seeds, n_cells, nfrag, n_rounds, alpha, eos);
         return 0;
     }
 

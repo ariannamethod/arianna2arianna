@@ -1,9 +1,6 @@
 # arianna2arianna — single-file C heart. Punk: no external deps, just cc + libm.
-# (GGUF + SentencePiece + Llama forward + δ-field).
-# Build:  make            Run one voice:  make run            δ-field chorus:  make field
-#
-# SIMD auto per arch: arm64 → NEON+dotprod, x86_64 → AVX2+FMA+F16C, else scalar C.
-# Portable scalar-only:  make portable
+# Build:  make            Run:  make run            Field:  make field
+# Sweep:  make sweep      Test: make test           Portable: make portable
 
 CC     ?= cc
 CFLAGS ?= -O2 -Wall
@@ -12,7 +9,6 @@ UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 
 ifneq ($(PORTABLE),1)
-  # auto SIMD per build host arch
   ifeq ($(UNAME_M),arm64)
     CFLAGS += -march=armv8.2-a+fp16+dotprod
   else ifeq ($(UNAME_M),x86_64)
@@ -27,7 +23,7 @@ ifneq ($(PORTABLE),1)
   endif
 endif
 
-BIN    := ariannameethod
+BIN    := arianna2arianna
 SRC    := arianna2arianna.c
 
 HF_BASE = https://huggingface.co/ataeff/ariannamethod/resolve/main/weights
@@ -48,26 +44,30 @@ $(WEIGHTS)/nanollama-arianna-full-v4-step2750-q8_0.gguf:
 
 weights: $(MODEL)
 
-# pure POSIX C scalar — no NEON/AVX in hot path (runs anywhere)
 portable:
 	$(MAKE) PORTABLE=1 CFLAGS="-O2 -Wall -DA2A_SCALAR_ONLY" LDLIBS="-lm" clean $(BIN)
 
-# single voice (continuation) — packed f16 from HF
 run: $(BIN) $(MODEL)
 	./$(BIN) --16 "$(PROMPT)" 48 0.8
 
 run-q8: $(BIN) $(WEIGHTS)/nanollama-arianna-full-v4-step2750-q8_0.gguf
 	./$(BIN) --q8 "$(PROMPT)" 48 0.8
 
-# δ-field chorus: N cells x R rounds, coupled + meta-recursive (cells hear each other)
 field: $(BIN) $(MODEL)
-	./$(BIN) --16 "$(PROMPT)" field 4 12 3
+	./$(BIN) --16 "$(PROMPT)" field 4 12 3 0 2 0.25
+
+# batch: 5 seeds × leap 0..3 → CSV on stdout
+sweep: $(BIN) $(MODEL)
+	./$(BIN) --16 --quiet "$(PROMPT)" sweep 5 4 12 3 0 0.25
 
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 field clean weights test portable
+.PHONY: run run-q8 field sweep clean weights test portable bench
 
 test: $(BIN) $(MODEL)
 	./$(BIN) --16 "What is resonance?" 6 0.8
 	./$(BIN) --q8 "What is resonance?" 6 0.8
+
+bench: $(BIN) $(MODEL)
+	./$(BIN) --16 "What is resonance?" 24 0.8
