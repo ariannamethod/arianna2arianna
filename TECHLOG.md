@@ -278,3 +278,66 @@ channel reads un-roped neighbour K/V as a set. Shuffling K/V pairs is therefore
 almost permutation-invariant, so `Δ_R^kv` is near zero. This is useful because
 the output is no longer lying, but a real order-sensitive KV body probably needs
 a positional cross-cell lane rather than a pure bag-of-KV neighbour channel.
+
+## 2026-06-14 - Codex pass: positional neighbour lane + question loop
+
+### Context
+
+The previous `Δ_R^kv` repair made the output honest, but it also proved the
+neighbour channel was too set-like: shuffling neighbour K/V pairs barely moved
+the entropy. The channel needed positional assignment, not only a different
+iteration order.
+
+The next organism step was question routing: if a cell unexpectedly speaks a
+question, do not broadcast it to the whole chorus. Let one or two cells that
+resonate with it answer explicitly.
+
+### What changed
+
+- Cross-cell attention now stores neighbour K un-roped, then assigns it to the
+  live neighbour slot before scoring:
+  - ordered: neighbour content `j` is roped as slot `j`;
+  - shuffled: neighbour content `jj` is roped as slot `j`.
+- This makes `Δ_R^kv` measure a real content-position relation instead of a
+  permutation-invariant bag of K/V pairs.
+- Added `qloop` to `field`:
+
+```text
+field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop]
+```
+
+- `qloop=0` disables question routing.
+- `qloop=1` allows one resonant cell-question route.
+- `qloop=2` allows two routes, with distinct target cells when possible.
+- The router scores question routes by:
+  - question cell fragment contains `?`;
+  - embedding-centroid distance between asker and target;
+  - target decisiveness from lower entropy;
+  - small bonus for more than one question mark.
+- If a qloop answer itself contains `?`, a single trigger-hop can recruit one
+  further cell if the metric clears a higher gate.
+
+### Verification
+
+Positional KV lane smoke:
+
+```text
+→ round 1: avg entropy 4.514 | d_R — (floor 0.769) | Δ_R(text n/a) | Δ_R^kv +0.134 (floor 0.220 margin -0.087) | D_R 0.858 | Dpos 0.50 peak 0.67@s1
+→ round 2: avg entropy 5.009 | d_R 0.846 (floor 0.769) | Δ_R(text n/a) | Δ_R^kv +0.119 (floor 0.111 margin +0.008) | D_R 0.990 | Dpos 0.50 peak 0.67@s1
+```
+
+Question-loop smoke:
+
+```text
+r1 cell 2: ... clear ideas? Sometimes, at
+r1 cell 4: What it means this mean? ...
+↳ qloop c2→c1 score 1.048: “Batingness” of time to
+↳ qloop c2→c0 score 1.017: 1) Appitect not just voice
+```
+
+### TODO
+
+- Consider using a tiny logit-level question detector later instead of literal
+  `?` in decoded text.
+- Let trigger-hop use the answering cell's KV, not only a short text prompt, if
+  this becomes central rather than a probe.

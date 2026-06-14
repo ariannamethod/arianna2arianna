@@ -828,6 +828,8 @@ static int g_nbr_len = 0;
 static int g_nbr_shuf = 0;      /* KV-order shadow: 1 = permute the neighbour's positions before attending */
 static int g_nbr_perm[512];     /* the permutation of 0..g_nbr_len-1 used when g_nbr_shuf */
 static int g_kvshuf = 0;        /* 1 = run the KV-order shadow probe (Δ_R^kv) per cell */
+static int g_qloop = 0;         /* 0=off; 1..2 = resonant cell-question routes per round */
+static float g_qloop_min = 0.42f;
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -846,7 +848,7 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
 
     float *x = calloc(E, sizeof(float)); memcpy(x, m->tok_emb + (long)token*E, E*sizeof(float));
     float *xn = calloc(E, sizeof(float)), *q = calloc(QD, sizeof(float)), *kk = calloc(KVD, sizeof(float));
-    float *vv = calloc(KVD, sizeof(float)), *ao = calloc(QD, sizeof(float)), *g = calloc(FFN, sizeof(float)), *qu = calloc(QD, sizeof(float));
+    float *vv = calloc(KVD, sizeof(float)), *ao = calloc(QD, sizeof(float)), *g = calloc(FFN, sizeof(float)), *nk = calloc(HD, sizeof(float));
     float *u = calloc(FFN, sizeof(float)), *t = calloc(E, sizeof(float)), *sc = calloc((size_t)kv->max_seq, sizeof(float));
     float *scn = calloc((size_t)kv->max_seq, sizeof(float));   /* neighbour-channel scores (separate softmax) */
 
@@ -858,8 +860,7 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
             for (int h = 0; h < KV; h++) rmsnorm(kk + h*HD, kk + h*HD, m->L[l].k_norm, HD, eps);
         }
         long base = (long)l*kv->max_seq*KVD;
-        memcpy(kv->ku + base + (long)pos*KVD, kk, (size_t)KVD*sizeof(float));   /* un-rope'd K (phase-coherent cross-cell) */
-        memcpy(qu, q, (size_t)QD*sizeof(float));                                /* un-rope'd q for cross-cell scores */
+        memcpy(kv->ku + base + (long)pos*KVD, kk, (size_t)KVD*sizeof(float));   /* un-rope'd K; cross-cell assigns neighbour content to live position slots */
         for (int h = 0; h < H;  h++) ropef(q + h*HD, pos, HD, m->rope_base);
         for (int h = 0; h < KV; h++) ropef(kk + h*HD, pos, HD, m->rope_base);
         memcpy(kv->k + base + (long)pos*KVD, kk, KVD*sizeof(float));
@@ -869,13 +870,20 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
         int xc = (g_xcell > 0 && g_nbr && g_nbr_len > 0) ? g_nbr_len : 0;   /* neighbour positions (separate channel) */
         long nbase = xc ? (long)l * g_nbr->max_seq * KVD : 0;
         for (int h = 0; h < H; h++) {
-            int kvh = h / gqa; float *qh = q + h*HD; const float *quh = qu + h*HD; int np = pos + 1;
+            int kvh = h / gqa; float *qh = q + h*HD; int np = pos + 1;
             /* OWN attention — UNCHANGED from baseline (preserves own-context order = Δ_R) */
             for (int j = 0; j <= pos; j++) { float *kj = kv->k + base + (long)j*KVD + kvh*HD, d = 0; for (int t2 = 0; t2 < HD; t2++) d += qh[t2]*kj[t2]; sc[j] = d*scale; }
             softmax(sc, np); float *oh = ao + h*HD;
             for (int j = 0; j <= pos; j++) { float *vj = kv->v + base + (long)j*KVD + kvh*HD, w = sc[j]; for (int t2 = 0; t2 < HD; t2++) oh[t2] += w*vj[t2]; }
-            if (xc) {   /* NEIGHBOUR channel — SEPARATE softmax, added with weight λ (own ctx + λ·neighbour) */
-                for (int j = 0; j < xc; j++) { int jj = (g_nbr_shuf && j < 512) ? g_nbr_perm[j] : j; const float *kj = g_nbr->ku + nbase + (long)jj*KVD + kvh*HD; float d = 0; for (int t2 = 0; t2 < HD; t2++) d += quh[t2]*kj[t2]; scn[j] = d*scale; }
+            if (xc) {   /* NEIGHBOUR channel — content from jj is heard at slot j; shuffling now changes position, not loop order. */
+                for (int j = 0; j < xc; j++) {
+                    int jj = (g_nbr_shuf && j < 512) ? g_nbr_perm[j] : j;
+                    const float *ku = g_nbr->ku + nbase + (long)jj*KVD + kvh*HD;
+                    memcpy(nk, ku, (size_t)HD * sizeof(float));
+                    ropef(nk, j, HD, m->rope_base);
+                    float d = 0; for (int t2 = 0; t2 < HD; t2++) d += qh[t2]*nk[t2];
+                    scn[j] = d*scale;
+                }
                 softmax(scn, xc);
                 for (int j = 0; j < xc; j++) { int jj = (g_nbr_shuf && j < 512) ? g_nbr_perm[j] : j; const float *vj = g_nbr->v + nbase + (long)jj*KVD + kvh*HD; float w = g_xcell * scn[j]; for (int t2 = 0; t2 < HD; t2++) oh[t2] += w*vj[t2]; }
             }
@@ -889,7 +897,7 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
     }
     rmsnorm(xn, x, m->out_norm, E, eps);
     weight_matvec(&m->output, xn, logits);
-    free(x); free(xn); free(q); free(kk); free(vv); free(ao); free(g); free(u); free(t); free(sc); free(scn); free(qu);
+    free(x); free(xn); free(q); free(kk); free(vv); free(ao); free(g); free(u); free(t); free(sc); free(scn); free(nk);
 }
 
 static int argmax(const float *x, int n) { int b = 0; for (int i = 1; i < n; i++) if (x[i] > x[b]) b = i; return b; }
@@ -1086,6 +1094,43 @@ static float vec_cosine(const float *a, const float *b, int n) {
     return (na == 0 || nb == 0) ? 0.0f : (float)(dot / (sqrt(na) * sqrt(nb)));
 }
 
+static int frag_question_count(const char *s) {
+    int n = 0;
+    if (!s) return 0;
+    for (; *s; s++) if (*s == '?') n++;
+    return n;
+}
+
+static int pick_question_routes(const char frag[8][1024], const float *cent, int n_cells, int embed,
+                                int *out_q, int *out_t, float *out_score, int max_routes) {
+    int lim = n_cells < 8 ? n_cells : 8;
+    int n = 0;
+    if (!cent || lim < 2) return 0;
+    for (int q = 0; q < lim; q++) {
+        int qmarks = frag_question_count(frag[q]);
+        if (qmarks <= 0) continue;
+        float qopen = g_cell_ent[q] / 8.0f; if (qopen > 1.0f) qopen = 1.0f;
+        for (int t = 0; t < lim; t++) if (t != q) {
+            float dist = 1.0f - vec_cosine(cent + (size_t)q * embed, cent + (size_t)t * embed, embed);
+            float confidence = 1.0f / (1.0f + g_cell_ent[t]);
+            float score = dist + 0.15f * qopen + 0.20f * confidence + 0.05f * (float)(qmarks - 1);
+            if (score < g_qloop_min) continue;
+            int dup = 0;
+            for (int i = 0; i < n; i++) if (out_t[i] == t || (out_q[i] == q && out_t[i] == t)) dup = 1;
+            if (dup) continue;
+            int pos = n < max_routes ? n++ : max_routes - 1;
+            if (n == max_routes && score <= out_score[pos]) continue;
+            out_q[pos] = q; out_t[pos] = t; out_score[pos] = score;
+            for (int i = pos; i > 0 && out_score[i] > out_score[i - 1]; i--) {
+                float fs = out_score[i]; out_score[i] = out_score[i - 1]; out_score[i - 1] = fs;
+                int iq = out_q[i]; out_q[i] = out_q[i - 1]; out_q[i - 1] = iq;
+                int it = out_t[i]; out_t[i] = out_t[i - 1]; out_t[i - 1] = it;
+            }
+        }
+    }
+    return n;
+}
+
 /* ── δ-life: the Game of Life over ANGLES (a cell is perception, the body is shared+fixed) ── */
 #define POP_MAX  8        /* hard cap = the instrument arrays g_commit[8] etc.; real-100 is a Phase-2 widening */
 #define F_DEATH  0.30f    /* config.py:12 DEATH_THRESHOLD */
@@ -1223,6 +1268,62 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
         if (c < 8) { strncpy(cur_frag[c], frag, 1023); cur_frag[c][1023] = 0; }
         if (g_xcell > 0) { if (prev_kv) { free(prev_kv->k); free(prev_kv->v); free(prev_kv->ku); free(prev_kv); } prev_kv = cur_kv; prev_len = cur_len; }  /* chain c→c+1 */
+    }
+    if (g_qloop && !g_life_on && verbose && out_disso && cent) {
+        int qcell[2] = {0, 0}, tcell[2] = {0, 0};
+        float qscore[2] = {-1.0f, -1.0f};
+        int max_routes = g_qloop > 2 ? 2 : g_qloop;
+        int routes = pick_question_routes(cur_frag, cent, n_cells, m->embed, qcell, tcell, qscore, max_routes);
+        for (int route = 0; route < routes; route++) {
+            char qctx[4096], qfrag[1024]; int qctx_ids[512], qids[128], qn = 0;
+            snprintf(qctx, sizeof(qctx), "%s\ncell %d asked: %s\ncell %d answers the question to itself:",
+                     prompt, qcell[route], cur_frag[qcell[route]], tcell[route]);
+            int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
+            float qtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)tcell[route] / (n_cells - 1) : 0.5f);
+            int qfrag_n = nfrag / 2; if (qfrag_n < 2) qfrag_n = 2; if (qfrag_n > 8) qfrag_n = 8;
+            g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0;
+            float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
+                                    seed_base ^ 0xa2a51u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + r * 265443576 + route * 65537),
+                                    eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
+            for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
+            int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);
+            if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
+            printf("\n  ↳ qloop c%d→c%d score %.3f: %s   [entropy=%.2f]", qcell[route], tcell[route], qscore[route], qfrag, qent);
+            if (flog) fprintf(flog, "- qloop c%d->c%d (score=%.3f, entropy=%.2f):%s\n", qcell[route], tcell[route], qscore[route], qent, qfrag);
+
+            if (frag_question_count(qfrag) > 0 && qn > 0) {
+                float *qcent = (float*)calloc(m->embed, sizeof(float));
+                if (qcent) {
+                    for (int i = 0; i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) {
+                        const float *e = m->tok_emb + (long)qids[i] * m->embed;
+                        for (int d = 0; d < m->embed; d++) qcent[d] += e[d];
+                    }
+                    for (int d = 0; d < m->embed; d++) qcent[d] /= qn;
+                    int lim = n_cells < 8 ? n_cells : 8, next = -1; float best = -1.0f;
+                    for (int t = 0; t < lim; t++) if (t != qcell[route] && t != tcell[route]) {
+                        float score = 1.0f - vec_cosine(qcent, cent + (size_t)t * m->embed, m->embed);
+                        score += 0.15f / (1.0f + g_cell_ent[t]);
+                        if (score > best) { best = score; next = t; }
+                    }
+                    if (next >= 0 && best >= g_qloop_min + 0.10f) {
+                        char rctx[4096], rfrag[1024]; int rctx_ids[512], rids[128], rn = 0;
+                        snprintf(rctx, sizeof(rctx), "%s\ncell %d answered: %s\ncell %d is triggered and answers briefly:",
+                                 prompt, tcell[route], qfrag, next);
+                        int rnp = bpe_encode(tok, rctx, rctx_ids, max_seq - 8);
+                        float rtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)next / (n_cells - 1) : 0.5f);
+                        float rent = cell_speak(m, tok, rctx_ids, rnp, 2, rtemp, 40, 1.4f,
+                                                seed_base ^ 0xb17a5u ^ (unsigned)(next * 4057 + route * 65537 + r * 7919),
+                                                eos, max_seq, rfrag, sizeof(rfrag), 0, rids, &rn, NULL, NULL, NULL);
+                        for (int i = 0; hist && i < rn; i++) if (rids[i] >= 0 && rids[i] < m->vocab) hist[rids[i]]++;
+                        add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", rfrag);
+                        if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
+                        printf("\n  ↳ qloop trigger c%d→c%d score %.3f: %s   [entropy=%.2f]", tcell[route], next, best, rfrag, rent);
+                        if (flog) fprintf(flog, "- qloop-trigger c%d->c%d (score=%.3f, entropy=%.2f):%s\n", tcell[route], next, best, rent, rfrag);
+                    }
+                    free(qcent);
+                }
+            }
+        }
     }
     if (prev_kv) { free(prev_kv->k); free(prev_kv->v); free(prev_kv->ku); free(prev_kv); }   /* free the last cell's kept kv */
     g_nbr = NULL; g_nbr_len = 0;
@@ -1422,7 +1523,13 @@ static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *pro
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) { printf("usage: %s <model.gguf> [prompt] [max_tokens] [temp]\n", argv[0]); return 1; }
+    if (argc < 2) {
+        printf("usage: %s <model.gguf> [prompt] [max_tokens] [temp]\n", argv[0]);
+        printf("       %s <model.gguf> <prompt> field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop]\n", argv[0]);
+        printf("       %s <model.gguf> <prompt> restest [cells] [frag] [rounds]\n", argv[0]);
+        printf("       %s <model.gguf> <prompt> life [ticks] [frag] [init_cells]\n", argv[0]);
+        return 1;
+    }
     const char *prompt = argc > 2 ? argv[2] : "What is resonance?";
     int max_tokens = argc > 3 ? atoi(argv[3]) : 48;
     float temp = argc > 4 ? (float)atof(argv[4]) : 0.8f;
@@ -1447,6 +1554,9 @@ int main(int argc, char **argv) {
         g_xrep       = argc > 11 ? (float)atof(argv[11]) : 1.3f; /* cross-cell rep-penalty: don't echo neighbours' words (1=off) */
         g_life_on    = argc > 12 ? atoi(argv[12]) : 0;           /* δ-life: 1 = measure/run Game of Life (incr.0 = log fitness inputs) */
         g_kvshuf     = argc > 13 ? atoi(argv[13]) : (g_chorus && g_xcell > 0 ? 1 : 0);  /* default chorus probe: Δ_R^kv + permutation floor */
+        g_qloop      = argc > 14 ? atoi(argv[14]) : (g_chorus ? 2 : 0);  /* 0=off; 1..2 resonant question routes */
+        if (g_qloop < 0) g_qloop = 0;
+        if (g_qloop > 2) g_qloop = 2;
         if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
             float pe = probe_entropy(m, tok, prompt);
             n_cells = (int)(pe + 0.5f); if (n_cells < 1) n_cells = 1; if (n_cells > 8) n_cells = 8;
