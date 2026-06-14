@@ -563,6 +563,9 @@ static kv_cache *kv_new(int nl, int max_seq, int kv_dim) {
 static float g_xcell = 0.0f;   /* cross-cell neighbour-channel weight λ (0 = off): balanced own-ctx + λ·neighbour */
 static const kv_cache *g_nbr = NULL;
 static int g_nbr_len = 0;
+static int g_nbr_shuf = 0;      /* KV-order shadow: 1 = permute the neighbour's positions before attending */
+static int g_nbr_perm[512];     /* the permutation of 0..g_nbr_len-1 used when g_nbr_shuf */
+static int g_kvshuf = 0;        /* 1 = run the KV-order shadow probe (Δ_R^kv) per cell */
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -610,9 +613,9 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
             softmax(sc, np); float *oh = ao + h*HD;
             for (int j = 0; j <= pos; j++) { float *vj = kv->v + base + (long)j*KVD + kvh*HD, w = sc[j]; for (int t2 = 0; t2 < HD; t2++) oh[t2] += w*vj[t2]; }
             if (xc) {   /* NEIGHBOUR channel — SEPARATE softmax, added with weight λ (own ctx + λ·neighbour) */
-                for (int j = 0; j < xc; j++) { const float *kj = g_nbr->ku + nbase + (long)j*KVD + kvh*HD; float d = 0; for (int t2 = 0; t2 < HD; t2++) d += quh[t2]*kj[t2]; scn[j] = d*scale; }
+                for (int j = 0; j < xc; j++) { int jj = (g_nbr_shuf && j < 512) ? g_nbr_perm[j] : j; const float *kj = g_nbr->ku + nbase + (long)jj*KVD + kvh*HD; float d = 0; for (int t2 = 0; t2 < HD; t2++) d += quh[t2]*kj[t2]; scn[j] = d*scale; }
                 softmax(scn, xc);
-                for (int j = 0; j < xc; j++) { const float *vj = g_nbr->v + nbase + (long)j*KVD + kvh*HD; float w = g_xcell * scn[j]; for (int t2 = 0; t2 < HD; t2++) oh[t2] += w*vj[t2]; }
+                for (int j = 0; j < xc; j++) { int jj = (g_nbr_shuf && j < 512) ? g_nbr_perm[j] : j; const float *vj = g_nbr->v + nbase + (long)jj*KVD + kvh*HD; float w = g_xcell * scn[j]; for (int t2 = 0; t2 < HD; t2++) oh[t2] += w*vj[t2]; }
             }
         }
         matvec(t, m->L[l].wo, ao, E, QD); for (int i = 0; i < E; i++) x[i] += t[i];
@@ -903,12 +906,22 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         cell_n = 0;
         g_nbr = prev_kv; g_nbr_len = prev_len;        /* cross-cell: this cell hears the prior cell's KV */
         kv_cache *cur_kv = NULL; int cur_len = 0;
+        int tok_before = g_round_tokn;                /* cross-rep word-memory BEFORE this cell speaks (cells 0..c-1) */
         float ent = cell_speak(m, tok, ids, np, nfrag_c, temp, 40, 1.4f, seed, eos, max_seq,
                                frag, sizeof(frag), verbose, cell_ids, &cell_n,
                                (out_disso && c < 8) ? g_commit[c] : NULL,
                                g_xcell > 0 ? &cur_kv : NULL, g_xcell > 0 ? &cur_len : NULL);
         if (out_disso && c < 8) g_commit_n[c] = cell_n;
         if (c < 8) g_cell_ent[c] = ent;   /* δ-life: capture per-cell entropy (fitness input) */
+        if (g_kvshuf && g_xcell > 0 && prev_kv && c > 0) {   /* KV-order shadow: does cross-cell exploit the neighbour's ORDER? — FIRST-token, no sampling chaos */
+            g_nbr = prev_kv; g_nbr_len = prev_len;
+            g_nbr_shuf = 0; float e0 = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour ORDERED */
+            for (int j = 0; j < prev_len && j < 512; j++) g_nbr_perm[j] = j;
+            for (int j = (prev_len < 512 ? prev_len : 512) - 1; j > 0; j--) { int k = rand() % (j + 1); int t = g_nbr_perm[j]; g_nbr_perm[j] = g_nbr_perm[k]; g_nbr_perm[k] = t; }
+            g_nbr_shuf = 1; float e1 = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour SHUFFLED */
+            g_nbr_shuf = 0;
+            printf("   [Δ_R^kv c%d = %+.6f (1st-tok)]", c, e1 - e0);
+        }
         ent_sum += ent;
         for (int i = 0; i < cell_n; i++) if (cell_ids[i] >= 0 && cell_ids[i] < m->vocab) hist[cell_ids[i]]++;
         if (cent) {                                  /* this cell's fragment centroid in embedding space */
@@ -919,9 +932,13 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         if (out_shuf) {                              /* Δ_R shadow: same ctx, tail shuffled, field OFF, raw entropy */
             memcpy(sids, ids, (size_t)np * sizeof(int));
             if (np > np_prompt) shuffle_ids(sids, np_prompt, np, seed ^ 0x5bd1e995u);
-            int save_on = g_field_on; g_field_on = 0; int save_tok = g_round_tokn;
-            shuf_sum += cell_speak(m, tok, sids, np, nfrag, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);
-            g_field_on = save_on; g_round_tokn = save_tok;   /* shadow doesn't pollute the cross-rep word-memory */
+            int save_on = g_field_on; g_field_on = 0;
+            int tok_after = g_round_tokn, saved[64], ns = 0;   /* cell c's coherent words are [tok_before, tok_after) */
+            for (int k = tok_before; k < tok_after && ns < 64; k++) saved[ns++] = g_round_tok[k];
+            g_round_tokn = tok_before;                    /* shadow sees the SAME word-memory as coherent (0..c-1), not cell c's own — kills the cross-rep artifact */
+            shuf_sum += cell_speak(m, tok, sids, np, nfrag_c, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* nfrag_c: same length as coherent */
+            g_field_on = save_on; g_round_tokn = tok_before + ns;
+            for (int k = 0; k < ns; k++) g_round_tok[tok_before + k] = saved[k];   /* restore cell c's COHERENT words (not the shadow's) for cells c+1.. */
         }
         if (verbose) printf("   [entropy=%.2f]", ent);
         if (flog) fprintf(flog, "- cell %d (T=%.2f, entropy=%.2f):%s\n", c, temp, ent, frag);
@@ -940,7 +957,8 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             dsum += 1.0 - vec_cosine(cent + (size_t)a * m->embed, cent + (size_t)b * m->embed, m->embed); dn++;
         }
         *out_disso = dn ? (float)(dsum / dn) : 0.0f;
-        if (g_life_on) {   /* δ-life: per-cell fitness = sqrt(theme_n · distinct_n) [calibrated] → g_nextfit, committed in pop_tick */
+        if (g_life_on) {   /* δ-life fitness = sqrt(theme_n·distinct_n) — an INTERPRETIVE heuristic (calibrated magic constants),
+                            * NOT a measurement of the floor/Δ_R/D_R kind. Selection pressure, not a claim. → g_nextfit, committed in pop_tick */
             float *F = (float*)calloc(m->embed, sizeof(float));
             for (int a = 0; a < n_cells; a++) { const float *ca = cent + (size_t)a*m->embed; for (int d = 0; d < m->embed; d++) F[d] += ca[d]; }
             if (n_cells) for (int d = 0; d < m->embed; d++) F[d] /= n_cells;
@@ -1123,11 +1141,12 @@ int main(int argc, char **argv) {
         int nfrag    = argc > 5 ? atoi(argv[5]) : 16;
         int n_rounds = argc > 6 ? atoi(argv[6]) : 1;
         float alpha  = argc > 7 ? (float)atof(argv[7]) : 0.0f;   /* soma coupling strength (0 = text-only baseline) */
-        g_leap_mode  = argc > 8 ? atoi(argv[8]) : 2;             /* DEFAULT ALIVE: leap-v2 (dissenter-last). 0 = baseline */
+        g_leap_mode  = argc > 8 ? atoi(argv[8]) : 2;             /* leap-v2 — RELAY-ONLY (no-op under the default chorus; lives only when g_chorus=0) */
         g_xcell      = argc > 9 ? (float)atof(argv[9]) : 0.3f;   /* DEFAULT ALIVE: λ=0.3 balanced cross-cell. 0 = off */
         g_chorus     = argc > 10 ? atoi(argv[10]) : 1;           /* DEFAULT: 1 = chorus (each cell own answer). 0 = relay */
         g_xrep       = argc > 11 ? (float)atof(argv[11]) : 1.3f; /* cross-cell rep-penalty: don't echo neighbours' words (1=off) */
         g_life_on    = argc > 12 ? atoi(argv[12]) : 0;           /* δ-life: 1 = measure/run Game of Life (incr.0 = log fitness inputs) */
+        g_kvshuf     = argc > 13 ? atoi(argv[13]) : 0;           /* 1 = KV-order shadow probe (Δ_R^kv: does cross-cell catch neighbour ORDER?) */
         if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
             float pe = probe_entropy(m, tok, prompt);
             n_cells = (int)(pe + 0.5f); if (n_cells < 1) n_cells = 1; if (n_cells > 8) n_cells = 8;
