@@ -5,6 +5,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/lib.sh"
+cd "$A2A_ROOT"
 
 echo "arianna2arianna tests"
 echo "  bin:  $A2A_BIN"

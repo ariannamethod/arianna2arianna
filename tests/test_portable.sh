@@ -19,7 +19,8 @@ if [[ ! -x "$PORT_BIN" ]]; then
 fi
 
 out="$("$PORT_BIN" "$A2A_MODEL_F16" "ok" 2 0 2>&1)"
-a2a_assert_grep "f16-packed" "$out" "portable binary runs inference"
+a2a_assert_grep "model: arch=llama" "$out" "portable binary runs inference"
+a2a_assert_grep "loaded in" "$out" "portable reports load time"
 a2a_assert_grep "decode:" "$out" "portable decode completes"
 
 # restore SIMD build for other tests

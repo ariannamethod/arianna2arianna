@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# δ-field: JSON telemetry, sweep CSV, leap modes.
+# δ-field, resonance control, and δ-life smoke tests.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -12,29 +12,28 @@ if ! a2a_have_f16; then
     return 0 2>/dev/null || exit 0
 fi
 
-# --json: one JSON object per round on stdout
-json_out="$("$A2A_BIN" --16 --quiet --json "resonance" field 3 6 2 0 0 0 2>&1)"
-a2a_assert_grep '"round":1' "$json_out" "field --json emits round 1"
-a2a_assert_grep '"deltaR":' "$json_out" "field --json includes deltaR"
-a2a_assert_grep '"dR":' "$json_out" "field --json includes dR"
+field_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" field 3 4 2 0 2 0.25 2>&1)"
+a2a_assert_grep "δ-field: 3 cells × 2 rounds" "$field_out" "field starts with requested shape"
+a2a_assert_grep "floor \\(sampling noise" "$field_out" "field reports sampling floor"
+a2a_assert_grep "round 1:" "$field_out" "field reports round 1 metrics"
+a2a_assert_grep "d_R" "$field_out" "field reports d_R"
+a2a_assert_grep "Dpos" "$field_out" "field reports positional dissonance"
+a2a_assert_grep "δ-field done" "$field_out" "field completes"
 
-json_lines="$(echo "$json_out" | grep -c '^{' || true)"
-if [[ "$json_lines" -ge 2 ]]; then
-    a2a_ok "field --json prints >=2 round lines ($json_lines)"
+if [[ -f "$A2A_ROOT/FIELDLOG.md" ]] && grep -q "resonance" "$A2A_ROOT/FIELDLOG.md"; then
+    a2a_ok "field appends FIELDLOG.md"
 else
-    a2a_fail "field --json expected 2 round lines, got $json_lines"
+    a2a_fail "field did not append FIELDLOG.md"
 fi
 
-# sweep: header + seeds × leaps rows
-sweep_out="$("$A2A_BIN" --16 --quiet "resonance" sweep 2 3 6 2 0 0 2>&1)"
-a2a_assert_grep '^seed,leap,kv_beta' "$sweep_out" "sweep CSV header"
-sweep_rows="$(echo "$sweep_out" | grep -cE '^[0-9]+,[0-3],' || true)"
-if [[ "$sweep_rows" -eq 8 ]]; then
-    a2a_ok "sweep 2 seeds × 4 leaps = 8 rows"
-else
-    a2a_fail "sweep expected 8 data rows, got $sweep_rows"
-fi
+restest_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" restest 3 4 2 2>&1)"
+a2a_assert_grep "resonance test: coherent vs same-length SHUFFLED" "$restest_out" "restest starts"
+a2a_assert_grep "COHERENT" "$restest_out" "restest includes coherent arm"
+a2a_assert_grep "SHUFFLED" "$restest_out" "restest includes shuffled arm"
+a2a_assert_grep "resonance-beyond-length" "$restest_out" "restest reports control delta"
 
-# leap mode 2 should not crash with kv_beta
-leap_out="$("$A2A_BIN" --16 --quiet "resonance" field 3 6 1 0 2 0.25 2>&1)"
-a2a_assert_grep "f16-packed" "$leap_out" "leap=2 kv_beta=0.25 runs"
+life_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" life 2 4 3 2>&1)"
+a2a_assert_grep "δ-life: Game of Life" "$life_out" "life starts"
+a2a_assert_grep "births" "$life_out" "life reports births"
+a2a_assert_grep "deaths" "$life_out" "life reports deaths"
+a2a_assert_grep "pop ended" "$life_out" "life completes"
