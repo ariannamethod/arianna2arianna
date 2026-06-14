@@ -171,3 +171,64 @@ the hot-loop fix worked.
 - Consider exact NEON Q4_0 next only if q4 becomes a real path.
 - Keep approximate activation-int8/SDOT behind a future explicit fast flag; do
   not silently change logits for the chorus.
+
+## 2026-06-14 - Codex pass: cross-machine fallback check
+
+### Context
+
+The packed NEON work is Apple-Silicon-specific. The important portability rule
+is that other machines must not crash because the build assumed unsupported CPU
+instructions. x86 SIMD should be explicit opt-in until runtime feature detection
+exists.
+
+### What changed
+
+- Made default x86 builds avoid `-mavx2 -mfma -mf16c`.
+- Added `make fast-x86` as the explicit opt-in target for known-good AVX2/FMA/F16C
+  machines.
+- Kept `make portable` as the scalar/POSIX escape hatch with
+  `-DA2A_SCALAR_ONLY`.
+
+### Verification
+
+Local Apple Silicon:
+
+```text
+make test
+=== summary: 31 passed, 0 failed, 0 skipped ===
+```
+
+`polygon` Dell / Linux x86_64:
+
+```text
+make clean arianna2arianna
+cc -O2 -Wall -DUSE_BLAS ... -lopenblas -o arianna2arianna
+
+make portable
+cc -O2 -Wall -DA2A_SCALAR_ONLY ... -o arianna2arianna
+
+make fast-x86
+cc -O2 -Wall -mavx2 -mfma -mf16c -DUSE_BLAS ... -o arianna2arianna
+
+make test
+=== summary: 31 passed, 0 failed, 0 skipped ===
+```
+
+`intel` old MacBook Pro / macOS x86_64:
+
+```text
+make clean arianna2arianna
+cc -O2 -Wall -DUSE_BLAS -DACCELERATE_NEW_LAPACK ... -framework Accelerate -o arianna2arianna
+
+make portable
+cc -O2 -Wall -DA2A_SCALAR_ONLY ... -o arianna2arianna
+
+make test
+=== summary: 31 passed, 0 failed, 0 skipped ===
+```
+
+### TODO
+
+- Replace `make fast-x86` with runtime CPU feature dispatch if x86 performance
+  becomes important.
+- Keep scalar exact packed paths as the reference behavior for future kernels.
