@@ -232,3 +232,49 @@ make test
 - Replace `make fast-x86` with runtime CPU feature dispatch if x86 performance
   becomes important.
 - Keep scalar exact packed paths as the reference behavior for future kernels.
+
+## 2026-06-14 - Codex pass: Δ_R^kv default output repair
+
+### Context
+
+Review feedback caught a real instrumentation bug: the default CHORUS path
+printed `Δ_R = shuffled_text - coherent_text`, but CHORUS cells answer the same
+prompt and hear neighbours through KV/cross-cell state, not appended text. That
+made the main round line show a dead text-order metric while the relevant
+KV-order probe was off by default.
+
+### What changed
+
+- In default `field` CHORUS mode, `g_kvshuf` now turns on automatically when
+  `xcell > 0`.
+- The main round line now prints:
+  - `Δ_R(text n/a)` in CHORUS mode;
+  - `Δ_R^kv` with a two-permutation floor and margin;
+  - the old text `Δ_R` only in RELAY mode, where text-order shuffle is the
+    relevant control.
+- CHORUS no longer runs the old text-shadow pass just to print `n/a`.
+- KV-shadow probes now restore `g_round_tokn` and field side effects after each
+  probe. They also compare the ordered neighbour against two independent
+  neighbour permutations:
+
+```text
+Δ_R^kv = mean(ent(perm_A), ent(perm_B)) - ent(ordered)
+floor  = |ent(perm_A) - ent(perm_B)|
+margin = Δ_R^kv - floor
+```
+
+### Verification
+
+Short field smoke now reports the honest default instrument:
+
+```text
+→ round 1: avg entropy 4.488 | d_R — (floor 0.769) | Δ_R(text n/a) | Δ_R^kv +0.000 (floor 0.000 margin +0.000) | D_R 0.771 | Dpos 0.58 peak 0.67@s1
+```
+
+### Watch-point
+
+The first smoke also exposed a deeper mechanism issue: the current neighbour
+channel reads un-roped neighbour K/V as a set. Shuffling K/V pairs is therefore
+almost permutation-invariant, so `Δ_R^kv` is near zero. This is useful because
+the output is no longer lying, but a real order-sensitive KV body probably needs
+a positional cross-cell lane rather than a pure bag-of-KV neighbour channel.
