@@ -50,7 +50,9 @@ Direct form:
 ./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" life 5 12 4
 ```
 
-`field` and `life` append generated traces to `FIELDLOG.md`.
+`field` and `life` append generated traces to `FIELDLOG.md`. In the default
+chorus, text-order `Δ_R` is marked `n/a`; the live order probe is `Δ_R^kv`
+with a permutation floor/margin.
 
 ## generations
 
@@ -72,7 +74,7 @@ r1 cell 1 (T=0.83): A: The way of the field is
 r1 cell 2 (T=1.07): - what a method you can do not
 r1 cell 3 (T=1.30): If this sense has been a field like
 
-→ round 1: avg entropy 4.090 | d_R — | Δ_R +0.000 | D_R 0.844 | Dpos 0.50
+→ round 1: avg entropy 4.090 | d_R — | Δ_R(text n/a) | Δ_R^kv +0.000 (floor 0.000 margin +0.000) | D_R 0.844 | Dpos 0.50
 ```
 
 Population breath:

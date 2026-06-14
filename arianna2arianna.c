@@ -1069,6 +1069,7 @@ static float probe_entropy(model_t *m, bpe_tokenizer *tok, const char *prompt) {
 }
 
 static void shuffle_ids(int *ids, int from, int to, unsigned seed);   /* defined below */
+static void make_perm(int *perm, int n, unsigned seed);               /* deterministic local RNG; does not touch srand/rand */
 
 /* cosine of two token-id bag-of-words histograms over the vocab — Condition-1 chorus-state distance.
  * d_R = 1 − this is the increment of the field's iteration: small = the round barely moved (settling). */
@@ -1133,12 +1134,14 @@ static void pop_tick(void) {
  * *out_shuf: that is Δ_R's other half (resonance = how much coherence beats length-matched noise). */
 static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const char *prev_chorus,
                        int n_cells, int nfrag, int eos, unsigned seed_base, int verbose, int r,
-                       int *hist, char *out_chorus, int out_cap, float *out_shuf, FILE *flog, float *out_disso) {
+                       int *hist, char *out_chorus, int out_cap, float *out_shuf, FILE *flog,
+                       float *out_disso, float *out_kv_delta, float *out_kv_floor) {
     int max_seq = 512, ids[512], sids[512], cell_ids[256], cell_n;
     int np_prompt = bpe_encode(tok, prompt, ids, max_seq);   /* prompt token count = shuffle boundary */
     char this_chorus[4096]; int tc = 0; this_chorus[0] = 0;
     char ctx[8704], frag[2048];
-    float ent_sum = 0, shuf_sum = 0;
+    float ent_sum = 0, shuf_sum = 0, kv_delta_sum = 0, kv_floor_sum = 0;
+    int kv_n = 0;
     float *cent = out_disso ? (float*)calloc((size_t)n_cells * m->embed, sizeof(float)) : NULL;  /* per-cell fragment centroids → D_R */
     char cur_frag[8][1024];   /* this round's per-cell fragments → cached to g_round_frag for next round's leap */
     kv_cache *prev_kv = NULL; int prev_len = 0;   /* cross-cell: the prior cell's KV, attended by the next cell */
@@ -1175,14 +1178,26 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                                g_xcell > 0 ? &cur_kv : NULL, g_xcell > 0 ? &cur_len : NULL);
         if (out_disso && c < 8) g_commit_n[c] = cell_n;
         if (c < 8) g_cell_ent[c] = ent;   /* δ-life: capture per-cell entropy (fitness input) */
-        if (g_kvshuf && g_xcell > 0 && prev_kv && c > 0) {   /* KV-order shadow: does cross-cell exploit the neighbour's ORDER? — FIRST-token, no sampling chaos */
+        if (g_kvshuf && g_xcell > 0 && prev_kv && c > 0 && (verbose || out_kv_delta || out_kv_floor)) {   /* KV-order shadow: does cross-cell exploit the neighbour's ORDER? */
+            int tok_after = g_round_tokn, saved[512], ns = 0;
+            for (int k = tok_before; k < tok_after && ns < 512; k++) saved[ns++] = g_round_tok[k];
+            int save_on = g_field_on; g_field_on = 0;
             g_nbr = prev_kv; g_nbr_len = prev_len;
-            g_nbr_shuf = 0; float e0 = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour ORDERED */
-            for (int j = 0; j < prev_len && j < 512; j++) g_nbr_perm[j] = j;
-            for (int j = (prev_len < 512 ? prev_len : 512) - 1; j > 0; j--) { int k = rand() % (j + 1); int t = g_nbr_perm[j]; g_nbr_perm[j] = g_nbr_perm[k]; g_nbr_perm[k] = t; }
-            g_nbr_shuf = 1; float e1 = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour SHUFFLED */
+            g_round_tokn = tok_before; g_nbr_shuf = 0;
+            float e0 = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour ORDERED */
+            make_perm(g_nbr_perm, prev_len < 512 ? prev_len : 512, seed ^ 0x9e3779b9u);
+            g_round_tokn = tok_before; g_nbr_shuf = 1;
+            float eA = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour SHUFFLED A */
+            make_perm(g_nbr_perm, prev_len < 512 ? prev_len : 512, seed ^ 0x85ebca6bu);
+            g_round_tokn = tok_before;
+            float eB = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour SHUFFLED B */
             g_nbr_shuf = 0;
-            printf("   [Δ_R^kv c%d = %+.6f (1st-tok)]", c, e1 - e0);
+            g_field_on = save_on; g_round_tokn = tok_after;
+            for (int k = 0; k < ns; k++) g_round_tok[tok_before + k] = saved[k];
+            float kv_delta = 0.5f * (eA + eB) - e0;
+            float kv_floor = fabsf(eA - eB);
+            kv_delta_sum += kv_delta; kv_floor_sum += kv_floor; kv_n++;
+            if (verbose) printf("   [Δ_R^kv c%d = %+.6f floor %.6f margin %+.6f]", c, kv_delta, kv_floor, kv_delta - kv_floor);
         }
         ent_sum += ent;
         for (int i = 0; i < cell_n; i++) if (cell_ids[i] >= 0 && cell_ids[i] < m->vocab) hist[cell_ids[i]]++;
@@ -1213,6 +1228,8 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     g_nbr = NULL; g_nbr_len = 0;
     if (out_chorus) { strncpy(out_chorus, this_chorus, (size_t)out_cap - 1); out_chorus[out_cap - 1] = 0; }
     if (out_shuf) *out_shuf = shuf_sum / n_cells;
+    if (out_kv_delta) *out_kv_delta = kv_n ? kv_delta_sum / kv_n : 0.0f;
+    if (out_kv_floor) *out_kv_floor = kv_n ? kv_floor_sum / kv_n : 0.0f;
     if (out_disso) {                              /* D_R = 1 − mean pairwise cosine of cell fragment centroids (voice-disagreement) */
         double dsum = 0; int dn = 0;
         for (int a = 0; a < n_cells; a++) for (int b = a + 1; b < n_cells; b++) {
@@ -1254,9 +1271,10 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
  *   d_R = 1 − cos(hist_R, hist_{R-1}) over token-id histograms. Settling = d_R falls toward the
  *         sampling-noise FLOOR (two independent round-0 choruses, same context, different seed) — not 0:
  *         stochastic sampling + temp-spread 0.6..1.3 give d a hard floor; the attractor approaches it.
- *   Δ_R = ent_shuffled − ent_coherent. Resonance = the coherent context narrows the next-token
- *         distribution MORE than a length-matched, frequency-matched shuffled one; Δ_R steadily > 0 =
- *         the field exploits ORDER, not just length. Both numbers print and go to FIELDLOG.md. */
+ *   Δ_R = ent_shuffled − ent_coherent. In RELAY, this is text-order resonance.
+ *         In default CHORUS, text-order is n/a because cells answer the same prompt; the live
+ *         instrument is Δ_R^kv = shuffled-neighbour entropy − ordered-neighbour entropy, printed
+ *         with its two-permutation floor. */
 static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int n_cells, int nfrag, int n_rounds, int eos, float alpha) {
     if (n_rounds < 1) n_rounds = 1;
     int vocab = m->vocab;
@@ -1268,9 +1286,9 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
      * histogram distance is the sampling-noise floor d_R cannot beat — the attractor target, not zero. */
     int *hA = (int*)calloc(vocab, sizeof(int)), *hB = (int*)calloc(vocab, sizeof(int));
     field_reset(m->embed, alpha > 0, alpha);
-    run_round(m, tok, prompt, NULL, n_cells, nfrag, eos, 7u,   0, -1, hA, NULL, 0, NULL, NULL, NULL);
+    run_round(m, tok, prompt, NULL, n_cells, nfrag, eos, 7u,   0, -1, hA, NULL, 0, NULL, NULL, NULL, NULL, NULL);
     field_reset(m->embed, alpha > 0, alpha);
-    run_round(m, tok, prompt, NULL, n_cells, nfrag, eos, 977u, 0, -1, hB, NULL, 0, NULL, NULL, NULL);
+    run_round(m, tok, prompt, NULL, n_cells, nfrag, eos, 977u, 0, -1, hB, NULL, 0, NULL, NULL, NULL, NULL, NULL);
     float floor = 1.0f - hist_cosine(hA, hB, vocab);
     printf("  floor (sampling noise, paired round-0) = %.3f\n", floor);
     if (flog) fprintf(flog, "floor (sampling-noise, paired round-0) = %.3f\n", floor);
@@ -1285,15 +1303,23 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
         for (int i = 0; i < vocab; i++) hist_cur[i] = 0;
         printf("\n  --- round %d/%d ---", r + 1, n_rounds);
         if (flog) fprintf(flog, "\n**round %d:**\n", r + 1);
-        char this_chorus[4096]; float shuf = 0, disso = 0;
+        char this_chorus[4096]; float shuf = 0, disso = 0, kv_delta = 0, kv_floor = 0;
         float avg = run_round(m, tok, prompt, prev_chorus, n_cells, nfrag, eos,
-                              42u + (unsigned)(r * 1000) * 7919u, 1, r, hist_cur, this_chorus, sizeof(this_chorus), &shuf, flog, &disso);
+                              42u + (unsigned)(r * 1000) * 7919u, 1, r, hist_cur, this_chorus, sizeof(this_chorus),
+                              g_chorus ? NULL : &shuf, flog, &disso, &kv_delta, &kv_floor);
         float dR = (r > 0) ? 1.0f - hist_cosine(hist_cur, hist_prev, vocab) : -1.0f;
         float deltaR = shuf - avg;
-        if (r > 0) { printf("\n  → round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, dR, floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak);
-                     if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, dR, floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak); }
-        else       { printf("\n  → round %d: avg entropy %.3f | d_R   —   (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak);
-                     if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R — (floor %.3f) | Δ_R %+.3f | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, floor, deltaR, disso, g_dmean, g_dpeak, g_s_peak); }
+        char resonance[192];
+        if (g_chorus) {
+            if (g_kvshuf && g_xcell > 0 && n_cells > 1)
+                snprintf(resonance, sizeof(resonance), "Δ_R(text n/a) | Δ_R^kv %+.3f (floor %.3f margin %+.3f)", kv_delta, kv_floor, kv_delta - kv_floor);
+            else
+                snprintf(resonance, sizeof(resonance), "Δ_R(text n/a) | Δ_R^kv off");
+        } else snprintf(resonance, sizeof(resonance), "Δ_R %+.3f", deltaR);
+        if (r > 0) { printf("\n  → round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | %s | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, dR, floor, resonance, disso, g_dmean, g_dpeak, g_s_peak);
+                     if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | %s | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, dR, floor, resonance, disso, g_dmean, g_dpeak, g_s_peak); }
+        else       { printf("\n  → round %d: avg entropy %.3f | d_R   —   (floor %.3f) | %s | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, floor, resonance, disso, g_dmean, g_dpeak, g_s_peak);
+                     if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R — (floor %.3f) | %s | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, floor, resonance, disso, g_dmean, g_dpeak, g_s_peak); }
         strncpy(prev_chorus, this_chorus, sizeof(prev_chorus) - 1); prev_chorus[sizeof(prev_chorus) - 1] = 0;
         int *tmp = hist_prev; hist_prev = hist_cur; hist_cur = tmp;
     }
@@ -1301,7 +1327,8 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
     if (g_leap_mode) { float fr = g_leap_total ? (float)g_leap_flips / g_leap_total : 0.0f;
         printf("  leap-flip-rate = %.2f (%d/%d cells leapt to the dissenter)\n", fr, g_leap_flips, g_leap_total);
         if (flog) fprintf(flog, "leap-flip-rate = %.2f (%d/%d)\n", fr, g_leap_flips, g_leap_total); }
-    printf("\n=== δ-field done — settling: d_R→floor? · resonance: Δ_R>0? (read the numbers, not the narrative) ===\n");
+    printf("\n=== δ-field done — settling: d_R→floor? · resonance: %s (read the numbers, not the narrative) ===\n",
+           g_chorus ? "Δ_R^kv>floor?" : "Δ_R>0?");
     if (flog) { fprintf(flog, "\n---\n"); fclose(flog); }
 }
 
@@ -1309,6 +1336,17 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
 static void shuffle_ids(int *ids, int from, int to, unsigned seed) {
     srand(seed);
     for (int i = to - 1; i > from; i--) { int j = from + rand() % (i - from + 1); int t = ids[i]; ids[i] = ids[j]; ids[j] = t; }
+}
+
+static unsigned perm_rng(unsigned *s) { *s = *s * 1664525u + 1013904223u; return *s; }
+static void make_perm(int *perm, int n, unsigned seed) {
+    if (n < 0) n = 0;
+    if (n > 512) n = 512;
+    for (int i = 0; i < n; i++) perm[i] = i;
+    for (int i = n - 1; i > 0; i--) {
+        int j = (int)(perm_rng(&seed) % (unsigned)(i + 1));
+        int t = perm[i]; perm[i] = perm[j]; perm[j] = t;
+    }
 }
 
 /* δ-life: the chorus as a LIVING, breathing population — cells born/die/reproduce by real-metric fitness
@@ -1330,7 +1368,7 @@ static void field_life(model_t *m, bpe_tokenizer *tok, const char *prompt, int n
         printf("\n  --- tick %d/%d · pop %d ---", t + 1, n_ticks, g_pop_n);
         if (flog) fprintf(flog, "\n**tick %d (pop %d):**\n", t + 1, g_pop_n);
         float avg = run_round(m, tok, prompt, NULL, g_pop_n, nfrag, eos,
-                              42u + (unsigned)t * 131u, 1, t, hist, this_chorus, sizeof(this_chorus), NULL, flog, &disso);
+                              42u + (unsigned)t * 131u, 1, t, hist, this_chorus, sizeof(this_chorus), NULL, flog, &disso, NULL, NULL);
         pop_tick();
         printf("\n  → tick %d: pop %d | births %d | deaths %d | D_R %.3f | avg_ent %.2f\n",
                t + 1, g_pop_n, g_births, g_deaths, disso, avg);
@@ -1408,7 +1446,7 @@ int main(int argc, char **argv) {
         g_chorus     = argc > 10 ? atoi(argv[10]) : 1;           /* DEFAULT: 1 = chorus (each cell own answer). 0 = relay */
         g_xrep       = argc > 11 ? (float)atof(argv[11]) : 1.3f; /* cross-cell rep-penalty: don't echo neighbours' words (1=off) */
         g_life_on    = argc > 12 ? atoi(argv[12]) : 0;           /* δ-life: 1 = measure/run Game of Life (incr.0 = log fitness inputs) */
-        g_kvshuf     = argc > 13 ? atoi(argv[13]) : 0;           /* 1 = KV-order shadow probe (Δ_R^kv: does cross-cell catch neighbour ORDER?) */
+        g_kvshuf     = argc > 13 ? atoi(argv[13]) : (g_chorus && g_xcell > 0 ? 1 : 0);  /* default chorus probe: Δ_R^kv + permutation floor */
         if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
             float pe = probe_entropy(m, tok, prompt);
             n_cells = (int)(pe + 0.5f); if (n_cells < 1) n_cells = 1; if (n_cells > 8) n_cells = 8;
