@@ -9,7 +9,11 @@ echo "--- test_inference ---"
 
 if a2a_have_f16; then
     out="$("$A2A_BIN" "$A2A_MODEL_F16" "ping" 4 0 2>&1)"
-    a2a_assert_grep "f16-packed" "$out" "f16 model loads with packed banner"
+    a2a_assert_grep "model: arch=llama" "$out" "f16 model loads"
+    a2a_assert_grep "packed linear" "$out" "f16 uses packed linear weights"
+    a2a_assert_grep "0 dense fallback" "$out" "f16 has no dense linear fallback"
+    a2a_assert_grep "loaded in" "$out" "f16 reports load time"
+    a2a_assert_grep 'prompt: "ping"' "$out" "f16 prompt path runs"
     a2a_assert_grep "decode:" "$out" "f16 decode completes"
     a2a_assert_grep "t/s" "$out" "f16 reports tokens/sec"
 else
@@ -18,15 +22,9 @@ fi
 
 if a2a_have_q8; then
     out="$("$A2A_BIN" "$A2A_MODEL_Q8" "ping" 4 0 2>&1)"
-    a2a_assert_grep "q8-packed" "$out" "q8 model loads with packed banner"
+    a2a_assert_grep "model: arch=llama" "$out" "q8 model loads"
+    a2a_assert_grep "packed linear" "$out" "q8 uses packed linear weights"
     a2a_assert_grep "decode:" "$out" "q8 decode completes"
 else
     a2a_skip "q8 weights missing ($A2A_MODEL_Q8)"
-fi
-
-if a2a_have_f16; then
-    out="$("$A2A_BIN" --16 "hi" 3 0 2>&1)"
-    a2a_assert_grep "f16-packed" "$out" "--16 HF path works"
-else
-    a2a_skip "--16 (no local f16 weights; run make weights)"
 fi

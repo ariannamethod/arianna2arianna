@@ -1,10 +1,10 @@
-# arianna2arianna — single-file C heart. Punk: no external deps, just cc + libm.
-# Build:  make            Run:  make run            Field:  make field
-# Sweep:  make sweep      Test: make test           Portable: make portable
+# arianna2arianna — single-file C heart. No external deps, just cc + libm + pthread.
+# Build: make    Weights: make weights    Run: make run    Field: make field
+# Life:  make life    Control: make restest    Test: make test
 
 CC     ?= cc
 CFLAGS ?= -O2 -Wall
-LDLIBS := -lm
+LDLIBS := -lm -pthread
 UNAME_S := $(shell uname -s)
 UNAME_M := $(shell uname -m)
 
@@ -28,45 +28,60 @@ SRC    := arianna2arianna.c
 
 HF_BASE = https://huggingface.co/ataeff/ariannamethod/resolve/main/weights
 WEIGHTS = weights
-MODEL  ?= $(WEIGHTS)/nanollama-arianna-full-v4-step2750-f16.gguf
+MODEL_F16 = $(WEIGHTS)/nanollama-arianna-full-v4-step2750-f16.gguf
+MODEL_Q8  = $(WEIGHTS)/nanollama-arianna-full-v4-step2750-q8_0.gguf
+MODEL  ?= $(MODEL_F16)
 PROMPT ?= What is resonance?
+TOKENS ?= 48
+TEMP   ?= 0.8
+CELLS  ?= 4
+FRAG   ?= 12
+ROUNDS ?= 3
+ALPHA  ?= 0
+LEAP   ?= 2
+XCELL  ?= 0.30
+TICKS  ?= 5
+INIT   ?= 4
 
 $(BIN): $(SRC)
 	$(CC) $(CFLAGS) $(SRC) $(LDLIBS) -o $(BIN)
 
-$(WEIGHTS)/nanollama-arianna-full-v4-step2750-f16.gguf:
+$(MODEL_F16):
 	@mkdir -p $(WEIGHTS)
 	curl -fL -o $@ $(HF_BASE)/nanollama-arianna-full-v4-step2750-f16.gguf
 
-$(WEIGHTS)/nanollama-arianna-full-v4-step2750-q8_0.gguf:
+$(MODEL_Q8):
 	@mkdir -p $(WEIGHTS)
 	curl -fL -o $@ $(HF_BASE)/nanollama-arianna-full-v4-step2750-q8_0.gguf
 
-weights: $(MODEL)
+weights: $(MODEL_F16)
+weights-q8: $(MODEL_Q8)
 
 portable:
-	$(MAKE) PORTABLE=1 CFLAGS="-O2 -Wall -DA2A_SCALAR_ONLY" LDLIBS="-lm" clean $(BIN)
+	$(MAKE) PORTABLE=1 CFLAGS="-O2 -Wall -DA2A_SCALAR_ONLY" LDLIBS="-lm -pthread" clean $(BIN)
 
 run: $(BIN) $(MODEL)
-	./$(BIN) --16 "$(PROMPT)" 48 0.8
+	./$(BIN) "$(MODEL)" "$(PROMPT)" $(TOKENS) $(TEMP)
 
-run-q8: $(BIN) $(WEIGHTS)/nanollama-arianna-full-v4-step2750-q8_0.gguf
-	./$(BIN) --q8 "$(PROMPT)" 48 0.8
+run-q8: $(BIN) $(MODEL_Q8)
+	./$(BIN) "$(MODEL_Q8)" "$(PROMPT)" $(TOKENS) $(TEMP)
 
 field: $(BIN) $(MODEL)
-	./$(BIN) --16 "$(PROMPT)" field 4 12 3 0 2 0.25
+	./$(BIN) "$(MODEL)" "$(PROMPT)" field $(CELLS) $(FRAG) $(ROUNDS) $(ALPHA) $(LEAP) $(XCELL)
 
-# batch: 5 seeds × leap 0..3 → CSV on stdout
-sweep: $(BIN) $(MODEL)
-	./$(BIN) --16 --quiet "$(PROMPT)" sweep 5 4 12 3 0 0.25
+restest: $(BIN) $(MODEL)
+	./$(BIN) "$(MODEL)" "$(PROMPT)" restest $(CELLS) $(FRAG) $(ROUNDS)
+
+life: $(BIN) $(MODEL)
+	./$(BIN) "$(MODEL)" "$(PROMPT)" life $(TICKS) $(FRAG) $(INIT)
 
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 field sweep clean weights test portable bench
+.PHONY: run run-q8 field restest life clean weights weights-q8 test portable bench
 
-test: $(BIN) $(MODEL)
+test: $(BIN)
 	bash tests/run.sh
 
 bench: $(BIN) $(MODEL)
-	./$(BIN) --16 "What is resonance?" 24 0.8
+	./$(BIN) "$(MODEL)" "What is resonance?" 24 0.8

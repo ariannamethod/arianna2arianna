@@ -2,15 +2,16 @@
  *
  * One self-contained C organism: GGUF parser + byte-level BPE + Llama/Qwen forward
  * + sampler, ALL inlined. No external -lnotorch, no Metal dependency. Vendored
- * faithfully from notorch (gguf.{c,h}, examples/infer_gguf_metal.c, examples/bpe.{c,h}).
- * CPU base; packed-Q4_K / Metal is an optional optimization for a later #ifdef.
+ * faithfully from notorch (GGUF/BPE + packed nt_qmatvec lineage).
+ * CPU base; linear weights stay packed in GGUF encoding and dequantize inside
+ * matvec. Embeddings/norms stay f32 because the field reads them as vectors.
  *
  *   theta = epsilon + gamma + alpha*delta
  *   epsilon = one shared nanoArianna body (this forward over a GGUF, weights shared read-only)
  *   gamma   = Arianna's voice (SFT, baked into the weights)
  *   delta   = the field of ephemeral transformer-cells (NEXT layer — scaffold at bottom)
  *
- * MVP-0 (this build): nanoArianna speaks, standalone.
+ * Standalone nanoArianna chorus:
  *   cc -O2 arianna2arianna.c -lm -o arianna2arianna
  *   ./arianna2arianna <model.gguf> [prompt] [max_tokens] [temp]
  */
@@ -23,7 +24,8 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <pthread.h>
+#if !defined(A2A_SCALAR_ONLY) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
 #include <arm_neon.h>
 #define Q_NEON 1
 #endif
@@ -465,9 +467,9 @@ static int bpe_decode_token(const bpe_tokenizer *t, int id, char *buf, int cap) 
     buf[n] = 0; return n;
 }
 
-/* ===================== forward (vendored: infer_gguf_metal.c, CPU f32) ===================== */
-/* CPU base: all weights dequantized to f32 at load (nano f16 -> f32 ~= 352MB, fits 8GB).
- * Packed-Q4_K / Metal (weights stay packed, no f32 blow-up) is the later #ifdef optimization. */
+/* ===================== forward (vendored/notorch-derived, CPU packed-linear) ===================== */
+/* CPU base: embeddings/norms are f32; linear weights stay packed in GGUF memory
+ * and use a2a_qmatvec (notorch nt_qmatvec lineage). No dense-f32 linear blow-up. */
 
 static void rmsnorm(float *out, const float *x, const float *w, int n, float eps) {
     float ss = 0; for (int i = 0; i < n; i++) ss += x[i]*x[i];
@@ -500,6 +502,226 @@ static void matvec(float *y, const float *W, const float *x, int m, int k) {
     for (int i = 0; i < m; i++) { const float *row = W + (long)i*k; float s = 0; for (int j = 0; j < k; j++) s += row[j]*x[j]; y[i] = s; }
 }
 #endif
+
+/* notorch-derived packed matvec: out[m] = Wq[m,k] @ x[k], with GGUF weights
+ * kept in their on-disk encoding. This is the exact f32-dequant math performed
+ * per row/block in registers, not the approximate int8 activation path. */
+static void a2a_q4_0_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    int nb = k / 32;
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 18;
+        float acc = 0.0f;
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 18;
+            float d = f16_to_f32((uint16_t)(b[0] | (b[1] << 8)));
+            const float *xb = x + (long)blk * 32;
+            for (int i = 0; i < 16; i++) {
+                acc += d * (float)((int)(b[2 + i] & 0x0F) - 8) * xb[i];
+                acc += d * (float)((int)(b[2 + i] >> 4)   - 8) * xb[i + 16];
+            }
+        }
+        out[row] = acc;
+    }
+}
+
+static void a2a_q8_0_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    int nb = k / 32;
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 34;
+#ifdef Q_NEON
+        float32x4_t a0 = vdupq_n_f32(0), a1 = vdupq_n_f32(0), a2 = vdupq_n_f32(0), a3 = vdupq_n_f32(0);
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 34;
+            float32x4_t d = vdupq_n_f32(f16_to_f32((uint16_t)(b[0] | (b[1] << 8))));
+            const float *xb = x + (long)blk * 32;
+            int8x16_t qv = vld1q_s8((const int8_t *)(b + 2));
+            int16x8_t ql = vmovl_s8(vget_low_s8(qv)), qh = vmovl_s8(vget_high_s8(qv));
+            a0 = vfmaq_f32(a0, vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(ql))), d), vld1q_f32(xb));
+            a1 = vfmaq_f32(a1, vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(ql))), d), vld1q_f32(xb + 4));
+            a2 = vfmaq_f32(a2, vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(qh))), d), vld1q_f32(xb + 8));
+            a3 = vfmaq_f32(a3, vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(qh))), d), vld1q_f32(xb + 12));
+            qv = vld1q_s8((const int8_t *)(b + 18));
+            ql = vmovl_s8(vget_low_s8(qv)); qh = vmovl_s8(vget_high_s8(qv));
+            a0 = vfmaq_f32(a0, vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(ql))), d), vld1q_f32(xb + 16));
+            a1 = vfmaq_f32(a1, vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(ql))), d), vld1q_f32(xb + 20));
+            a2 = vfmaq_f32(a2, vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(qh))), d), vld1q_f32(xb + 24));
+            a3 = vfmaq_f32(a3, vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(qh))), d), vld1q_f32(xb + 28));
+        }
+        out[row] = vaddvq_f32(vaddq_f32(vaddq_f32(a0, a1), vaddq_f32(a2, a3)));
+#else
+        float acc = 0.0f;
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 34;
+            float d = f16_to_f32((uint16_t)(b[0] | (b[1] << 8)));
+            const float *xb = x + (long)blk * 32;
+            for (int i = 0; i < 32; i++) acc += d * (float)(int8_t)b[2 + i] * xb[i];
+        }
+        out[row] = acc;
+#endif
+    }
+}
+
+static void a2a_q5_0_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    int nb = k / 32;
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 22;
+        float acc = 0.0f;
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 22;
+            float d = f16_to_f32((uint16_t)(b[0] | (b[1] << 8)));
+            uint32_t qh = (uint32_t)b[2] | ((uint32_t)b[3] << 8) |
+                          ((uint32_t)b[4] << 16) | ((uint32_t)b[5] << 24);
+            const uint8_t *qs = b + 6;
+            const float *xb = x + (long)blk * 32;
+            for (int j = 0; j < 16; j++) {
+                int lo = qs[j] & 0x0F, hi = qs[j] >> 4;
+                int hb0 = (qh >> j) & 1, hb1 = (qh >> (j + 16)) & 1;
+                acc += d * (float)((lo | (hb0 << 4)) - 16) * xb[j];
+                acc += d * (float)((hi | (hb1 << 4)) - 16) * xb[j + 16];
+            }
+        }
+        out[row] = acc;
+    }
+}
+
+static void a2a_q4_k_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    int nb = k / 256;
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 144;
+        float acc = 0.0f;
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 144;
+            float d = f16_to_f32((uint16_t)(b[0] | (b[1] << 8)));
+            float dmin = f16_to_f32((uint16_t)(b[2] | (b[3] << 8)));
+            const uint8_t *sc = b + 4, *qs = b + 16;
+            const float *xb = x + (long)blk * 256;
+            int is = 0, qi = 0;
+            for (int j = 0; j < 256; j += 64) {
+                uint8_t sc0, m0, sc1, m1;
+                get_scale_min_k4(is, sc, &sc0, &m0);
+                get_scale_min_k4(is + 1, sc, &sc1, &m1);
+                float d1 = d * sc0, mm1 = dmin * m0, d2 = d * sc1, mm2 = dmin * m1;
+                for (int l = 0; l < 32; l++) acc += (d1 * (float)(qs[qi + l] & 0x0F) - mm1) * xb[j + l];
+                for (int l = 0; l < 32; l++) acc += (d2 * (float)(qs[qi + l] >> 4)   - mm2) * xb[j + 32 + l];
+                qi += 32; is += 2;
+            }
+        }
+        out[row] = acc;
+    }
+}
+
+static void a2a_q6_k_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    int nb = k / 256;
+    for (int row = r0; row < r1; row++) {
+        const uint8_t *rb = W + (long)row * nb * 210;
+        float acc = 0.0f;
+        for (int blk = 0; blk < nb; blk++) {
+            const uint8_t *b = rb + (long)blk * 210, *ql = b, *qh = b + 128;
+            const int8_t *sc = (const int8_t *)(b + 192);
+            float d = f16_to_f32((uint16_t)(b[208] | (b[209] << 8)));
+            const float *xb = x + (long)blk * 256;
+            for (int n = 0; n < 256; n += 128) {
+                const uint8_t *qlh = ql + (n / 128) * 64, *qhh = qh + (n / 128) * 32;
+                const int8_t *sch = sc + (n / 128) * 8;
+                for (int l = 0; l < 32; l++) {
+                    int is = l / 16;
+                    int q1 = (int)((qlh[l]      & 0x0F) | (((qhh[l] >> 0) & 3) << 4)) - 32;
+                    int q2 = (int)((qlh[l + 32] & 0x0F) | (((qhh[l] >> 2) & 3) << 4)) - 32;
+                    int q3 = (int)((qlh[l]      >> 4)   | (((qhh[l] >> 4) & 3) << 4)) - 32;
+                    int q4 = (int)((qlh[l + 32] >> 4)   | (((qhh[l] >> 6) & 3) << 4)) - 32;
+                    acc += d * sch[is + 0] * q1 * xb[n + l];
+                    acc += d * sch[is + 2] * q2 * xb[n + l + 32];
+                    acc += d * sch[is + 4] * q3 * xb[n + l + 64];
+                    acc += d * sch[is + 6] * q4 * xb[n + l + 96];
+                }
+            }
+        }
+        out[row] = acc;
+    }
+}
+
+static void a2a_f16_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    const uint16_t *Wh = (const uint16_t *)W;
+    for (int row = r0; row < r1; row++) {
+        const uint16_t *r = Wh + (long)row * k;
+#ifdef Q_NEON
+        float32x4_t a0 = vdupq_n_f32(0), a1 = vdupq_n_f32(0), a2 = vdupq_n_f32(0), a3 = vdupq_n_f32(0);
+        int j = 0;
+        for (; j + 16 <= k; j += 16) {
+            float16x8_t h0 = vreinterpretq_f16_u16(vld1q_u16(r + j));
+            float16x8_t h1 = vreinterpretq_f16_u16(vld1q_u16(r + j + 8));
+            a0 = vfmaq_f32(a0, vcvt_f32_f16(vget_low_f16(h0)),  vld1q_f32(x + j));
+            a1 = vfmaq_f32(a1, vcvt_f32_f16(vget_high_f16(h0)), vld1q_f32(x + j + 4));
+            a2 = vfmaq_f32(a2, vcvt_f32_f16(vget_low_f16(h1)),  vld1q_f32(x + j + 8));
+            a3 = vfmaq_f32(a3, vcvt_f32_f16(vget_high_f16(h1)), vld1q_f32(x + j + 12));
+        }
+        float acc = vaddvq_f32(vaddq_f32(vaddq_f32(a0, a1), vaddq_f32(a2, a3)));
+        for (; j < k; j++) acc += f16_to_f32(r[j]) * x[j];
+#else
+        float acc = 0.0f;
+        for (int j = 0; j < k; j++) acc += f16_to_f32(r[j]) * x[j];
+#endif
+        out[row] = acc;
+    }
+}
+
+static void a2a_f32_rows(float *out, const uint8_t *W, const float *x, int r0, int r1, int k) {
+    const float *Wf = (const float *)W;
+    for (int row = r0; row < r1; row++) {
+        const float *r = Wf + (long)row * k;
+        float acc = 0.0f;
+        for (int j = 0; j < k; j++) acc += r[j] * x[j];
+        out[row] = acc;
+    }
+}
+
+typedef void (*a2a_qrows_fn)(float *, const uint8_t *, const float *, int, int, int);
+static a2a_qrows_fn a2a_qrows_for(int dtype, int k) {
+    switch (dtype) {
+    case GGUF_TYPE_F32:  return a2a_f32_rows;
+    case GGUF_TYPE_F16:  return a2a_f16_rows;
+    case GGUF_TYPE_Q4_0: return (k % 32)  ? NULL : a2a_q4_0_rows;
+    case GGUF_TYPE_Q5_0: return (k % 32)  ? NULL : a2a_q5_0_rows;
+    case GGUF_TYPE_Q8_0: return (k % 32)  ? NULL : a2a_q8_0_rows;
+    case GGUF_TYPE_Q4_K: return (k % 256) ? NULL : a2a_q4_k_rows;
+    case GGUF_TYPE_Q6_K: return (k % 256) ? NULL : a2a_q6_k_rows;
+    default: return NULL;
+    }
+}
+
+#define A2A_QMV_MAX_THREADS 16
+typedef struct { a2a_qrows_fn fn; float *out; const uint8_t *Wq; const float *x; int r0, r1, k; } a2a_qjob;
+static void *a2a_qworker(void *p) {
+    a2a_qjob *j = (a2a_qjob *)p;
+    j->fn(j->out, j->Wq, j->x, j->r0, j->r1, j->k);
+    return NULL;
+}
+
+static int a2a_qmatvec(float *out, const uint8_t *Wq, int dtype, const float *x, int m, int k) {
+    a2a_qrows_fn fn = a2a_qrows_for(dtype, k);
+    if (!fn) return -1;
+    int nt = (int)sysconf(_SC_NPROCESSORS_ONLN);
+    if (nt < 1) nt = 1;
+    if (nt > A2A_QMV_MAX_THREADS) nt = A2A_QMV_MAX_THREADS;
+    if (nt > m) nt = m;
+    if (nt <= 1 || (long)m * k < (4L << 20)) { fn(out, Wq, x, 0, m, k); return 0; }
+    pthread_t th[A2A_QMV_MAX_THREADS];
+    a2a_qjob jobs[A2A_QMV_MAX_THREADS];
+    int per = (m + nt - 1) / nt, launched = 0;
+    for (int t = 0; t < nt; t++) {
+        int r0 = t * per, r1 = (r0 + per > m) ? m : r0 + per;
+        if (r0 >= m) break;
+        jobs[t] = (a2a_qjob){ fn, out, Wq, x, r0, r1, k };
+        if (pthread_create(&th[t], NULL, a2a_qworker, &jobs[t]) != 0) {
+            fn(out, Wq, x, r0, m, k);
+            break;
+        }
+        launched++;
+    }
+    for (int t = 0; t < launched; t++) pthread_join(th[t], NULL);
+    return 0;
+}
+
 static void rope_interleaved(float *x, int pos, int hd, float base) {
     for (int i = 0; i < hd/2; i++) { float a = pos/powf(base, 2.0f*i/hd), c = cosf(a), s = sinf(a); float x0 = x[2*i], x1 = x[2*i+1]; x[2*i] = x0*c - x1*s; x[2*i+1] = x0*s + x1*c; }
 }
@@ -508,13 +730,50 @@ static void rope_neox(float *x, int pos, int hd, float base) {
 }
 
 typedef struct {
+    const uint8_t *packed;
+    float *f32;
+    int dtype, m, k;
+} weight_t;
+
+typedef struct {
     int n_layers, n_heads, n_kv_heads, embed, ffn, vocab, head_dim, kv_dim, q_dim;
     float rope_base, rms_eps; int has_output, is_qwen3, neox;
-    float *tok_emb, *out_norm, *output;   /* output == tok_emb if tied */
-    struct { float *attn_norm, *ffn_norm, *wq, *wk, *wv, *wo, *wgate, *wup, *wdown, *q_norm, *k_norm; } *L;
+    int packed_weights, dense_weights;
+    float *tok_emb, *out_norm;   /* embeddings/norms stay f32; linear weights stay packed when possible */
+    weight_t output;             /* tied -> output.f32 borrows tok_emb */
+    struct { float *attn_norm, *ffn_norm, *q_norm, *k_norm; weight_t wq, wk, wv, wo, wgate, wup, wdown; } *L;
 } model_t;
 
 static float *deq(gguf_file *gf, const char *name) { int ti = gguf_find_tensor(gf, name); return ti >= 0 ? gguf_dequant(gf, ti) : NULL; }
+
+static int load_weight(gguf_file *gf, const char *name, weight_t *W, model_t *m) {
+    memset(W, 0, sizeof(*W));
+    int ti = gguf_find_tensor(gf, name);
+    if (ti < 0) return 0;
+    gguf_tensor_info *t = &gf->tensors[ti];
+    if (t->ndim < 2 || t->shape[0] > (uint64_t)INT_MAX || t->shape[1] > (uint64_t)INT_MAX) {
+        fprintf(stderr, "gguf: bad 2D weight shape for '%s'\n", name);
+        return 0;
+    }
+    W->k = (int)t->shape[0];
+    W->m = (int)t->shape[1];
+    W->dtype = (int)t->dtype;
+    uint64_t nbytes = gguf_dtype_nbytes(t->dtype, t->n_elements);
+    if (nbytes && t->offset < gf->data_size && nbytes <= gf->data_size - t->offset && a2a_qrows_for(W->dtype, W->k)) {
+        W->packed = gf->data + t->offset;
+        if (m) m->packed_weights++;
+        return 1;
+    }
+    W->f32 = gguf_dequant(gf, ti);
+    if (W->f32 && m) m->dense_weights++;
+    return W->f32 != NULL;
+}
+
+static void weight_matvec(const weight_t *W, const float *x, float *y) {
+    if (W->packed && a2a_qmatvec(y, W->packed, W->dtype, x, W->m, W->k) == 0) return;
+    if (W->f32) { matvec(y, W->f32, x, W->m, W->k); return; }
+    memset(y, 0, (size_t)W->m * sizeof(float));
+}
 
 static model_t *model_load(gguf_file *gf) {
     model_t *m = (model_t*)calloc(1, sizeof(model_t));
@@ -530,21 +789,24 @@ static model_t *model_load(gguf_file *gf) {
 
     m->tok_emb  = deq(gf, "token_embd.weight");
     m->out_norm = deq(gf, "output_norm.weight");
-    float *out = deq(gf, "output.weight");
-    if (out) { m->output = out; m->has_output = 1; } else { m->output = m->tok_emb; m->has_output = 0; }
+    if (load_weight(gf, "output.weight", &m->output, m)) m->has_output = 1;
+    else { m->output.f32 = m->tok_emb; m->output.m = m->vocab; m->output.k = m->embed; m->output.dtype = GGUF_TYPE_F32; m->has_output = 0; }
 
     m->L = calloc(m->n_layers, sizeof(*m->L)); char nm[160];
     for (int l = 0; l < m->n_layers; l++) {
         #define LD(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); m->L[l].f = deq(gf, nm); } while(0)
+        #define LW(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); load_weight(gf, nm, &m->L[l].f, m); } while(0)
         LD(attn_norm, "blk.%d.attn_norm.weight"); LD(ffn_norm, "blk.%d.ffn_norm.weight");
-        LD(wq, "blk.%d.attn_q.weight"); LD(wk, "blk.%d.attn_k.weight"); LD(wv, "blk.%d.attn_v.weight"); LD(wo, "blk.%d.attn_output.weight");
-        LD(wgate, "blk.%d.ffn_gate.weight"); LD(wup, "blk.%d.ffn_up.weight"); LD(wdown, "blk.%d.ffn_down.weight");
+        LW(wq, "blk.%d.attn_q.weight"); LW(wk, "blk.%d.attn_k.weight"); LW(wv, "blk.%d.attn_v.weight"); LW(wo, "blk.%d.attn_output.weight");
+        LW(wgate, "blk.%d.ffn_gate.weight"); LW(wup, "blk.%d.ffn_up.weight"); LW(wdown, "blk.%d.ffn_down.weight");
         LD(q_norm, "blk.%d.attn_q_norm.weight"); LD(k_norm, "blk.%d.attn_k_norm.weight");
         #undef LD
+        #undef LW
     }
     printf("model: arch=%s E=%d H=%d KV=%d HD=%d Q=%d FFN=%d V=%d L=%d | %s rope%s%s\n",
            gf->arch, m->embed, m->n_heads, m->n_kv_heads, m->head_dim, m->q_dim, m->ffn, m->vocab, m->n_layers,
            m->neox ? "NEOX" : "interleaved", m->is_qwen3 ? " +qk-norm" : "", m->has_output ? "" : " tied");
+    printf("weights: %d packed linear, %d dense fallback (embeddings/norms f32)\n", m->packed_weights, m->dense_weights);
     if (!m->tok_emb || !m->out_norm) { fprintf(stderr, "missing tok_emb/out_norm\n"); return NULL; }
     return m;
 }
@@ -590,7 +852,7 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
 
     for (int l = 0; l < m->n_layers; l++) {
         rmsnorm(xn, x, m->L[l].attn_norm, E, eps);
-        matvec(q, m->L[l].wq, xn, QD, E); matvec(kk, m->L[l].wk, xn, KVD, E); matvec(vv, m->L[l].wv, xn, KVD, E);
+        weight_matvec(&m->L[l].wq, xn, q); weight_matvec(&m->L[l].wk, xn, kk); weight_matvec(&m->L[l].wv, xn, vv);
         if (m->is_qwen3) {
             for (int h = 0; h < H;  h++) rmsnorm(q + h*HD, q + h*HD, m->L[l].q_norm, HD, eps);
             for (int h = 0; h < KV; h++) rmsnorm(kk + h*HD, kk + h*HD, m->L[l].k_norm, HD, eps);
@@ -618,15 +880,15 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
                 for (int j = 0; j < xc; j++) { int jj = (g_nbr_shuf && j < 512) ? g_nbr_perm[j] : j; const float *vj = g_nbr->v + nbase + (long)jj*KVD + kvh*HD; float w = g_xcell * scn[j]; for (int t2 = 0; t2 < HD; t2++) oh[t2] += w*vj[t2]; }
             }
         }
-        matvec(t, m->L[l].wo, ao, E, QD); for (int i = 0; i < E; i++) x[i] += t[i];
+        weight_matvec(&m->L[l].wo, ao, t); for (int i = 0; i < E; i++) x[i] += t[i];
 
         rmsnorm(xn, x, m->L[l].ffn_norm, E, eps);
-        matvec(g, m->L[l].wgate, xn, FFN, E); matvec(u, m->L[l].wup, xn, FFN, E);
+        weight_matvec(&m->L[l].wgate, xn, g); weight_matvec(&m->L[l].wup, xn, u);
         for (int i = 0; i < FFN; i++) { float gi = g[i]; g[i] = (gi/(1.0f+expf(-gi)))*u[i]; }
-        matvec(t, m->L[l].wdown, g, E, FFN); for (int i = 0; i < E; i++) x[i] += t[i];
+        weight_matvec(&m->L[l].wdown, g, t); for (int i = 0; i < E; i++) x[i] += t[i];
     }
     rmsnorm(xn, x, m->out_norm, E, eps);
-    matvec(logits, m->output, xn, m->vocab, E);
+    weight_matvec(&m->output, xn, logits);
     free(x); free(xn); free(q); free(kk); free(vv); free(ao); free(g); free(u); free(t); free(sc); free(scn); free(qu);
 }
 
