@@ -107,6 +107,8 @@ mechanics earn real behavior:
   config system.
 - Add faster kernels only where a real future body needs them; f16/q8 now have
   exact NEON paths on Apple Silicon.
+- Keep x86 default builds POSIX-safe. Use `make fast-x86` only as an explicit
+  opt-in on machines known to support AVX2/FMA/F16C.
 - Consider explicit CLI aliases later (`--f16`, `--q8`, presets) only if they
   are thin wrappers over the positional C contract.
 - Future body swaps: Arianna variants first; Janus170M / Resonance200M later,
@@ -164,6 +166,8 @@ the hot-loop fix worked.
 ### TODO
 
 - Add a formal `bench-packed` target later with repeated runs and median t/s.
+- Add x86 SIMD kernels only behind CPU feature detection or explicit opt-in;
+  correctness fallback must remain scalar/POSIX.
 - Consider exact NEON Q4_0 next only if q4 becomes a real path.
 - Keep approximate activation-int8/SDOT behind a future explicit fast flag; do
   not silently change logits for the chorus.

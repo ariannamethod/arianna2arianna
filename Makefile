@@ -11,7 +11,7 @@ UNAME_M := $(shell uname -m)
 ifneq ($(PORTABLE),1)
   ifeq ($(UNAME_M),arm64)
     CFLAGS += -march=armv8.2-a+fp16+dotprod
-  else ifeq ($(UNAME_M),x86_64)
+  else ifeq ($(FAST_X86),1)
     CFLAGS += -mavx2 -mfma -mf16c
   endif
   ifeq ($(UNAME_S),Darwin)
@@ -60,6 +60,9 @@ weights-q8: $(MODEL_Q8)
 portable:
 	$(MAKE) PORTABLE=1 CFLAGS="-O2 -Wall -DA2A_SCALAR_ONLY" LDLIBS="-lm -pthread" clean $(BIN)
 
+fast-x86:
+	$(MAKE) FAST_X86=1 clean $(BIN)
+
 run: $(BIN) $(MODEL)
 	./$(BIN) "$(MODEL)" "$(PROMPT)" $(TOKENS) $(TEMP)
 
@@ -78,7 +81,7 @@ life: $(BIN) $(MODEL)
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 field restest life clean weights weights-q8 test portable bench
+.PHONY: run run-q8 field restest life clean weights weights-q8 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh

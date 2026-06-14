@@ -37,6 +37,8 @@ make field PROMPT="What is resonance?"
 make restest PROMPT="What is resonance?"
 make life PROMPT="Let the cells remember each other."
 make test
+make portable      # POSIX/scalar fallback
+make fast-x86      # opt-in AVX2/FMA/F16C build on x86_64
 ```
 
 Direct form:
