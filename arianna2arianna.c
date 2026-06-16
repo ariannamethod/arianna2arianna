@@ -828,6 +828,7 @@ static int g_nbr_len = 0;
 static int g_nbr_shuf = 0;      /* KV-order shadow: 1 = permute the neighbour's positions before attending */
 static int g_nbr_perm[512];     /* the permutation of 0..g_nbr_len-1 used when g_nbr_shuf */
 static int g_kvshuf = 0;        /* 1 = run the KV-order shadow probe (Δ_R^kv) per cell */
+static int g_kvpos = 0;         /* 0 = semantic/bag neighbour lane; 1 = positional order-probe lane */
 static int g_qloop = 0;         /* 0=off; 1..2 = resonant cell-question routes per round */
 static float g_qloop_min = 0.42f;
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
@@ -848,7 +849,7 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
 
     float *x = calloc(E, sizeof(float)); memcpy(x, m->tok_emb + (long)token*E, E*sizeof(float));
     float *xn = calloc(E, sizeof(float)), *q = calloc(QD, sizeof(float)), *kk = calloc(KVD, sizeof(float));
-    float *vv = calloc(KVD, sizeof(float)), *ao = calloc(QD, sizeof(float)), *g = calloc(FFN, sizeof(float)), *nk = calloc(HD, sizeof(float));
+    float *vv = calloc(KVD, sizeof(float)), *ao = calloc(QD, sizeof(float)), *g = calloc(FFN, sizeof(float)), *qu = calloc(QD, sizeof(float)), *nk = calloc(HD, sizeof(float));
     float *u = calloc(FFN, sizeof(float)), *t = calloc(E, sizeof(float)), *sc = calloc((size_t)kv->max_seq, sizeof(float));
     float *scn = calloc((size_t)kv->max_seq, sizeof(float));   /* neighbour-channel scores (separate softmax) */
 
@@ -860,7 +861,8 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
             for (int h = 0; h < KV; h++) rmsnorm(kk + h*HD, kk + h*HD, m->L[l].k_norm, HD, eps);
         }
         long base = (long)l*kv->max_seq*KVD;
-        memcpy(kv->ku + base + (long)pos*KVD, kk, (size_t)KVD*sizeof(float));   /* un-rope'd K; cross-cell assigns neighbour content to live position slots */
+        memcpy(kv->ku + base + (long)pos*KVD, kk, (size_t)KVD*sizeof(float));   /* un-rope'd K for semantic neighbour lane */
+        memcpy(qu, q, (size_t)QD*sizeof(float));                                /* un-rope'd q for semantic neighbour lane */
         for (int h = 0; h < H;  h++) ropef(q + h*HD, pos, HD, m->rope_base);
         for (int h = 0; h < KV; h++) ropef(kk + h*HD, pos, HD, m->rope_base);
         memcpy(kv->k + base + (long)pos*KVD, kk, KVD*sizeof(float));
@@ -870,18 +872,22 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
         int xc = (g_xcell > 0 && g_nbr && g_nbr_len > 0) ? g_nbr_len : 0;   /* neighbour positions (separate channel) */
         long nbase = xc ? (long)l * g_nbr->max_seq * KVD : 0;
         for (int h = 0; h < H; h++) {
-            int kvh = h / gqa; float *qh = q + h*HD; int np = pos + 1;
+            int kvh = h / gqa; float *qh = q + h*HD; const float *quh = qu + h*HD; int np = pos + 1;
             /* OWN attention — UNCHANGED from baseline (preserves own-context order = Δ_R) */
             for (int j = 0; j <= pos; j++) { float *kj = kv->k + base + (long)j*KVD + kvh*HD, d = 0; for (int t2 = 0; t2 < HD; t2++) d += qh[t2]*kj[t2]; sc[j] = d*scale; }
             softmax(sc, np); float *oh = ao + h*HD;
             for (int j = 0; j <= pos; j++) { float *vj = kv->v + base + (long)j*KVD + kvh*HD, w = sc[j]; for (int t2 = 0; t2 < HD; t2++) oh[t2] += w*vj[t2]; }
-            if (xc) {   /* NEIGHBOUR channel — content from jj is heard at slot j; shuffling now changes position, not loop order. */
+            if (xc) {   /* NEIGHBOUR channel. Default semantic lane is order-blind; kvpos=1 turns it into an order probe. */
                 for (int j = 0; j < xc; j++) {
                     int jj = (g_nbr_shuf && j < 512) ? g_nbr_perm[j] : j;
                     const float *ku = g_nbr->ku + nbase + (long)jj*KVD + kvh*HD;
-                    memcpy(nk, ku, (size_t)HD * sizeof(float));
-                    ropef(nk, j, HD, m->rope_base);
-                    float d = 0; for (int t2 = 0; t2 < HD; t2++) d += qh[t2]*nk[t2];
+                    const float *key = ku, *query = quh;
+                    if (g_kvpos) {
+                        memcpy(nk, ku, (size_t)HD * sizeof(float));
+                        ropef(nk, j, HD, m->rope_base);
+                        key = nk; query = qh;
+                    }
+                    float d = 0; for (int t2 = 0; t2 < HD; t2++) d += query[t2]*key[t2];
                     scn[j] = d*scale;
                 }
                 softmax(scn, xc);
@@ -897,7 +903,7 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
     }
     rmsnorm(xn, x, m->out_norm, E, eps);
     weight_matvec(&m->output, xn, logits);
-    free(x); free(xn); free(q); free(kk); free(vv); free(ao); free(g); free(u); free(t); free(sc); free(scn); free(nk);
+    free(x); free(xn); free(q); free(kk); free(vv); free(ao); free(g); free(u); free(t); free(sc); free(scn); free(qu); free(nk);
 }
 
 static int argmax(const float *x, int n) { int b = 0; for (int i = 1; i < n; i++) if (x[i] > x[b]) b = i; return b; }
@@ -1269,7 +1275,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         if (c < 8) { strncpy(cur_frag[c], frag, 1023); cur_frag[c][1023] = 0; }
         if (g_xcell > 0) { if (prev_kv) { free(prev_kv->k); free(prev_kv->v); free(prev_kv->ku); free(prev_kv); } prev_kv = cur_kv; prev_len = cur_len; }  /* chain c→c+1 */
     }
-    if (g_qloop && !g_life_on && verbose && out_disso && cent) {
+    if (g_qloop && verbose && out_disso && cent) {
         int qcell[2] = {0, 0}, tcell[2] = {0, 0};
         float qscore[2] = {-1.0f, -1.0f};
         int max_routes = g_qloop > 2 ? 2 : g_qloop;
@@ -1413,7 +1419,8 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
         char resonance[192];
         if (g_chorus) {
             if (g_kvshuf && g_xcell > 0 && n_cells > 1)
-                snprintf(resonance, sizeof(resonance), "Δ_R(text n/a) | Δ_R^kv %+.3f (floor %.3f margin %+.3f)", kv_delta, kv_floor, kv_delta - kv_floor);
+                snprintf(resonance, sizeof(resonance), "Δ_R(text n/a) | Δ_R^kv[%s] %+.3f (floor %.3f margin %+.3f)",
+                         g_kvpos ? "pos" : "sem", kv_delta, kv_floor, kv_delta - kv_floor);
             else
                 snprintf(resonance, sizeof(resonance), "Δ_R(text n/a) | Δ_R^kv off");
         } else snprintf(resonance, sizeof(resonance), "Δ_R %+.3f", deltaR);
@@ -1457,7 +1464,7 @@ static void field_life(model_t *m, bpe_tokenizer *tok, const char *prompt, int n
     srand(12345);
     g_pop_n = (n_init > 0 && n_init <= POP_MAX) ? n_init : 4;
     for (int i = 0; i < g_pop_n; i++) g_pop[i] = cell_birth(42u + (unsigned)i * 7919u);
-    g_life_on = 1; g_chorus = 1;
+    g_life_on = 1; g_chorus = 1; g_qloop = 2;
     FILE *flog = fopen("FIELDLOG.md", "a");
     if (flog) { time_t now = time(NULL); fprintf(flog, "\n## %.24s — δ-life \"%s\" (%d ticks)\n", ctime(&now), prompt, n_ticks); }
     printf("\n=== δ-life: Game of Life over ONE nanoArianna — \"%s\" (%d ticks, the population breathes) ===\n", prompt, n_ticks);
@@ -1525,7 +1532,7 @@ static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *pro
 int main(int argc, char **argv) {
     if (argc < 2) {
         printf("usage: %s <model.gguf> [prompt] [max_tokens] [temp]\n", argv[0]);
-        printf("       %s <model.gguf> <prompt> field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop]\n", argv[0]);
+        printf("       %s <model.gguf> <prompt> field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop] [kvpos]\n", argv[0]);
         printf("       %s <model.gguf> <prompt> restest [cells] [frag] [rounds]\n", argv[0]);
         printf("       %s <model.gguf> <prompt> life [ticks] [frag] [init_cells]\n", argv[0]);
         return 1;
@@ -1557,6 +1564,8 @@ int main(int argc, char **argv) {
         g_qloop      = argc > 14 ? atoi(argv[14]) : (g_chorus ? 2 : 0);  /* 0=off; 1..2 resonant question routes */
         if (g_qloop < 0) g_qloop = 0;
         if (g_qloop > 2) g_qloop = 2;
+        g_kvpos      = argc > 15 ? atoi(argv[15]) : 0;           /* 0=semantic/bag lane; 1=positional order-probe lane */
+        g_kvpos      = g_kvpos ? 1 : 0;
         if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
             float pe = probe_entropy(m, tok, prompt);
             n_cells = (int)(pe + 0.5f); if (n_cells < 1) n_cells = 1; if (n_cells > 8) n_cells = 8;

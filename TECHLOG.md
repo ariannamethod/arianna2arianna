@@ -14,7 +14,7 @@ telemetry. The current organism is positional CLI:
 
 ```text
 ./arianna2arianna <model.gguf> "<prompt>" [max_tokens] [temp]
-./arianna2arianna <model.gguf> "<prompt>" field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf]
+./arianna2arianna <model.gguf> "<prompt>" field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop] [kvpos]
 ./arianna2arianna <model.gguf> "<prompt>" restest [cells] [frag] [rounds]
 ./arianna2arianna <model.gguf> "<prompt>" life [ticks] [frag] [init_cells]
 ```
@@ -303,7 +303,7 @@ resonate with it answer explicitly.
 - Added `qloop` to `field`:
 
 ```text
-field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop]
+field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop] [kvpos]
 ```
 
 - `qloop=0` disables question routing.
@@ -341,3 +341,65 @@ r1 cell 4: What it means this mean? ...
   `?` in decoded text.
 - Let trigger-hop use the answering cell's KV, not only a short text prompt, if
   this becomes central rather than a probe.
+
+## 2026-06-16 - Codex pass: qloop in life, semantic KV default
+
+### Context
+
+Review feedback caught two architecture mismatches:
+
+- qloop was disabled while `g_life_on` was true, even though δ-life should be
+  able to feed itself inside a tick.
+- The positional neighbour lane made `Δ_R^kv` an order probe by default, while
+  the current hypothesis is that the meaningful coupling is semantic, not
+  order-based.
+
+### What changed
+
+- Removed the `!g_life_on` qloop guard.
+- `field_life()` now enables `g_qloop=2`, so a living tick can route one or two
+  resonant Q/A replies.
+- Split the neighbour lane into two modes:
+  - `kvpos=0` default: semantic/order-blind lane using un-roped query and
+    un-roped neighbour K;
+  - `kvpos=1`: positional lane for explicit order-probe runs.
+- Round output labels the probe mode:
+
+```text
+Δ_R^kv[sem] ...
+Δ_R^kv[pos] ...
+```
+
+### Why
+
+The semantic lane makes `Δ_R^kv` hover near the permutation floor by
+construction; that is not a failure, it is the null/order-blind control. If a
+run needs to test whether ordering itself matters, use `kvpos=1`.
+
+### Verification
+
+Default semantic lane:
+
+```text
+→ round 1: avg entropy 4.488 | d_R — (floor 0.769) | Δ_R(text n/a) | Δ_R^kv[sem] -0.000 (floor 0.000 margin -0.000) | D_R 0.771 | Dpos 0.58 peak 0.67@s1
+```
+
+Opt-in positional lane:
+
+```text
+→ round 1: avg entropy 4.514 | d_R — (floor 0.769) | Δ_R(text n/a) | Δ_R^kv[pos] +0.134 (floor 0.220 margin -0.087) | D_R 0.858 | Dpos 0.50 peak 0.67@s1
+```
+
+δ-life qloop:
+
+```text
+↳ qloop c4→c1 score 0.971: from the old edge of something small than
+↳ qloop c4→c2 score 0.954: each time someone sees my own resonance with
+```
+
+### TODO
+
+- Add a separate semantic neighbour-influence metric later: ordered neighbour
+  vs neighbour-off, not ordered vs shuffled.
+- Let qloop affect δ-life fitness only after its behavior is stable; for now
+  primary cell centroids remain the fitness input.
