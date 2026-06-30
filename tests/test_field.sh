@@ -52,6 +52,12 @@ qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does 
 a2a_assert_grep "qloop c[0-9]+.*\\[kv\\]" "$qloop_out" "qloop answers use asker KV"
 a2a_assert_grep "I_Q\\^kv=" "$qloop_out" "qloop reports asker KV influence"
 
+repl_out="$(printf "Let the cells remember each other.\n:q\n" | "$A2A_BIN" "$A2A_MODEL_F16" repl 3 4 1 2>&1)"
+a2a_assert_grep "repl: δ-field live" "$repl_out" "repl starts"
+a2a_assert_grep "repl turn 1" "$repl_out" "repl runs one scripted turn"
+a2a_assert_grep "I_N\\^kv\\[sem\\]" "$repl_out" "repl reports semantic neighbour influence"
+a2a_assert_grep "repl done" "$repl_out" "repl exits on command"
+
 life_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" life 2 4 3 2>&1)"
 a2a_assert_grep "δ-life: Game of Life" "$life_out" "life starts"
 a2a_assert_grep "births" "$life_out" "life reports births"

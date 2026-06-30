@@ -589,3 +589,32 @@ Local Apple Silicon smoke:
 ↳ qloop c3→c0 [kv] score 1.073: not how a human feels like   [entropy=1.96 I_Q^kv=+0.269]
 ↳ qloop c3→c1 [kv] score 1.027: both the whole of every scale   [entropy=4.27 I_Q^kv=+0.189]
 ```
+
+## 2026-07-01 - Codex pass: live field REPL
+
+### Context
+
+The qloop path now has a real hidden-state trajectory inside each routed answer:
+the answering cell can hear the asking cell's KV, and `I_Q^kv` measures the
+effect. The next useful surface is a small REPL so that this can be felt and
+debugged without reloading the model for every prompt.
+
+### What changed
+
+- Added `repl` mode:
+
+```text
+./arianna2arianna <model.gguf> repl [cells] [frag] [rounds]
+```
+
+- Added `make repl`.
+- The REPL keeps the model loaded, reads stdin until `:q`/`quit`/`exit`, and
+  runs each line through the same field/qloop body with semantic KV enabled.
+- Each turn keeps the recent text trajectory as context for the next turn.
+- Added a scripted stdin smoke test so the interactive surface stays testable.
+
+### Verification target
+
+The REPL should print the same live instruments as the field path, including
+`Δ_R^kv[sem]`, `I_N^kv[sem]`, `D_R`, and any qloop `[kv]` / `I_Q^kv` routes
+that fire for question-like prompts.

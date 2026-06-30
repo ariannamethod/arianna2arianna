@@ -75,6 +75,30 @@ static void copy_cstr(char *dst, size_t cap, const char *src) {
     dst[n] = 0;
 }
 
+static void chomp_line(char *s) {
+    if (!s) return;
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) s[--n] = 0;
+}
+
+static void append_trajectory(char *dst, size_t cap, const char *user, const char *chorus) {
+    char entry[6144];
+    if (!dst || cap == 0) return;
+    snprintf(entry, sizeof(entry), "\nUser: %s\nArianna:%s\n", user ? user : "", chorus ? chorus : "");
+    size_t have = strlen(dst), add = strlen(entry);
+    if (add >= cap) {
+        copy_cstr(dst, cap, entry + add - (cap - 1));
+        return;
+    }
+    if (have + add >= cap) {
+        size_t trim = have + add - (cap - 1);
+        if (trim > have) trim = have;
+        memmove(dst, dst + trim, have - trim + 1);
+        have -= trim;
+    }
+    memcpy(dst + have, entry, add + 1);
+}
+
 static int skip_value(FILE* f, uint32_t type);
 static int skip_array(FILE* f) {
     uint32_t atype; uint64_t alen;
@@ -1524,6 +1548,68 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
     if (flog) { fprintf(flog, "\n---\n"); fclose(flog); }
 }
 
+/* Interactive field loop. The process keeps the loaded body hot while each user
+ * line becomes the next prompt over the recent text trajectory. Inside a turn,
+ * cells still exchange live KV and qloop answers can hear the asking cell. */
+static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int nfrag, int n_rounds) {
+    if (n_cells < 1) n_cells = 4;
+    if (n_cells > 8) n_cells = 8;
+    if (nfrag < 2) nfrag = 8;
+    if (n_rounds < 1) n_rounds = 1;
+    if (n_rounds > 4) n_rounds = 4;
+
+    g_life_on = 0;
+    g_chorus = 1;
+    g_leap_mode = 2;
+    g_xcell = 0.30f;
+    g_xrep = 1.3f;
+    g_kvshuf = 1;
+    g_kvpos = 0;
+    g_qloop = 2;
+
+    int interactive = isatty(STDIN_FILENO);
+    int *hist = (int*)calloc(m->vocab, sizeof(int));
+    char line[2048], trajectory[4096], prompt[8192], chorus[4096];
+    trajectory[0] = 0;
+
+    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem) ===\n", n_cells, n_rounds);
+    printf("type :q, :quit, exit, or quit to stop\n");
+
+    for (unsigned turn = 1; ; turn++) {
+        if (interactive) { printf("\narianna> "); fflush(stdout); }
+        if (!fgets(line, sizeof(line), stdin)) break;
+        chomp_line(line);
+        if (line[0] == 0) { turn--; continue; }
+        if (strcmp(line, ":q") == 0 || strcmp(line, ":quit") == 0 ||
+            strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) break;
+
+        if (trajectory[0])
+            snprintf(prompt, sizeof(prompt), "Recent trajectory:%s\nUser: %s\nArianna:", trajectory, line);
+        else
+            snprintf(prompt, sizeof(prompt), "User: %s\nArianna:", line);
+
+        printf("\n  --- repl turn %u ---", turn);
+        for (int i = 0; i < m->vocab; i++) hist[i] = 0;
+        field_reset(m->embed, 0, 0.0f);
+        chorus[0] = 0;
+        for (int r = 0; r < n_rounds; r++) {
+            char round_chorus[4096]; round_chorus[0] = 0;
+            float disso = 0.0f, kv_delta = 0.0f, kv_floor = 0.0f, kv_infl = 0.0f;
+            float avg = run_round(m, tok, prompt, r ? chorus : NULL, n_cells, nfrag, eos,
+                                  42u + (unsigned)(turn * 1009u + r * 7919u), 1, r, hist,
+                                  round_chorus, sizeof(round_chorus), NULL, NULL, &disso,
+                                  &kv_delta, &kv_floor, &kv_infl);
+            copy_cstr(chorus, sizeof(chorus), round_chorus);
+            printf("\n  → repl turn %u.%d: avg entropy %.3f | Δ_R^kv[sem] %+.3f (floor %.3f margin %+.3f) | I_N^kv[sem] %+.3f | D_R %.3f | trajectory %zu bytes\n",
+                   turn, r + 1, avg, kv_delta, kv_floor, kv_delta - kv_floor, kv_infl, disso, strlen(trajectory));
+        }
+        append_trajectory(trajectory, sizeof(trajectory), line, chorus);
+    }
+
+    free(hist);
+    printf("\n=== repl done ===\n");
+}
+
 /* Fisher-Yates over ids[from..to) — used to build a same-length but incoherent context. */
 static void shuffle_ids(int *ids, int from, int to, unsigned seed) {
     srand(seed);
@@ -1617,6 +1703,7 @@ static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *pro
 int main(int argc, char **argv) {
     if (argc < 2) {
         printf("usage: %s <model.gguf> [prompt] [max_tokens] [temp]\n", argv[0]);
+        printf("       %s <model.gguf> repl [cells] [frag] [rounds]\n", argv[0]);
         printf("       %s <model.gguf> <prompt> field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop] [kvpos]\n", argv[0]);
         printf("       %s <model.gguf> <prompt> restest [cells] [frag] [rounds]\n", argv[0]);
         printf("       %s <model.gguf> <prompt> life [ticks] [frag] [init_cells]\n", argv[0]);
@@ -1633,6 +1720,15 @@ int main(int argc, char **argv) {
     bpe_tokenizer *tok = bpe_load(argv[1]); if (!tok) { fprintf(stderr, "bpe_load failed\n"); return 1; }
     int eos = -1; const gguf_kv *e = gguf_get_kv(gf, "tokenizer.ggml.eos_token_id"); if (e) eos = (int)e->val.u32;
     printf("loaded in %.0f ms (vocab=%d eos=%d) -- arianna.q heart, single file, no -lnotorch\n", now_ms() - t0, bpe_n_vocab(tok), eos);
+
+    /* interactive field loop: ./arianna-q <gguf> repl [n_cells] [nfrag] [n_rounds] */
+    if (argc > 2 && strcmp(argv[2], "repl") == 0) {
+        int n_cells  = argc > 3 ? atoi(argv[3]) : 4;
+        int nfrag    = argc > 4 ? atoi(argv[4]) : 12;
+        int n_rounds = argc > 5 ? atoi(argv[5]) : 1;
+        field_repl(m, tok, eos, n_cells, nfrag, n_rounds);
+        return 0;
+    }
 
     /* δ-field chorus mode:  ./arianna-q <gguf> <prompt> field [n_cells] [nfrag] [n_rounds] */
     if (argc > 3 && strcmp(argv[3], "field") == 0) {

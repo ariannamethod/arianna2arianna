@@ -70,6 +70,9 @@ run: $(BIN) $(MODEL)
 run-q8: $(BIN) $(MODEL_Q8)
 	./$(BIN) "$(MODEL_Q8)" "$(PROMPT)" $(TOKENS) $(TEMP)
 
+repl: $(BIN) $(MODEL)
+	./$(BIN) "$(MODEL)" repl $(CELLS) $(FRAG) $(ROUNDS)
+
 field: $(BIN) $(MODEL)
 	./$(BIN) "$(MODEL)" "$(PROMPT)" field $(CELLS) $(FRAG) $(ROUNDS) $(ALPHA) $(LEAP) $(XCELL)
 
@@ -85,7 +88,7 @@ sweep-influence: $(BIN) $(MODEL)
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 field restest life sweep-influence clean weights weights-q8 test portable fast-x86 bench
+.PHONY: run run-q8 repl field restest life sweep-influence clean weights weights-q8 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh

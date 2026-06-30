@@ -34,6 +34,7 @@ Weights live in `weights/` and are gitignored.
 ```sh
 make
 make run PROMPT="The chorus is"
+make repl
 make field PROMPT="What is resonance?"
 make restest PROMPT="What is resonance?"
 make life PROMPT="Let the cells remember each other."
@@ -47,10 +48,16 @@ Direct form:
 
 ```sh
 ./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" 48 0.8
+./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf repl 4 12 1
 ./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" field 4 12 3 0 2 0.30 1 1.3 0 1 2 0
 ./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" restest 4 12 3
 ./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" life 5 12 4
 ```
+
+`repl` keeps the model loaded and reads prompts from stdin until `:q`, `quit`,
+or `exit`. Each line runs a short live field turn with semantic KV neighbour
+coupling and qloop enabled, then keeps the recent text trajectory as context for
+the next line.
 
 `field` and `life` append generated traces to `FIELDLOG.md`. In the default
 chorus, text-order `Δ_R` is marked `n/a`; the neighbour probe is `Δ_R^kv`
