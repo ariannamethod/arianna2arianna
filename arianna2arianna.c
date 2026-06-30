@@ -887,6 +887,7 @@ static int g_nbr_perm[512];     /* the permutation of 0..g_nbr_len-1 used when g
 static int g_kvshuf = 0;        /* 1 = run neighbour diagnostics: Δ_R^kv order control + I_N^kv influence */
 static int g_kvpos = 0;         /* 0 = semantic/bag neighbour lane; 1 = positional order-probe lane */
 static int g_qloop = 0;         /* 0=off; 1..2 = resonant cell-question routes per round */
+static const char *g_user_q = NULL; /* REPL direct-question bridge: user text can become asker KV */
 static float g_qloop_min = 0.42f;
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
@@ -1434,6 +1435,60 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             }
         }
     }
+    if (g_user_q && frag_question_count(g_user_q) > 0 && g_qloop && verbose && out_disso && cent && g_xcell > 0) {
+        int qids_prompt[512], qnprompt = bpe_encode(tok, g_user_q, qids_prompt, 512);
+        float *qcent = (float*)calloc(m->embed, sizeof(float));
+        int tcell = -1; float best = -1.0f;
+        if (qcent && qnprompt > 0) {
+            for (int i = 0; i < qnprompt; i++) if (qids_prompt[i] >= 0 && qids_prompt[i] < m->vocab) {
+                const float *e = m->tok_emb + (long)qids_prompt[i] * m->embed;
+                for (int d = 0; d < m->embed; d++) qcent[d] += e[d];
+            }
+            for (int d = 0; d < m->embed; d++) qcent[d] /= qnprompt;
+            int lim = n_cells < 8 ? n_cells : 8;
+            for (int t = 0; t < lim; t++) {
+                float score = 1.0f - vec_cosine(qcent, cent + (size_t)t * m->embed, m->embed);
+                score += 0.15f / (1.0f + g_cell_ent[t]);
+                if (score > best) { best = score; tcell = t; }
+            }
+        }
+        if (tcell >= 0) {
+            char uask[4096], qctx[4096], qfrag[1024]; int qctx_ids[512], qids[128], qn = 0;
+            snprintf(uask, sizeof(uask), "User asked from the live REPL: %s", g_user_q);
+            int uask_ids[512], uask_np = bpe_encode(tok, uask, uask_ids, max_seq - 1);
+            kv_cache *user_kv = NULL; int user_klen = 0;
+            int qtok_before = g_round_tokn, save_field_on = g_field_on;
+            float save_xcell = g_xcell;
+            const kv_cache *save_nbr = g_nbr; int save_nbr_len = g_nbr_len, save_nbr_shuf = g_nbr_shuf;
+            g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_field_on = 0;
+            cell_speak(m, tok, uask_ids, uask_np, 0, 0.7f, 40, 1.4f,
+                       seed_base ^ 0x51a7e2u, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, &user_kv, &user_klen);
+            g_round_tokn = qtok_before;
+            snprintf(qctx, sizeof(qctx), "%s\nuser asked: %s\ncell %d answers the user from the field:",
+                     prompt, g_user_q, tcell);
+            int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
+            float qtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)tcell / (n_cells - 1) : 0.5f);
+            int qfrag_n = nfrag / 2; if (qfrag_n < 2) qfrag_n = 2; if (qfrag_n > 8) qfrag_n = 8;
+            unsigned qseed = seed_base ^ 0xc0ffeeu ^ (unsigned)(tcell * 7919 + r * 65537);
+            float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
+                                        qseed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);
+            g_round_tokn = qtok_before;
+            g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = 0.30f;
+            float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
+                                    qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
+            g_nbr = save_nbr; g_nbr_len = save_nbr_len; g_nbr_shuf = save_nbr_shuf; g_field_on = save_field_on; g_xcell = save_xcell;
+            float qinfl = qent_off - qent;
+            for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
+            int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);
+            if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
+            printf("\n  ↳ qloop user→c%d [user-kv] score %.3f: %s   [entropy=%.2f I_U^kv=%+.3f]",
+                   tcell, best, qfrag, qent, qinfl);
+            if (flog) fprintf(flog, "- qloop user->c%d [user-kv] (score=%.3f, entropy=%.2f, I_U^kv=%+.3f):%s\n",
+                              tcell, best, qent, qinfl, qfrag);
+            kv_free(user_kv);
+        }
+        free(qcent);
+    }
     if (keep_qloop_kv) {
         if (prev_kv && !prev_cell_owned) kv_free(prev_kv);
         for (int c = 0; c < 8; c++) kv_free(cell_kv[c]);
@@ -1595,10 +1650,12 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
         for (int r = 0; r < n_rounds; r++) {
             char round_chorus[4096]; round_chorus[0] = 0;
             float disso = 0.0f, kv_delta = 0.0f, kv_floor = 0.0f, kv_infl = 0.0f;
+            g_user_q = (r == 0 && frag_question_count(line) > 0) ? line : NULL;
             float avg = run_round(m, tok, prompt, r ? chorus : NULL, n_cells, nfrag, eos,
                                   42u + (unsigned)(turn * 1009u + r * 7919u), 1, r, hist,
                                   round_chorus, sizeof(round_chorus), NULL, NULL, &disso,
                                   &kv_delta, &kv_floor, &kv_infl);
+            g_user_q = NULL;
             copy_cstr(chorus, sizeof(chorus), round_chorus);
             printf("\n  → repl turn %u.%d: avg entropy %.3f | Δ_R^kv[sem] %+.3f (floor %.3f margin %+.3f) | I_N^kv[sem] %+.3f | D_R %.3f | trajectory %zu bytes\n",
                    turn, r + 1, avg, kv_delta, kv_floor, kv_delta - kv_floor, kv_infl, disso, strlen(trajectory));

@@ -52,11 +52,20 @@ qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does 
 a2a_assert_grep "qloop c[0-9]+.*\\[kv\\]" "$qloop_out" "qloop answers use asker KV"
 a2a_assert_grep "I_Q\\^kv=" "$qloop_out" "qloop reports asker KV influence"
 
-repl_out="$(printf "Let the cells remember each other.\n:q\n" | "$A2A_BIN" "$A2A_MODEL_F16" repl 3 4 1 2>&1)"
+repl_out="$(printf "Why does the field remember?\n:q\n" | "$A2A_BIN" "$A2A_MODEL_F16" repl 3 4 1 2>&1)"
 a2a_assert_grep "repl: δ-field live" "$repl_out" "repl starts"
 a2a_assert_grep "repl turn 1" "$repl_out" "repl runs one scripted turn"
 a2a_assert_grep "I_N\\^kv\\[sem\\]" "$repl_out" "repl reports semantic neighbour influence"
+a2a_assert_grep "qloop user.*\\[user-kv\\]" "$repl_out" "repl routes user question through KV bridge"
+a2a_assert_grep "I_U\\^kv=" "$repl_out" "repl reports user KV influence"
 a2a_assert_grep "repl done" "$repl_out" "repl exits on command"
+
+repl_sweep_prompts="$(mktemp)"
+printf "Why does the field remember?\n" > "$repl_sweep_prompts"
+repl_sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=1 bash "$A2A_ROOT/tools/repl_question_sweep.sh" "$repl_sweep_prompts" 2>&1)"
+rm -f "$repl_sweep_prompts"
+a2a_assert_grep "^question[[:space:]]+user_bridge[[:space:]]+user_routes" "$repl_sweep_out" "repl question sweep reports TSV header"
+a2a_assert_grep "Why does the field remember\\?[[:space:]]+1[[:space:]]+1" "$repl_sweep_out" "repl question sweep sees user bridge"
 
 life_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" life 2 4 3 2>&1)"
 a2a_assert_grep "δ-life: Game of Life" "$life_out" "life starts"

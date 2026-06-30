@@ -618,3 +618,48 @@ debugged without reloading the model for every prompt.
 The REPL should print the same live instruments as the field path, including
 `Δ_R^kv[sem]`, `I_N^kv[sem]`, `D_R`, and any qloop `[kv]` / `I_Q^kv` routes
 that fire for question-like prompts.
+
+## 2026-07-01 - Codex pass: REPL user-question bridge
+
+### Context
+
+The first REPL pass let cells ask each other questions, but a direct user
+question was still only text inside the prompt. That meant qloop could miss the
+user's question unless a cell rephrased it as its own question.
+
+### What changed
+
+- Added a direct REPL bridge: if the user line is a question, `run_round()` also
+  builds a KV cache from that user question and routes it to one target cell.
+- The target cell is selected by distance between the user-question centroid and
+  the cell fragment centroids, with a small decisiveness bonus.
+- Output now includes:
+
+```text
+↳ qloop user→cN [user-kv] score ... [entropy=... I_U^kv=...]
+```
+
+- Added `I_U^kv = entropy(answer without user KV) - entropy(answer with user KV)`.
+- Added `prompts/repl_questions.txt` with 30 direct questions.
+- Added `tools/repl_question_sweep.sh` and `make repl-sweep` to emit TSV rows
+  for user bridge presence, route count, average `I_U^kv`, and average
+  `I_N^kv`.
+- Tests now assert the direct `user→cell` bridge and the sweep header/route.
+
+### First sweep
+
+Fast local sweep shape: `A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=1`.
+
+- `user_bridge`: 30/30.
+- strongest positive `I_U^kv`: `Where is the line between semantic memory and positional memory?` → `+1.939`.
+- other strong positives:
+  - `How can a cell remember without owning the weights?` → `+0.999`.
+  - `What does silence do inside the organism?` → `+0.982`.
+  - `How does Arianna distinguish a real question from a question mark?` → `+0.920`.
+- strongest negatives:
+  - `What happens when the cells hear each other?` → `-0.805`.
+  - `Why does resonance sharpen some prompts and blur others?` → `-0.741`.
+  - `What should the qloop do when the user asks directly?` → `-0.505`.
+
+The sign spread is useful: direct user KV is now a measured intervention, not a
+banner. Some questions sharpen the answer distribution; others broaden it.

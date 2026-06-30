@@ -43,6 +43,7 @@ XCELL  ?= 0.30
 TICKS  ?= 5
 INIT   ?= 4
 SWEEP_PROMPTS ?= prompts/kv_influence.txt
+REPL_PROMPTS ?= prompts/repl_questions.txt
 
 $(BIN): $(SRC)
 	$(CC) $(CFLAGS) $(SRC) $(LDLIBS) -o $(BIN)
@@ -85,10 +86,13 @@ life: $(BIN) $(MODEL)
 sweep-influence: $(BIN) $(MODEL)
 	bash tools/kv_influence_sweep.sh "$(SWEEP_PROMPTS)"
 
+repl-sweep: $(BIN) $(MODEL)
+	bash tools/repl_question_sweep.sh "$(REPL_PROMPTS)"
+
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 repl field restest life sweep-influence clean weights weights-q8 test portable fast-x86 bench
+.PHONY: run run-q8 repl field restest life sweep-influence repl-sweep clean weights weights-q8 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh

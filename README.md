@@ -39,6 +39,7 @@ make field PROMPT="What is resonance?"
 make restest PROMPT="What is resonance?"
 make life PROMPT="Let the cells remember each other."
 make sweep-influence
+make repl-sweep
 make test
 make portable      # POSIX/scalar fallback
 make fast-x86      # opt-in AVX2/FMA/F16C build on x86_64
@@ -57,7 +58,9 @@ Direct form:
 `repl` keeps the model loaded and reads prompts from stdin until `:q`, `quit`,
 or `exit`. Each line runs a short live field turn with semantic KV neighbour
 coupling and qloop enabled, then keeps the recent text trajectory as context for
-the next line.
+the next line. If the user line is a question, REPL also builds a direct
+user-question KV route and prints it as `qloop user→cN [user-kv]` with
+`I_U^kv`, the entropy influence of the user's hidden trajectory.
 
 `field` and `life` append generated traces to `FIELDLOG.md`. In the default
 chorus, text-order `Δ_R` is marked `n/a`; the neighbour probe is `Δ_R^kv`
@@ -70,6 +73,10 @@ neighbour lane, while `kvpos=1` enables the positional order-probe lane.
 prints one TSV row per prompt with `Δ_R^kv`, permutation floor/margin, and
 `I_N^kv`. `Let the cells remember each other.` is kept as the first positive
 semantic-neighbour anchor: its `I_N^kv` should stay above zero.
+
+`make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
+and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average
+`I_N^kv`.
 
 ## generations
 
