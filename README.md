@@ -40,6 +40,7 @@ make restest PROMPT="What is resonance?"
 make life PROMPT="Let the cells remember each other."
 make sweep-influence
 make repl-sweep
+make openai-repl-probe   # requires OPENAI_API_KEY or OPENAI_API_KEY_FILE
 make test
 make portable      # POSIX/scalar fallback
 make fast-x86      # opt-in AVX2/FMA/F16C build on x86_64
@@ -77,6 +78,20 @@ semantic-neighbour anchor: its `I_N^kv` should stay above zero.
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average
 `I_N^kv`.
+
+`make openai-repl-probe` is an optional API-backed debug layer. It captures live
+Arianna field fragments, asks GPT through the OpenAI Responses API for probe
+questions/continuations, then runs those generated questions through
+`repl_question_sweep.sh`. Provide the key only through local environment:
+
+```sh
+export OPENAI_API_KEY=...
+# or:
+export OPENAI_API_KEY_FILE=/path/to/local.key
+make openai-repl-probe
+```
+
+Generated seed/output TSV files go to ignored `runs/`.
 
 ## generations
 

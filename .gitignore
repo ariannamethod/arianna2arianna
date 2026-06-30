@@ -3,3 +3,7 @@ arianna2arianna
 weights/
 FIELDLOG.md
 refs/
+runs/
+.env
+.env.*
+*.key

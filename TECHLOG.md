@@ -663,3 +663,40 @@ Fast local sweep shape: `A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=1`.
 
 The sign spread is useful: direct user KV is now a measured intervention, not a
 banner. Some questions sharpen the answer distribution; others broaden it.
+
+## 2026-07-01 - Codex pass: OpenAI-generated REPL probes
+
+### Context
+
+The hand-written 30-question sweep proved the direct `user→cell` bridge fires
+and produces a useful sign spread. The next debug layer is to let GPT continue
+or question Arianna fragments, then feed those probes back into the local REPL.
+
+### What changed
+
+- Added `tools/openai_repl_probe.sh`.
+- Added `make openai-repl-probe`.
+- The script:
+  - captures fresh Arianna field fragments locally;
+  - calls the OpenAI Responses API with `OPENAI_API_KEY` or
+    `OPENAI_API_KEY_FILE`;
+  - writes generated question probes to ignored `runs/`;
+  - runs those generated probes through `tools/repl_question_sweep.sh`;
+  - writes a TSV with `user_bridge`, route count, `I_U^kv`, and `I_N^kv`.
+- Added `runs/`, `.env*`, and `*.key` to `.gitignore`.
+- Added a no-key smoke test so ordinary `make test` verifies safe refusal
+  without requiring network or credentials.
+
+### Use
+
+```text
+export OPENAI_API_KEY=...
+make openai-repl-probe
+```
+
+or:
+
+```text
+export OPENAI_API_KEY_FILE=/path/to/local.key
+make openai-repl-probe
+```
