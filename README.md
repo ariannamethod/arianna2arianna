@@ -92,8 +92,8 @@ Question loop:
 ```text
 r1 cell 2 (T=0.95): ...clear ideas? Sometimes, at
 r1 cell 4 (T=1.30): What it means this mean? ...
-↳ qloop c2→c1 score 1.048: “Batingness” of time to
-↳ qloop c2→c0 score 1.017: 1) Appitect not just voice
+↳ qloop c2→c1 [kv] score 1.048: “Batingness” of time to
+↳ qloop c2→c0 [kv] score 1.017: 1) Appitect not just voice
 ```
 
 Population breath:

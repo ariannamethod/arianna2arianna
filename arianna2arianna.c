@@ -847,6 +847,10 @@ static kv_cache *kv_new(int nl, int max_seq, int kv_dim) {
     c->ku = calloc((long)nl*max_seq*kv_dim, sizeof(float));   /* un-rope'd K — phase-coherent cross-cell scores */
     c->max_seq = max_seq; c->kv_dim = kv_dim; return c;
 }
+static void kv_free(kv_cache *kv) {
+    if (!kv) return;
+    free(kv->k); free(kv->v); free(kv->ku); free(kv);
+}
 
 /* single token forward, KV-cached. Writes logits[vocab]. */
 /* cross-cell attention: a cell also attends to a NEIGHBOUR voice's hidden K/V at each layer (forward-level,
@@ -1096,7 +1100,7 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
     if (out_n) { *out_n = hlen; if (out_ids) for (int i = 0; i < hlen; i++) out_ids[i] = hist[i]; }
     free(logits); if (fproj) free(fproj);
     if (out_kv) { *out_kv = kv; if (out_klen) *out_klen = klen; }   /* hand kv to the caller (cross-cell chain); caller frees */
-    else { free(kv->k); free(kv->v); free(kv->ku); free(kv); }
+    else kv_free(kv);
     return ent_n ? ent_acc / ent_n : 0.0f;
 }
 
@@ -1109,7 +1113,7 @@ static float probe_entropy(model_t *m, bpe_tokenizer *tok, const char *prompt) {
     float *logits = (float*)calloc(m->vocab, sizeof(float));
     for (int i = 0; i < np; i++) forward(m, kv, ids[i], i, logits);
     float ent = logit_entropy(logits, m->vocab, 1.0f);
-    free(logits); free(kv->k); free(kv->v); free(kv->ku); free(kv);
+    free(logits); kv_free(kv);
     return ent;
 }
 
@@ -1226,7 +1230,9 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     int kv_n = 0;
     float *cent = out_disso ? (float*)calloc((size_t)n_cells * m->embed, sizeof(float)) : NULL;  /* per-cell fragment centroids → D_R */
     char cur_frag[8][1024];   /* this round's per-cell fragments → cached to g_round_frag for next round's leap */
-    kv_cache *prev_kv = NULL; int prev_len = 0;   /* cross-cell: the prior cell's KV, attended by the next cell */
+    kv_cache *prev_kv = NULL; int prev_len = 0, prev_cell_owned = 0;   /* cross-cell: the prior cell's KV, attended by the next cell */
+    kv_cache *cell_kv[8] = {0}; int cell_klen[8] = {0};
+    int keep_qloop_kv = (g_qloop && out_disso);   /* qloop answers can hear the asking cell's KV, not only pasted text */
     g_round_tokn = 0;   /* fresh shared word-memory for this round's cross-cell rep-penalty */
     for (int c = 0; c < n_cells; c++) {
         if (g_chorus) snprintf(ctx, sizeof(ctx), "%s", prompt);   /* CHORUS: each cell answers the SAME prompt from its own angle; awareness via cross-cell, not text */
@@ -1311,7 +1317,20 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", frag);
         if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
         if (c < 8) copy_cstr(cur_frag[c], sizeof(cur_frag[c]), frag);
-        if (g_xcell > 0) { if (prev_kv) { free(prev_kv->k); free(prev_kv->v); free(prev_kv->ku); free(prev_kv); } prev_kv = cur_kv; prev_len = cur_len; }  /* chain c→c+1 */
+        if (g_xcell > 0) {   /* chain c→c+1; optionally keep per-cell KV alive for qloop after the round */
+            if (keep_qloop_kv) {
+                if (c < 8) {
+                    cell_kv[c] = cur_kv; cell_klen[c] = cur_len;
+                    prev_kv = cur_kv; prev_len = cur_len; prev_cell_owned = 1;
+                } else {
+                    if (prev_kv && !prev_cell_owned) kv_free(prev_kv);
+                    prev_kv = cur_kv; prev_len = cur_len; prev_cell_owned = 0;
+                }
+            } else {
+                kv_free(prev_kv);
+                prev_kv = cur_kv; prev_len = cur_len; prev_cell_owned = 0;
+            }
+        }
     }
     if (g_qloop && verbose && out_disso && cent) {
         int qcell[2] = {0, 0}, tcell[2] = {0, 0};
@@ -1325,15 +1344,21 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
             float qtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)tcell[route] / (n_cells - 1) : 0.5f);
             int qfrag_n = nfrag / 2; if (qfrag_n < 2) qfrag_n = 2; if (qfrag_n > 8) qfrag_n = 8;
-            g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0;
+            float save_xcell = g_xcell;
+            float answer_xcell = (g_life_on && tcell[route] < POP_MAX) ? g_pop[tcell[route]].lambda : g_xcell;
+            int qkv_on = (qcell[route] < 8 && cell_kv[qcell[route]] && cell_klen[qcell[route]] > 0 && answer_xcell > 0);
+            if (qkv_on) { g_nbr = cell_kv[qcell[route]]; g_nbr_len = cell_klen[qcell[route]]; g_xcell = answer_xcell; }
+            else { g_nbr = NULL; g_nbr_len = 0; }
+            g_nbr_shuf = 0;
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
                                     seed_base ^ 0xa2a51u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + r * 265443576 + route * 65537),
                                     eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
+            g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_xcell = save_xcell;
             for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
             int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);
             if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
-            printf("\n  ↳ qloop c%d→c%d score %.3f: %s   [entropy=%.2f]", qcell[route], tcell[route], qscore[route], qfrag, qent);
-            if (flog) fprintf(flog, "- qloop c%d->c%d (score=%.3f, entropy=%.2f):%s\n", qcell[route], tcell[route], qscore[route], qent, qfrag);
+            printf("\n  ↳ qloop c%d→c%d%s score %.3f: %s   [entropy=%.2f]", qcell[route], tcell[route], qkv_on ? " [kv]" : "", qscore[route], qfrag, qent);
+            if (flog) fprintf(flog, "- qloop c%d->c%d%s (score=%.3f, entropy=%.2f):%s\n", qcell[route], tcell[route], qkv_on ? " [kv]" : "", qscore[route], qent, qfrag);
 
             if (frag_question_count(qfrag) > 0 && qn > 0) {
                 float *qcent = (float*)calloc(m->embed, sizeof(float));
@@ -1369,7 +1394,10 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             }
         }
     }
-    if (prev_kv) { free(prev_kv->k); free(prev_kv->v); free(prev_kv->ku); free(prev_kv); }   /* free the last cell's kept kv */
+    if (keep_qloop_kv) {
+        if (prev_kv && !prev_cell_owned) kv_free(prev_kv);
+        for (int c = 0; c < 8; c++) kv_free(cell_kv[c]);
+    } else kv_free(prev_kv);   /* free the last cell's kept kv */
     g_nbr = NULL; g_nbr_len = 0;
     if (out_chorus) copy_cstr(out_chorus, (size_t)out_cap, this_chorus);
     if (out_shuf) *out_shuf = shuf_sum / n_cells;

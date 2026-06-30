@@ -535,3 +535,29 @@ stronger than a single local curiosity: it is a cross-machine sign anchor.
 The field now has a minimal regression for semantic neighbour usefulness:
 there is at least one known prompt where neighbour hidden state sharpens the
 next-token field.
+
+## 2026-06-30 - Codex pass: KV-backed qloop answers
+
+### Context
+
+Question routing originally selected a target cell by centroid/entropy, then
+answered from a text prompt only. That proved the router could fire, but it did
+not let the answering cell hear the asking cell's hidden state.
+
+### What changed
+
+- `run_round()` now keeps up to 8 cell KV caches alive until qloop finishes.
+- A qloop answer sets the neighbour lane to the asking cell's KV cache while
+  the target cell answers.
+- The qloop output marks KV-backed answers with `[kv]`.
+- The test suite now checks that the question prompt produces a `[kv]` qloop
+  answer.
+
+### Verification
+
+Local Apple Silicon smoke:
+
+```text
+↳ qloop c3→c0 [kv] score 1.073: not how a human feels like
+↳ qloop c3→c1 [kv] score 1.027: both the whole of every scale
+```
