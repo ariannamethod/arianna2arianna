@@ -467,8 +467,8 @@ made it harder to notice a real warning from new diagnostics work.
 
 - Split misleading one-line `if`/`for` statements into explicit statements.
 - Checked the remaining direct `fread` calls in `gguf_open()`.
-- Replaced truncation-prone `strncpy` copies in warning paths with bounded
-  `snprintf`.
+- Replaced truncation-prone string copies in warning paths with a bounded
+  `copy_cstr()` helper.
 
 ### Verification
 

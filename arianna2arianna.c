@@ -66,6 +66,14 @@ static int read_string(FILE* f, char* buf, int max) {
     if (fread(buf, 1, len, f) != len) return 0;
     buf[len] = 0; return 1;
 }
+static void copy_cstr(char *dst, size_t cap, const char *src) {
+    if (!dst || cap == 0) return;
+    if (!src) src = "";
+    size_t n = strlen(src);
+    if (n >= cap) n = cap - 1;
+    memcpy(dst, src, n);
+    dst[n] = 0;
+}
 
 static int skip_value(FILE* f, uint32_t type);
 static int skip_array(FILE* f) {
@@ -104,7 +112,7 @@ static gguf_file* gguf_open(const char* path) {
         read_string(f, key, sizeof(key)); read_u32(f, &vtype);
         if (gf->n_kv_parsed < GGUF_MAX_KV && vtype != 9) {
             gguf_kv* kv = &gf->kv[gf->n_kv_parsed];
-            snprintf(kv->key, sizeof(kv->key), "%s", key); kv->type = vtype;
+            copy_cstr(kv->key, sizeof(kv->key), key); kv->type = vtype;
             switch (vtype) {
                 case 4: read_u32(f, &kv->val.u32); break;
                 case 5: {
@@ -127,7 +135,7 @@ static gguf_file* gguf_open(const char* path) {
     }
     for (int i = 0; i < gf->n_kv_parsed; i++) {
         gguf_kv* kv = &gf->kv[i];
-        if (strcmp(kv->key, "general.architecture") == 0) strncpy(gf->arch, kv->val.str, sizeof(gf->arch) - 1);
+        if (strcmp(kv->key, "general.architecture") == 0) copy_cstr(gf->arch, sizeof(gf->arch), kv->val.str);
         else if (strstr(kv->key, ".block_count"))                                    gf->n_layers = kv->val.u32;
         else if (strstr(kv->key, ".attention.head_count") && !strstr(kv->key, "kv")) gf->n_heads = kv->val.u32;
         else if (strstr(kv->key, ".attention.head_count_kv"))                        gf->n_kv_heads = kv->val.u32;
@@ -1302,7 +1310,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         if (flog) fprintf(flog, "- cell %d (T=%.2f, entropy=%.2f):%s\n", c, temp, ent, frag);
         int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", frag);
         if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
-        if (c < 8) snprintf(cur_frag[c], sizeof(cur_frag[c]), "%s", frag);
+        if (c < 8) copy_cstr(cur_frag[c], sizeof(cur_frag[c]), frag);
         if (g_xcell > 0) { if (prev_kv) { free(prev_kv->k); free(prev_kv->v); free(prev_kv->ku); free(prev_kv); } prev_kv = cur_kv; prev_len = cur_len; }  /* chain c→c+1 */
     }
     if (g_qloop && verbose && out_disso && cent) {
@@ -1363,7 +1371,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     }
     if (prev_kv) { free(prev_kv->k); free(prev_kv->v); free(prev_kv->ku); free(prev_kv); }   /* free the last cell's kept kv */
     g_nbr = NULL; g_nbr_len = 0;
-    if (out_chorus) { strncpy(out_chorus, this_chorus, (size_t)out_cap - 1); out_chorus[out_cap - 1] = 0; }
+    if (out_chorus) copy_cstr(out_chorus, (size_t)out_cap, this_chorus);
     if (out_shuf) *out_shuf = shuf_sum / n_cells;
     if (out_kv_delta) *out_kv_delta = kv_n ? kv_delta_sum / kv_n : 0.0f;
     if (out_kv_floor) *out_kv_floor = kv_n ? kv_floor_sum / kv_n : 0.0f;
@@ -1395,7 +1403,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         free(cent);
         g_dmean = commit_disagreement(n_cells, nfrag);   /* order-sensitive per-position disagreement (the lever's fuel) */
         for (int c = 0; c < n_cells && c < 8; c++) {      /* carry this round → next round's leap */
-            strncpy(g_round_frag[c], cur_frag[c], 1023); g_round_frag[c][1023] = 0;
+            copy_cstr(g_round_frag[c], sizeof(g_round_frag[c]), cur_frag[c]);
             g_diss_commit_n[c] = g_commit_n[c];
             for (int s = 0; s < 64; s++) g_diss_commit[c][s] = g_commit[c][s];
         }
@@ -1460,7 +1468,7 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
                      if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R %.3f (floor %.3f) | %s | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, dR, floor, resonance, disso, g_dmean, g_dpeak, g_s_peak); }
         else       { printf("\n  → round %d: avg entropy %.3f | d_R   —   (floor %.3f) | %s | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, floor, resonance, disso, g_dmean, g_dpeak, g_s_peak);
                      if (flog) fprintf(flog, "→ round %d: avg entropy %.3f | d_R — (floor %.3f) | %s | D_R %.3f | Dpos %.2f peak %.2f@s%d\n", r + 1, avg, floor, resonance, disso, g_dmean, g_dpeak, g_s_peak); }
-        strncpy(prev_chorus, this_chorus, sizeof(prev_chorus) - 1); prev_chorus[sizeof(prev_chorus) - 1] = 0;
+        copy_cstr(prev_chorus, sizeof(prev_chorus), this_chorus);
         int *tmp = hist_prev; hist_prev = hist_cur; hist_cur = tmp;
     }
     free(hist_prev); free(hist_cur);
@@ -1552,7 +1560,7 @@ static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *pro
             printf("    round %d avg entropy = %.3f\n", r + 1, avg);
             if (r == 0) first[control] = avg;
             last[control] = avg;
-            snprintf(prev_chorus, sizeof(prev_chorus), "%s", this_chorus);
+            copy_cstr(prev_chorus, sizeof(prev_chorus), this_chorus);
         }
     }
     float drop_coh = first[0] - last[0], drop_shuf = first[1] - last[1];
