@@ -403,3 +403,54 @@ Opt-in positional lane:
   vs neighbour-off, not ordered vs shuffled.
 - Let qloop affect δ-life fitness only after its behavior is stable; for now
   primary cell centroids remain the fitness input.
+
+## 2026-06-30 - Codex pass: semantic neighbour influence metric
+
+### Context
+
+After the semantic KV default, `Δ_R^kv[sem]` correctly sat near the permutation
+floor: the default neighbour lane is order-blind by construction. That made the
+old shuffle metric an honest order-control, but it did not answer the more basic
+question: does the neighbour KV influence the next-token field at all?
+
+### What changed
+
+- Added `I_N^kv` next to `Δ_R^kv`.
+- For each neighbour-aware cell, the diagnostic now compares:
+
+```text
+I_N^kv = entropy(no-neighbour) - entropy(ordered-neighbour)
+```
+
+- Positive `I_N^kv` means the neighbour channel sharpens the next-token
+  distribution. Negative means the neighbour channel broadens it.
+- `Δ_R^kv` is unchanged: it remains the ordered-vs-shuffled control with its
+  permutation floor/margin.
+- The main round line now prints both instruments:
+
+```text
+Δ_R^kv[sem] ... | I_N^kv[sem] ...
+```
+
+### Verification
+
+Short semantic-lane smoke:
+
+```text
+→ round 1: avg entropy 4.282 | d_R — (floor 0.678) | Δ_R(text n/a) | Δ_R^kv[sem] +0.000 (floor 0.000 margin +0.000) | I_N^kv[sem] -0.216 | D_R 0.866 | Dpos 0.62 peak 0.75@s3
+```
+
+### Why
+
+The semantic lane should not be judged by a shuffle test. The correct baseline
+is neighbour-off. This separates two questions:
+
+- `Δ_R^kv`: does order/slot assignment matter?
+- `I_N^kv`: does neighbour hidden state matter?
+
+### TODO
+
+- Use `I_N^kv` across prompt sweeps to find prompts where semantic neighbour
+  coupling reliably sharpens or reliably broadens the field.
+- Keep δ-life selection on primary cell centroids until the qloop/neighbour
+  diagnostics are stable enough to become fitness pressure.

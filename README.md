@@ -53,10 +53,10 @@ Direct form:
 
 `field` and `life` append generated traces to `FIELDLOG.md`. In the default
 chorus, text-order `Δ_R` is marked `n/a`; the neighbour probe is `Δ_R^kv`
-with a permutation floor/margin. The final `field` arguments are `qloop` and
-`kvpos`: `qloop=0/1/2` controls question routing; `kvpos=0` keeps the default
-semantic/order-blind neighbour lane, while `kvpos=1` enables the positional
-order-probe lane.
+with a permutation floor/margin, and `I_N^kv` is the neighbour-on/off entropy
+gain. The final `field` arguments are `qloop` and `kvpos`: `qloop=0/1/2`
+controls question routing; `kvpos=0` keeps the default semantic/order-blind
+neighbour lane, while `kvpos=1` enables the positional order-probe lane.
 
 ## generations
 
@@ -78,7 +78,7 @@ r1 cell 1 (T=0.83): A: The way of the field is
 r1 cell 2 (T=1.07): - what a method you can do not
 r1 cell 3 (T=1.30): If this sense has been a field like
 
-→ round 1: avg entropy 4.090 | d_R — | Δ_R(text n/a) | Δ_R^kv[sem] +0.000 (floor 0.000 margin +0.000) | D_R 0.844 | Dpos 0.50
+→ round 1: avg entropy 4.282 | d_R — (floor 0.678) | Δ_R(text n/a) | Δ_R^kv[sem] +0.000 (floor 0.000 margin +0.000) | I_N^kv[sem] -0.216 | D_R 0.866 | Dpos 0.62 peak 0.75@s3
 ```
 
 Question loop:

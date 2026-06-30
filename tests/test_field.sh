@@ -20,6 +20,7 @@ a2a_assert_grep "d_R" "$field_out" "field reports d_R"
 a2a_assert_grep "Δ_R\\(text n/a\\)" "$field_out" "chorus marks text delta as n/a"
 a2a_assert_grep "Δ_R\\^kv" "$field_out" "chorus reports KV-order delta"
 a2a_assert_grep "margin" "$field_out" "KV-order delta reports floor margin"
+a2a_assert_grep "I_N\\^kv" "$field_out" "chorus reports neighbour influence"
 a2a_assert_grep "Dpos" "$field_out" "field reports positional dissonance"
 a2a_assert_grep "δ-field done" "$field_out" "field completes"
 
