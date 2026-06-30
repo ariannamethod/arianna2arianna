@@ -37,6 +37,7 @@ make run PROMPT="The chorus is"
 make field PROMPT="What is resonance?"
 make restest PROMPT="What is resonance?"
 make life PROMPT="Let the cells remember each other."
+make sweep-influence
 make test
 make portable      # POSIX/scalar fallback
 make fast-x86      # opt-in AVX2/FMA/F16C build on x86_64
@@ -57,6 +58,10 @@ with a permutation floor/margin, and `I_N^kv` is the neighbour-on/off entropy
 gain. The final `field` arguments are `qloop` and `kvpos`: `qloop=0/1/2`
 controls question routing; `kvpos=0` keeps the default semantic/order-blind
 neighbour lane, while `kvpos=1` enables the positional order-probe lane.
+
+`make sweep-influence` runs the prompts in `prompts/kv_influence.txt` and
+prints one TSV row per prompt with `Δ_R^kv`, permutation floor/margin, and
+`I_N^kv`.
 
 ## generations
 

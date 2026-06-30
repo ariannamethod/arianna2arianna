@@ -479,3 +479,38 @@ make -B arianna2arianna
 make test
 === summary: 36 passed, 0 failed, 0 skipped ===
 ```
+
+## 2026-06-30 - Codex pass: prompt sweep for neighbour influence
+
+### Context
+
+`I_N^kv` is useful only if it can be compared across prompts. A single smoke
+run tells whether the metric works; it does not show which prompts sharpen
+under semantic neighbour coupling and which prompts broaden.
+
+### What changed
+
+- Added `tools/kv_influence_sweep.sh`.
+- Added `prompts/kv_influence.txt` as a small default prompt set.
+- Added `make sweep-influence`.
+- Added a test smoke that runs the sweep on one prompt and checks the TSV
+  header plus semantic row.
+
+### Output shape
+
+```text
+prompt	mode	avg_entropy	kv_delta	kv_floor	kv_margin	kv_influence	disso	dpos
+```
+
+### Verification
+
+Local Apple Silicon:
+
+```text
+make sweep-influence
+What is resonance?	sem	4.282	+0.000	0.000	+0.000	-0.216	0.866	0.62
+Let the cells remember each other.	sem	3.933	+0.000	0.000	-0.000	+0.306	0.833	0.65
+
+make test
+=== summary: 38 passed, 0 failed, 0 skipped ===
+```

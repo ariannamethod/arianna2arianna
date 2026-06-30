@@ -36,6 +36,13 @@ a2a_assert_grep "COHERENT" "$restest_out" "restest includes coherent arm"
 a2a_assert_grep "SHUFFLED" "$restest_out" "restest includes shuffled arm"
 a2a_assert_grep "resonance-beyond-length" "$restest_out" "restest reports control delta"
 
+sweep_prompts="$(mktemp)"
+printf "resonance\n" > "$sweep_prompts"
+sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=1 bash "$A2A_ROOT/tools/kv_influence_sweep.sh" "$sweep_prompts" 2>&1)"
+rm -f "$sweep_prompts"
+a2a_assert_grep "^prompt[[:space:]]+mode[[:space:]]+avg_entropy" "$sweep_out" "influence sweep reports TSV header"
+a2a_assert_grep "resonance[[:space:]]+sem[[:space:]]" "$sweep_out" "influence sweep reports semantic row"
+
 life_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" life 2 4 3 2>&1)"
 a2a_assert_grep "δ-life: Game of Life" "$life_out" "life starts"
 a2a_assert_grep "births" "$life_out" "life reports births"
