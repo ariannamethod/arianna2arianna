@@ -50,6 +50,7 @@ fi
 
 qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does the field remember?" field 5 12 1 0 2 0.30 1 1.3 0 1 2 0 2>&1)"
 a2a_assert_grep "qloop c[0-9]+.*\\[kv\\]" "$qloop_out" "qloop answers use asker KV"
+a2a_assert_grep "I_Q\\^kv=" "$qloop_out" "qloop reports asker KV influence"
 
 life_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" life 2 4 3 2>&1)"
 a2a_assert_grep "δ-life: Game of Life" "$life_out" "life starts"

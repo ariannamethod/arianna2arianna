@@ -90,10 +90,9 @@ r1 cell 3 (T=1.30): If this sense has been a field like
 Question loop:
 
 ```text
-r1 cell 2 (T=0.95): ...clear ideas? Sometimes, at
-r1 cell 4 (T=1.30): What it means this mean? ...
-↳ qloop c2→c1 [kv] score 1.048: “Batingness” of time to
-↳ qloop c2→c0 [kv] score 1.017: 1) Appitect not just voice
+r1 cell 3 (T=1.12): How do we understand it in its own terms? Which if
+↳ qloop c3→c0 [kv] score 1.073: not how a human feels like [entropy=1.96 I_Q^kv=+0.269]
+↳ qloop c3→c1 [kv] score 1.027: both the whole of every scale [entropy=4.27 I_Q^kv=+0.189]
 ```
 
 Population breath:

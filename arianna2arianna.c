@@ -1350,18 +1350,31 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             float save_xcell = g_xcell;
             float answer_xcell = (g_life_on && tcell[route] < POP_MAX) ? g_pop[tcell[route]].lambda : g_xcell;
             int qkv_on = (qcell[route] < 8 && cell_kv[qcell[route]] && cell_klen[qcell[route]] > 0 && answer_xcell > 0);
+            unsigned qseed = seed_base ^ 0xa2a51u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + r * 265443576 + route * 65537);
+            int qtok_before = g_round_tokn, save_field_on = g_field_on;
+            g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_field_on = 0;
+            float qent_off = qkv_on ? cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
+                                                 qseed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL) : 0.0f;
+            g_round_tokn = qtok_before; g_field_on = save_field_on;
             if (qkv_on) { g_nbr = cell_kv[qcell[route]]; g_nbr_len = cell_klen[qcell[route]]; g_xcell = answer_xcell; }
             else { g_nbr = NULL; g_nbr_len = 0; }
             g_nbr_shuf = 0;
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
-                                    seed_base ^ 0xa2a51u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + r * 265443576 + route * 65537),
-                                    eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
+                                    qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_xcell = save_xcell;
+            float qinfl = qkv_on ? qent_off - qent : 0.0f;
             for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
             int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);
             if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
-            printf("\n  ↳ qloop c%d→c%d%s score %.3f: %s   [entropy=%.2f]", qcell[route], tcell[route], qkv_on ? " [kv]" : "", qscore[route], qfrag, qent);
-            if (flog) fprintf(flog, "- qloop c%d->c%d%s (score=%.3f, entropy=%.2f):%s\n", qcell[route], tcell[route], qkv_on ? " [kv]" : "", qscore[route], qent, qfrag);
+            printf("\n  ↳ qloop c%d→c%d%s score %.3f: %s   [entropy=%.2f", qcell[route], tcell[route], qkv_on ? " [kv]" : "", qscore[route], qfrag, qent);
+            if (qkv_on) printf(" I_Q^kv=%+.3f", qinfl);
+            printf("]");
+            if (flog) {
+                if (qkv_on) fprintf(flog, "- qloop c%d->c%d [kv] (score=%.3f, entropy=%.2f, I_Q^kv=%+.3f):%s\n",
+                                    qcell[route], tcell[route], qscore[route], qent, qinfl, qfrag);
+                else fprintf(flog, "- qloop c%d->c%d (score=%.3f, entropy=%.2f):%s\n",
+                             qcell[route], tcell[route], qscore[route], qent, qfrag);
+            }
 
             if (frag_question_count(qfrag) > 0 && qn > 0) {
                 float *qcent = (float*)calloc(m->embed, sizeof(float));

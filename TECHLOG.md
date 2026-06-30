@@ -564,3 +564,28 @@ Local Apple Silicon smoke:
 ↳ qloop c3→c0 [kv] score 1.073: not how a human feels like
 ↳ qloop c3→c1 [kv] score 1.027: both the whole of every scale
 ```
+
+## 2026-07-01 - Codex pass: qloop KV influence metric
+
+### Context
+
+KV-backed qloop answers proved that the answer path can hear the asking cell's
+hidden trajectory. The next missing piece was measurement: whether that KV path
+sharpens or broadens the answer distribution.
+
+### What changed
+
+- Added a qloop shadow answer with the same context/seed and asker KV disabled.
+- Added `I_Q^kv = entropy(answer without asker KV) - entropy(answer with asker KV)`.
+- Printed `I_Q^kv` next to qloop answer entropy when `[kv]` is active.
+- FIELDLOG records `I_Q^kv` for KV-backed qloop answers.
+- The test suite now checks that qloop reports the metric.
+
+### Verification
+
+Local Apple Silicon smoke:
+
+```text
+↳ qloop c3→c0 [kv] score 1.073: not how a human feels like   [entropy=1.96 I_Q^kv=+0.269]
+↳ qloop c3→c1 [kv] score 1.027: both the whole of every scale   [entropy=4.27 I_Q^kv=+0.189]
+```
