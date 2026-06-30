@@ -454,3 +454,28 @@ is neighbour-off. This separates two questions:
   coupling reliably sharpens or reliably broadens the field.
 - Keep δ-life selection on primary cell centroids until the qloop/neighbour
   diagnostics are stable enough to become fitness pressure.
+
+## 2026-06-30 - Codex pass: clean build warnings
+
+### Context
+
+The x86/Linux `make test` output was green but noisy: old `-Wall` warnings for
+misleading one-line statements, unchecked `fread`, and bounded string copies
+made it harder to notice a real warning from new diagnostics work.
+
+### What changed
+
+- Split misleading one-line `if`/`for` statements into explicit statements.
+- Checked the remaining direct `fread` calls in `gguf_open()`.
+- Replaced truncation-prone `strncpy` copies in warning paths with bounded
+  `snprintf`.
+
+### Verification
+
+Local Apple Silicon:
+
+```text
+make -B arianna2arianna
+make test
+=== summary: 36 passed, 0 failed, 0 skipped ===
+```

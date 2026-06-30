@@ -104,12 +104,20 @@ static gguf_file* gguf_open(const char* path) {
         read_string(f, key, sizeof(key)); read_u32(f, &vtype);
         if (gf->n_kv_parsed < GGUF_MAX_KV && vtype != 9) {
             gguf_kv* kv = &gf->kv[gf->n_kv_parsed];
-            strncpy(kv->key, key, GGUF_MAX_NAME - 1); kv->type = vtype;
+            snprintf(kv->key, sizeof(kv->key), "%s", key); kv->type = vtype;
             switch (vtype) {
                 case 4: read_u32(f, &kv->val.u32); break;
-                case 5: { int32_t v; fread(&v, 4, 1, f); kv->val.i32 = v; break; }
+                case 5: {
+                    int32_t v;
+                    if (fread(&v, sizeof(v), 1, f) != 1) { fclose(f); free(gf); return NULL; }
+                    kv->val.i32 = v; break;
+                }
                 case 6: read_f32(f, &kv->val.f32); break;
-                case 7: { uint8_t v; fread(&v, 1, 1, f); kv->val.b = v; break; }
+                case 7: {
+                    uint8_t v;
+                    if (fread(&v, sizeof(v), 1, f) != 1) { fclose(f); free(gf); return NULL; }
+                    kv->val.b = v; break;
+                }
                 case 8: read_string(f, kv->val.str, sizeof(kv->val.str)); break;
                 case 10: case 12: read_u64(f, &kv->val.u64); break;
                 default: skip_value(f, vtype); break;
@@ -150,7 +158,12 @@ static gguf_file* gguf_open(const char* path) {
     gf->data = NULL;
     if (posix_memalign((void**)&gf->data, pg, alloc) != 0 || !gf->data) { fclose(f); free(gf); return NULL; }
     gf->data_size = (uint64_t)alloc;
-    fseek(f, gf->data_offset, SEEK_SET); fread(gf->data, 1, data_size, f); fclose(f);
+    if (fseek(f, gf->data_offset, SEEK_SET) != 0 ||
+        fread(gf->data, 1, (size_t)data_size, f) != (size_t)data_size) {
+        fprintf(stderr, "gguf: failed to read tensor data\n");
+        fclose(f); free(gf->data); free(gf); return NULL;
+    }
+    fclose(f);
     return gf;
 }
 
@@ -184,7 +197,8 @@ static char** gguf_read_str_array(const char* path, const char* key, int* out_n)
                 if (!read_string(f, buf, sizeof(buf))) break;
                 result[j] = strdup(buf);
             }
-            if (out_n) *out_n = (int)alen; break;
+            if (out_n) *out_n = (int)alen;
+            break;
         }
         if (!skip_value(f, vtype)) break;
     }
@@ -207,7 +221,8 @@ static float* gguf_read_f32_array(const char* path, const char* key, int* out_n)
             if (!read_u32(f, &atype) || !read_u64(f, &alen) || atype != 6) break;  /* 6 = float32 */
             result = (float*)calloc(alen ? alen : 1, sizeof(float));
             for (uint64_t j = 0; j < alen; j++) { float v; if (!read_f32(f, &v)) break; result[j] = v; }
-            if (out_n) *out_n = (int)alen; break;
+            if (out_n) *out_n = (int)alen;
+            break;
         }
         if (!skip_value(f, vtype)) break;
     }
@@ -338,7 +353,11 @@ static int smap_get(const smap *m, const char *k) {
 }
 static int utf8_len1(const char *s) {   /* bytes in the UTF-8 char at s */
     unsigned char c = (unsigned char)s[0];
-    if (c < 0x80) return 1; if ((c>>5)==0x6) return 2; if ((c>>4)==0xE) return 3; if ((c>>3)==0x1E) return 4; return 1;
+    if (c < 0x80) return 1;
+    if ((c >> 5) == 0x6) return 2;
+    if ((c >> 4) == 0xE) return 3;
+    if ((c >> 3) == 0x1E) return 4;
+    return 1;
 }
 
 typedef struct { char **tokens; int n_tokens; float *scores; smap vocab;
@@ -376,7 +395,8 @@ static int bpe_encode_gpt2(const bpe_tokenizer *t, const char *text, int *out, i
         if (bi < 0) break;
         char *mg = (char*)malloc(strlen(sym[bi]) + strlen(sym[bi+1]) + 1);
         strcpy(mg, sym[bi]); strcat(mg, sym[bi+1]); free(sym[bi]); free(sym[bi+1]); sym[bi] = mg;
-        for (int i = bi + 1; i < nsym - 1; i++) sym[i] = sym[i+1]; nsym--;
+        for (int i = bi + 1; i < nsym - 1; i++) sym[i] = sym[i+1];
+        nsym--;
     }
     int no = 0;
     for (int i = 0; i < nsym; i++) { int id = smap_get(&t->vocab, sym[i]); if (id >= 0 && no < cap) out[no++] = id; free(sym[i]); }
@@ -436,7 +456,8 @@ static int bpe_encode(const bpe_tokenizer *t, const char *text, int *out, int ca
         if (bi < 0) break;
         char *mg = (char*)malloc(strlen(sym[bi]) + strlen(sym[bi+1]) + 1);
         strcpy(mg, sym[bi]); strcat(mg, sym[bi+1]); free(sym[bi]); free(sym[bi+1]); sym[bi] = mg;
-        for (int i = bi + 1; i < nsym - 1; i++) sym[i] = sym[i+1]; nsym--;
+        for (int i = bi + 1; i < nsym - 1; i++) sym[i] = sym[i+1];
+        nsym--;
     }
     int no = 0;
     for (int i = 0; i < nsym; i++) {
@@ -909,7 +930,8 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
 static int argmax(const float *x, int n) { int b = 0; for (int i = 1; i < n; i++) if (x[i] > x[b]) b = i; return b; }
 static int sample(float *x, int n, float temp) {
     if (temp <= 0) return argmax(x, n);
-    for (int i = 0; i < n; i++) x[i] /= temp; softmax(x, n);
+    for (int i = 0; i < n; i++) x[i] /= temp;
+    softmax(x, n);
     float r = (float)((double)rand()/RAND_MAX), c = 0; for (int i = 0; i < n; i++) { c += x[i]; if (c >= r) return i; } return n - 1;
 }
 static double now_ms(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec*1000.0 + tv.tv_usec/1000.0; }
@@ -977,7 +999,8 @@ static int   g_s_peak = 0;        /* argmax_s D[s] — where the voices split mo
 static float g_dpeak = 0, g_dmean = 0;
 
 static float commit_disagreement(int n_cells, int nfrag) {  /* fills g_diss/g_s_peak/g_dpeak, returns mean */
-    if (n_cells > 8) n_cells = 8; if (nfrag > 64) nfrag = 64;
+    if (n_cells > 8) n_cells = 8;
+    if (nfrag > 64) nfrag = 64;
     double dsum = 0; int dn = 0; float best = -1.0f; g_s_peak = 0;
     for (int s = 0; s < nfrag; s++) {
         int modal = -1, mc = -1, same = 0, tot = 0;
@@ -1279,7 +1302,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         if (flog) fprintf(flog, "- cell %d (T=%.2f, entropy=%.2f):%s\n", c, temp, ent, frag);
         int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", frag);
         if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
-        if (c < 8) { strncpy(cur_frag[c], frag, 1023); cur_frag[c][1023] = 0; }
+        if (c < 8) snprintf(cur_frag[c], sizeof(cur_frag[c]), "%s", frag);
         if (g_xcell > 0) { if (prev_kv) { free(prev_kv->k); free(prev_kv->v); free(prev_kv->ku); free(prev_kv); } prev_kv = cur_kv; prev_len = cur_len; }  /* chain c→c+1 */
     }
     if (g_qloop && verbose && out_disso && cent) {
@@ -1527,8 +1550,9 @@ static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *pro
             }
             float avg = ent_sum / n_cells;
             printf("    round %d avg entropy = %.3f\n", r + 1, avg);
-            if (r == 0) first[control] = avg; last[control] = avg;
-            strncpy(prev_chorus, this_chorus, sizeof(prev_chorus) - 1); prev_chorus[sizeof(prev_chorus) - 1] = 0;
+            if (r == 0) first[control] = avg;
+            last[control] = avg;
+            snprintf(prev_chorus, sizeof(prev_chorus), "%s", this_chorus);
         }
     }
     float drop_coh = first[0] - last[0], drop_shuf = first[1] - last[1];
