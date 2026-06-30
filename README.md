@@ -61,7 +61,8 @@ neighbour lane, while `kvpos=1` enables the positional order-probe lane.
 
 `make sweep-influence` runs the prompts in `prompts/kv_influence.txt` and
 prints one TSV row per prompt with `Δ_R^kv`, permutation floor/margin, and
-`I_N^kv`.
+`I_N^kv`. `Let the cells remember each other.` is kept as the first positive
+semantic-neighbour anchor: its `I_N^kv` should stay above zero.
 
 ## generations
 

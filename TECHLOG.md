@@ -514,3 +514,24 @@ Let the cells remember each other.	sem	3.933	+0.000	0.000	-0.000	+0.306	0.833	0.
 make test
 === summary: 38 passed, 0 failed, 0 skipped ===
 ```
+
+## 2026-06-30 - Codex pass: first semantic influence sign anchor
+
+### Context
+
+The sweep showed `Let the cells remember each other.` as the clearest positive
+semantic-neighbour prompt on both Apple Silicon and polygon Linux. That is
+stronger than a single local curiosity: it is a cross-machine sign anchor.
+
+### What changed
+
+- Changed the sweep smoke test to use `Let the cells remember each other.`.
+- Added an assertion that this prompt's `I_N^kv` is positive.
+- Kept the assertion sign-based, not value-based, so the test tolerates normal
+  backend/platform differences.
+
+### Why
+
+The field now has a minimal regression for semantic neighbour usefulness:
+there is at least one known prompt where neighbour hidden state sharpens the
+next-token field.
