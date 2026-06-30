@@ -550,6 +550,9 @@ not let the answering cell hear the asking cell's hidden state.
 - A qloop answer sets the neighbour lane to the asking cell's KV cache while
   the target cell answers.
 - The qloop output marks KV-backed answers with `[kv]`.
+- The question detector now treats leading `Q.` / `Q:` as question markers,
+  not only literal `?`, because Linux and Apple sampling can spell the same
+  intent differently.
 - The test suite now checks that the question prompt produces a `[kv]` qloop
   answer.
 

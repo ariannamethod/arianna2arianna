@@ -1138,6 +1138,9 @@ static float vec_cosine(const float *a, const float *b, int n) {
 static int frag_question_count(const char *s) {
     int n = 0;
     if (!s) return 0;
+    const char *p = s;
+    while (*p == ' ' || *p == '\t' || *p == '"' || *p == '\'' || *p == '*' || *p == '-') p++;
+    if ((p[0] == 'Q' || p[0] == 'q') && (p[1] == ':' || p[1] == '.')) n++;
     for (; *s; s++) if (*s == '?') n++;
     return n;
 }
