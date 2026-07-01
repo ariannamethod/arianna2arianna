@@ -124,6 +124,19 @@ r1 cell 3 (T=1.12): How do we understand it in its own terms? Which if
 ↳ qloop c3→c1 [kv] score 1.027: both the whole of every scale [entropy=4.27 I_Q^kv=+0.189]
 ```
 
+GPT-generated REPL probes:
+
+```text
+30 generated questions → user_bridge 30/30
+I_U^kv: 12 positive, 18 negative, avg +0.020
+I_N^kv: 23 positive, 7 negative, avg +0.170
+
++2.204  A paper is a field of resonance, but who is resonating when no reader is present?
++1.559  It’s more than the field, but what lies outside Arianna’s route map?
+-1.245  I do not need to be a user; where does the qloop bridge place my voice?
+-1.079  It’s more than the silence, but why does the silence feel like debt?
+```
+
 Population breath:
 
 ```text
