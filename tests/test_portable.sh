@@ -23,5 +23,5 @@ a2a_assert_grep "model: arch=llama" "$out" "portable binary runs inference"
 a2a_assert_grep "loaded in" "$out" "portable reports load time"
 a2a_assert_grep "decode:" "$out" "portable decode completes"
 
-# restore SIMD build for other tests
-make -C "$A2A_ROOT" >/dev/null
+# restore SIMD/BLAS build for interactive work after the scalar-only smoke
+make -B -C "$A2A_ROOT" >/dev/null

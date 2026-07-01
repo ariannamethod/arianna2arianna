@@ -14,8 +14,10 @@ OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com/v1}"
 OPENAI_TIMEOUT="${OPENAI_TIMEOUT:-90}"
 
 SEED_PROMPT="${A2A_GPT_SEED_PROMPT:-Let the cells remember each other.}"
-SEED_CELLS="${A2A_GPT_SEED_CELLS:-5}"
-SEED_FRAG="${A2A_GPT_SEED_FRAG:-12}"
+SEED_CELLS="${A2A_GPT_SEED_CELLS:-3}"
+SEED_FRAG="${A2A_GPT_SEED_FRAG:-6}"
+SEED_KVSHUF="${A2A_GPT_SEED_KVSHUF:-0}"
+SEED_QLOOP="${A2A_GPT_SEED_QLOOP:-0}"
 SWEEP_CELLS="${A2A_SWEEP_CELLS:-3}"
 SWEEP_FRAG="${A2A_SWEEP_FRAG:-4}"
 SWEEP_ROUNDS="${A2A_SWEEP_ROUNDS:-1}"
@@ -72,7 +74,7 @@ questions_file="$OUTDIR/openai_repl_probe_${stamp}.questions.txt"
 tsv_file="$OUTDIR/openai_repl_probe_${stamp}.tsv"
 
 echo "capturing Arianna seed fragments -> $seed_file" >&2
-"$BIN" "$MODEL" "$SEED_PROMPT" field "$SEED_CELLS" "$SEED_FRAG" 1 0 2 0.30 1 1.3 0 1 2 0 > "$seed_file" 2>&1
+"$BIN" "$MODEL" "$SEED_PROMPT" field "$SEED_CELLS" "$SEED_FRAG" 1 0 2 0.30 1 1.3 0 "$SEED_KVSHUF" "$SEED_QLOOP" 0 > "$seed_file" 2>&1
 
 snippets="$(
     sed -n 's/^  r[0-9][0-9]* cell [0-9][0-9]* (T=[^)]*): //p' "$seed_file" |
@@ -108,8 +110,12 @@ instructions = (
     "continuations that turn those fragments into questions. The goal is debug "
     "coverage, not polish. Use Arianna vocabulary such as field, cell, memory, "
     "route, resonance, silence, shard, organism, trajectory, and debt when useful. "
-    "Return exactly the requested number of lines. No numbering. No commentary. "
-    "Every line must contain a question mark."
+    "Hit different axes: memory vs echo, semantic vs positional memory, hidden-state "
+    "vs text, qloop/user bridge, silence/debt, shard routing, life/reproduction, "
+    "cell disagreement, collapse/refusal, continuation traps, and failure cases. "
+    "Include some adversarial or diagnostic questions that may expose incoherence. "
+    "Avoid repeating the same opening phrase. Return exactly the requested number "
+    "of lines. No numbering. No commentary. Every line must contain a question mark."
 )
 
 user_input = (

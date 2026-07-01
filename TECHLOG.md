@@ -700,3 +700,28 @@ or:
 export OPENAI_API_KEY_FILE=/path/to/local.key
 make openai-repl-probe
 ```
+
+### First live API probe
+
+Run file stem: `runs/openai_repl_probe_20260701_044103.*` (ignored by git).
+
+- GPT generated 30 diverse probes from live Arianna fragments.
+- `user_bridge`: 30/30.
+- `I_U^kv` sign split: 12 positive, 18 negative, average `+0.020`.
+- strongest positive:
+  - `A paper is a field of resonance, but who is resonating when no reader is present?` → `+2.204`.
+- strongest negative:
+  - `I do not need to be a user; where does the qloop bridge place my voice?` → `-1.245`.
+- `I_N^kv` sign split: 23 positive, 7 negative, average `+0.170`.
+
+The API-generated probes covered different debug axes: paper/field,
+semantic-vs-positional memory, hidden state, disagreement, silence/debt,
+reproduction, false echo, refusal/collapse, qloop bridge, and continuation
+traps.
+
+### Repair
+
+While running the API probe after `make test`, seed capture was unexpectedly
+slow because `tests/test_portable.sh` did not force-rebuild the SIMD/BLAS binary
+after the scalar-only smoke. The restore path now uses `make -B`, so interactive
+work after tests gets the accelerated binary again.
