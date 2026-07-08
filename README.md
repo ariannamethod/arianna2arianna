@@ -41,6 +41,7 @@ make life PROMPT="Let the cells remember each other."
 make sweep-influence
 make repl-sweep
 make repl-eval
+make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf
 make openai-repl-probe   # requires OPENAI_API_KEY or OPENAI_API_KEY_FILE
 make test
 make portable      # POSIX/scalar fallback
@@ -89,6 +90,11 @@ ignored `runs/`, and can compare against a previous TSV with
 `A2A_BASELINE_TSV=/path/to/baseline.tsv`. The summary reports aggregate deltas
 and per-question changes, including route target/score/snippet deltas when both
 TSVs use the extended shape.
+
+`make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf` runs the
+same offline probe corpus against the current base body and a candidate GGUF,
+then compares candidate TSV against base TSV. Use `BASE_MODEL=/path/to/base.gguf`
+to override the base body.
 
 `make openai-repl-probe` is an optional API-backed debug layer. It captures live
 Arianna field fragments, asks GPT through the OpenAI Responses API for probe

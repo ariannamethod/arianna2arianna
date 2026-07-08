@@ -29,6 +29,19 @@ else
 fi
 a2a_assert_grep "OPENAI_API_KEY" "$out" "openai repl probe names key env without printing a key"
 
+out="$(bash "$A2A_ROOT/tools/repl_substrate_compare.sh" --help 2>&1)"
+a2a_assert_grep "A2A_CANDIDATE_MODEL" "$out" "substrate compare help names candidate model"
+set +e
+out="$(env -u A2A_CANDIDATE_MODEL bash "$A2A_ROOT/tools/repl_substrate_compare.sh" 2>&1)"
+got=$?
+set -e
+if [[ "$got" -eq 2 ]]; then
+    a2a_ok "substrate compare refuses to run without candidate model"
+else
+    a2a_fail "substrate compare missing candidate exit (wanted 2, got $got)"
+fi
+a2a_assert_grep "A2A_CANDIDATE_MODEL" "$out" "substrate compare missing-candidate message is actionable"
+
 summary_tsv="$(mktemp)"
 baseline_tsv="$(mktemp)"
 printf "question\tuser_bridge\tuser_routes\tavg_i_u_kv\tavg_i_n_kv\tuser_targets\tuser_scores\tuser_answers\n" > "$summary_tsv"

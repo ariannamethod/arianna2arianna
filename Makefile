@@ -45,6 +45,9 @@ INIT   ?= 4
 SWEEP_PROMPTS ?= prompts/kv_influence.txt
 REPL_PROMPTS ?= prompts/repl_questions.txt
 REPL_EVAL_PROMPTS ?= prompts/repl_probe_regression.txt
+BASE_MODEL ?= $(MODEL)
+CANDIDATE_MODEL ?=
+SUBSTRATE_PROMPTS ?= $(REPL_EVAL_PROMPTS)
 
 $(BIN): $(SRC)
 	$(CC) $(CFLAGS) $(SRC) $(LDLIBS) -o $(BIN)
@@ -93,13 +96,16 @@ repl-sweep: $(BIN) $(MODEL)
 repl-eval: $(BIN) $(MODEL)
 	bash tools/repl_eval.sh "$(REPL_EVAL_PROMPTS)"
 
+repl-substrate-compare: $(BIN)
+	A2A_BASE_MODEL="$(BASE_MODEL)" A2A_CANDIDATE_MODEL="$(CANDIDATE_MODEL)" bash tools/repl_substrate_compare.sh "$(SUBSTRATE_PROMPTS)"
+
 openai-repl-probe: $(BIN) $(MODEL)
 	bash tools/openai_repl_probe.sh
 
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 repl field restest life sweep-influence repl-sweep repl-eval openai-repl-probe clean weights weights-q8 test portable fast-x86 bench
+.PHONY: run run-q8 repl field restest life sweep-influence repl-sweep repl-eval repl-substrate-compare openai-repl-probe clean weights weights-q8 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh

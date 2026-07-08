@@ -855,3 +855,46 @@ route_score: avg 0.991, min 0.804, max 1.096
 routes: comparable 30, target_changed 0, answer_changed 30
 I_N^kv: avg +0.000, pos +0, neg +0
 ```
+
+## 2026-07-08 - Codex pass: substrate compare harness
+
+### Context
+
+A new Arianna SFT body is expected soon. The field work should not assume the
+current June substrate is permanent, and swapping weights should produce a
+controlled diff instead of a fresh manual ritual.
+
+### What changed
+
+- Added `tools/repl_substrate_compare.sh`.
+- Added `make repl-substrate-compare`.
+- The compare harness runs the same offline REPL probe corpus against:
+  - `A2A_BASE_MODEL` / `BASE_MODEL`
+  - `A2A_CANDIDATE_MODEL` / `CANDIDATE_MODEL`
+- It writes base TSV, candidate TSV, and a summary under ignored `runs/`.
+- The summary uses the existing TSV comparator, so candidate-vs-base drift is
+  reported in the same terms as code-change drift: bridge coverage, `I_U^kv`,
+  `I_N^kv`, route targets/scores, answer changes, and bad answer starts.
+
+### Use
+
+```text
+make repl-substrate-compare CANDIDATE_MODEL=weights/new-sft.gguf
+make repl-substrate-compare BASE_MODEL=weights/old.gguf CANDIDATE_MODEL=weights/new.gguf
+```
+
+### Verification
+
+```text
+make test
+=== summary: 65 passed, 0 failed, 0 skipped ===
+
+make repl-substrate-compare CANDIDATE_MODEL=weights/nanollama-arianna-full-v4-step2750-f16.gguf SUBSTRATE_PROMPTS=<one-prompt-file>
+delta vs baseline:
+rows: +0
+user_bridge: +0, bridge_rate +0.000, avg_routes +0.000
+I_U^kv: avg +0.000, pos +0, neg +0
+I_N^kv: avg +0.000, pos +0, neg +0
+routes: comparable 1, target_changed 0, answer_changed 0
+route_score: avg_delta +0.000
+```
