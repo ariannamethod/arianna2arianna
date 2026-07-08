@@ -79,7 +79,9 @@ semantic-neighbour anchor: its `I_N^kv` should stay above zero.
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average
 `I_N^kv`. It also records the direct user-route target, route score, and answer
-snippet so route stability can be compared across field changes.
+snippet so route stability can be compared across field changes. Direct
+user-bridge answers use a clean-start gate so diagnostic snippets do not open
+with list markers, digits, quotes, or URL debris.
 
 `make repl-eval` runs the tracked offline probe corpus in
 `prompts/repl_probe_regression.txt`, writes a timestamped TSV and summary under

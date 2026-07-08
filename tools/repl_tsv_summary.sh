@@ -68,6 +68,24 @@ summarize() {
                 }
             }
         }
+        function bad_answer_start(s,     first) {
+            sub(/^[[:space:]]+/, "", s)
+            first = substr(s, 1, 1)
+            return first ~ /^[0-9]$/ || index("*\"`#:/@-\\", first) > 0 ||
+                   first == sprintf("%c", 39) || s ~ /^(http|HTTP|www|WWW)/
+        }
+        function add_answers(s,     i, a, n, ans) {
+            if (s == "") return
+            n = split(s, a, ";")
+            for (i = 1; i <= n; i++) {
+                ans = a[i]
+                sub(/^[[:space:]]+/, "", ans)
+                sub(/[[:space:]]+$/, "", ans)
+                if (ans == "") continue
+                answer_n++
+                if (bad_answer_start(ans)) bad_answer_n++
+            }
+        }
         NR == 1 {
             if ($1 != "question" || $2 != "user_bridge" || $3 != "user_routes" ||
                 $4 != "avg_i_u_kv" || $5 != "avg_i_n_kv") {
@@ -126,6 +144,7 @@ summarize() {
             if (route_cols && NF >= 8) {
                 add_targets($6)
                 add_scores($7, $1)
+                add_answers($8)
                 if ($8 != "" && !first_answer_seen) {
                     first_answer = $8
                     first_answer_q = $1
@@ -179,6 +198,7 @@ summarize() {
                 if (first_answer_seen) {
                     printf "answer_sample: %s :: %s\n", first_answer_q, first_answer
                 }
+                printf "answer_bad_start: %d/%d\n", bad_answer_n, answer_n
             }
         }
     ' "$file"

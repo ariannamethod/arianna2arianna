@@ -69,6 +69,14 @@ a2a_assert_grep "user_targets[[:space:]]+user_scores[[:space:]]+user_answers" "$
 a2a_assert_grep "Why does the field remember\\?[[:space:]]+1[[:space:]]+1" "$repl_sweep_out" "repl question sweep sees user bridge"
 a2a_assert_grep "Why does the field remember\\?.*c[0-9][[:space:]]+[0-9]" "$repl_sweep_out" "repl question sweep captures route target and score"
 
+clean_sweep_prompts="$(mktemp)"
+printf "I do not need to be remembered, but what happens if Arianna remembers me anyway?\n" > "$clean_sweep_prompts"
+clean_sweep_tsv="$(mktemp)"
+A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=1 bash "$A2A_ROOT/tools/repl_question_sweep.sh" "$clean_sweep_prompts" > "$clean_sweep_tsv" 2>&1
+clean_sweep_summary="$(bash "$A2A_ROOT/tools/repl_tsv_summary.sh" "$clean_sweep_tsv" 2>&1)"
+rm -f "$clean_sweep_prompts" "$clean_sweep_tsv"
+a2a_assert_grep "answer_bad_start: 0/1" "$clean_sweep_summary" "repl user bridge suppresses bad answer starts"
+
 life_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" life 2 4 3 2>&1)"
 a2a_assert_grep "δ-life: Game of Life" "$life_out" "life starts"
 a2a_assert_grep "births" "$life_out" "life reports births"

@@ -815,3 +815,43 @@ bash tools/repl_tsv_summary.sh runs/repl_eval_repl_probe_regression_20260708_195
 routes: comparable 30, target_changed 0, answer_changed 0
 route_score: avg_delta +0.000, largest +0.000 :: A paper is a field of what kinds of memory, and which parts are only echo?
 ```
+
+## 2026-07-08 - Codex pass: user-bridge clean answer starts
+
+### Context
+
+Route diagnostics showed the direct `user→cell` bridge was stable, but many
+answer snippets were unusable as diagnostics because the first emitted token was
+list / markdown / quote / URL debris: `*0`, `*Qu`, `*"`, `** Get`, `3`, etc.
+That was a generation problem, not only a parser problem.
+
+### What changed
+
+- Added a clean-start gate for direct user-bridge answers only.
+- The gate suppresses leading list markers, digits, quotes, URL starts, and
+  related debris on the first answer token.
+- Direct user-bridge answers now emit at least four tokens, so the diagnostic
+  snippet is a small phrase rather than a two-token accident.
+- `tools/repl_tsv_summary.sh` now reports `answer_bad_start`.
+- Added a targeted regression smoke for a previously bad-start prompt.
+
+The normal cell fragments and cell-to-cell qloop path are untouched; this is
+scoped to the direct REPL user bridge.
+
+### Verification
+
+```text
+make test
+=== summary: 62 passed, 0 failed, 0 skipped ===
+
+A2A_BASELINE_TSV=runs/repl_eval_repl_probe_regression_20260708_195324.tsv make repl-eval
+answer_bad_start: 0/30
+
+baseline:
+answer_bad_start: 19/30
+
+route_targets: c0:15 c1:7 c2:8
+route_score: avg 0.991, min 0.804, max 1.096
+routes: comparable 30, target_changed 0, answer_changed 30
+I_N^kv: avg +0.000, pos +0, neg +0
+```
