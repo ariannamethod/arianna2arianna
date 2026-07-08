@@ -770,3 +770,48 @@ user_bridge: +0, bridge_rate +0.000, avg_routes +0.000
 I_U^kv: avg +0.000, pos +0, neg +0
 I_N^kv: avg +0.000, pos +0, neg +0
 ```
+
+## 2026-07-08 - Codex pass: REPL route diagnostics
+
+### Context
+
+The offline harness made aggregate `I_U^kv` / `I_N^kv` changes repeatable, but
+the next C changes need a finer lens: which cell the user bridge routes to,
+with what score, and what answer fragment came back.
+
+### What changed
+
+- Extended `tools/repl_question_sweep.sh` TSV output with:
+  - `user_targets`
+  - `user_scores`
+  - `user_answers`
+- Updated `tools/repl_tsv_summary.sh` to summarize route target histograms,
+  route score ranges, and answer samples when those columns exist.
+- Added per-question baseline comparison:
+  - matched/current-only/baseline-only counts;
+  - `I_U^kv` and `I_N^kv` sign flips and largest absolute deltas;
+  - route target / answer changes and route score deltas when both TSVs have
+    route diagnostics.
+- Kept compatibility with older five-column TSVs, so
+  `runs/openai_repl_probe_20260701_044103.tsv` is still usable as a baseline.
+
+### Verification
+
+```text
+make test
+=== summary: 60 passed, 0 failed, 0 skipped ===
+
+A2A_BASELINE_TSV=runs/openai_repl_probe_20260701_044103.tsv make repl-eval
+route_targets: c0:15 c1:7 c2:8
+route_score: avg 0.991, min 0.804, max 1.096
+delta vs baseline:
+rows: +0
+user_bridge: +0, bridge_rate +0.000, avg_routes +0.000
+I_U^kv: avg +0.000, pos +0, neg +0
+I_N^kv: avg +0.000, pos +0, neg +0
+routes: target/score/snippet comparison unavailable for old TSV shape
+
+bash tools/repl_tsv_summary.sh runs/repl_eval_repl_probe_regression_20260708_195324.tsv runs/repl_eval_repl_probe_regression_20260708_195324.tsv
+routes: comparable 30, target_changed 0, answer_changed 0
+route_score: avg_delta +0.000, largest +0.000 :: A paper is a field of what kinds of memory, and which parts are only echo?
+```

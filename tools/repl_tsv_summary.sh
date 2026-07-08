@@ -8,8 +8,9 @@ usage() {
 usage: $0 current.tsv [baseline.tsv]
 
 Reads tools/repl_question_sweep.sh TSV output and prints bridge/routing
-coverage plus I_U^kv and I_N^kv sign statistics. If a baseline TSV is
-provided, also prints compact deltas for the aggregate metrics.
+coverage plus I_U^kv and I_N^kv sign statistics. Newer TSVs may also include
+route targets, route scores, and answer snippets. If a baseline TSV is
+provided, also prints aggregate and per-question deltas.
 EOF
 }
 
@@ -41,11 +42,38 @@ summarize() {
     local file="$2"
     awk -F '\t' -v label="$label" '
         function numeric(x) { return x ~ /^[-+]?[0-9]+([.][0-9]+)?$/ }
+        function clean_route(x) { return x == "" ? "-" : x }
+        function add_targets(s,     i, a, n) {
+            if (s == "") return
+            n = split(s, a, ";")
+            for (i = 1; i <= n; i++) if (a[i] != "") target_count[a[i]]++
+        }
+        function add_scores(s, q,     i, a, n, v) {
+            if (s == "") return
+            n = split(s, a, ";")
+            for (i = 1; i <= n; i++) {
+                if (!numeric(a[i])) continue
+                v = a[i] + 0
+                score_sum += v
+                score_n++
+                if (!score_max_seen || v > score_max) {
+                    score_max = v
+                    score_max_q = q
+                    score_max_seen = 1
+                }
+                if (!score_min_seen || v < score_min) {
+                    score_min = v
+                    score_min_q = q
+                    score_min_seen = 1
+                }
+            }
+        }
         NR == 1 {
             if ($1 != "question" || $2 != "user_bridge" || $3 != "user_routes" ||
                 $4 != "avg_i_u_kv" || $5 != "avg_i_n_kv") {
                 bad_header = 1
             }
+            route_cols = ($6 == "user_targets" && $7 == "user_scores" && $8 == "user_answers")
             next
         }
         NF >= 5 {
@@ -94,6 +122,16 @@ summarize() {
             } else {
                 innan++
             }
+
+            if (route_cols && NF >= 8) {
+                add_targets($6)
+                add_scores($7, $1)
+                if ($8 != "" && !first_answer_seen) {
+                    first_answer = $8
+                    first_answer_q = $1
+                    first_answer_seen = 1
+                }
+            }
         }
         END {
             if (bad_header) {
@@ -126,6 +164,21 @@ summarize() {
                 printf "I_N^kv min: %+.3f :: %s\n", inmin, inmin_q
             } else {
                 printf "I_N^kv: no numeric rows, nan %d\n", innan
+            }
+            if (route_cols) {
+                route_line = ""
+                for (target in target_count) {
+                    route_line = route_line sprintf("%s%s:%d", route_line == "" ? "" : " ", target, target_count[target])
+                }
+                printf "route_targets: %s\n", clean_route(route_line)
+                if (score_n) {
+                    printf "route_score: avg %.3f, min %.3f, max %.3f\n", score_sum / score_n, score_min, score_max
+                    printf "route_score max q: %.3f :: %s\n", score_max, score_max_q
+                    printf "route_score min q: %.3f :: %s\n", score_min, score_min_q
+                }
+                if (first_answer_seen) {
+                    printf "answer_sample: %s :: %s\n", first_answer_q, first_answer
+                }
             }
         }
     ' "$file"
@@ -165,6 +218,113 @@ stats_line() {
     ' "$file"
 }
 
+compare_rows() {
+    local base_file="$1"
+    local cur_file="$2"
+    awk -F '\t' '
+        function numeric(x) { return x ~ /^[-+]?[0-9]+([.][0-9]+)?$/ }
+        function sign(x) { return x > 0 ? 1 : (x < 0 ? -1 : 0) }
+        function abs(x) { return x < 0 ? -x : x }
+        function first_score(s,     a) {
+            split(s, a, ";")
+            return numeric(a[1]) ? a[1] + 0 : "nan"
+        }
+        FNR == 1 {
+            if (NR == 1) base_routes = ($6 == "user_targets" && $7 == "user_scores" && $8 == "user_answers")
+            else cur_routes = ($6 == "user_targets" && $7 == "user_scores" && $8 == "user_answers")
+            next
+        }
+        NR == FNR {
+            q = $1
+            base_seen[q] = 1
+            base_rows++
+            b_iu[q] = $4
+            b_in[q] = $5
+            b_targets[q] = $6
+            b_score[q] = first_score($7)
+            b_answer[q] = $8
+            next
+        }
+        {
+            q = $1
+            cur_seen[q] = 1
+            cur_rows++
+            if (!(q in base_seen)) {
+                cur_only++
+                next
+            }
+            matched++
+
+            if (numeric($4) && numeric(b_iu[q])) {
+                d = ($4 + 0) - (b_iu[q] + 0)
+                if (sign($4 + 0) != sign(b_iu[q] + 0)) iu_flips++
+                if (abs(d) >= 0.250) iu_big++
+                if (!iu_seen || abs(d) > max_iu_abs) {
+                    max_iu_abs = abs(d)
+                    max_iu_delta = d
+                    max_iu_q = q
+                    iu_seen = 1
+                }
+            }
+
+            if (numeric($5) && numeric(b_in[q])) {
+                e = ($5 + 0) - (b_in[q] + 0)
+                if (sign($5 + 0) != sign(b_in[q] + 0)) in_flips++
+                if (abs(e) >= 0.100) in_big++
+                if (!in_seen || abs(e) > max_in_abs) {
+                    max_in_abs = abs(e)
+                    max_in_delta = e
+                    max_in_q = q
+                    in_seen = 1
+                }
+            }
+
+            if (base_routes && cur_routes) {
+                route_comparable++
+                if ($6 != b_targets[q]) target_changed++
+                if ($8 != b_answer[q]) answer_changed++
+                cs = first_score($7)
+                bs = b_score[q]
+                if (numeric(cs) && numeric(bs)) {
+                    sd = cs - bs
+                    score_delta_sum += sd
+                    score_delta_n++
+                    if (!score_delta_seen || abs(sd) > max_score_abs) {
+                        max_score_abs = abs(sd)
+                        max_score_delta = sd
+                        max_score_q = q
+                        score_delta_seen = 1
+                    }
+                }
+            }
+        }
+        END {
+            for (q in base_seen) if (!(q in cur_seen)) base_only++
+
+            printf "per-question diff:\n"
+            printf "matched: %d, current_only: %d, baseline_only: %d\n", matched, cur_only, base_only
+            if (iu_seen) {
+                printf "I_U^kv: sign_flips %d, |delta|>=0.250 %d, largest %+.3f :: %s\n",
+                    iu_flips, iu_big, max_iu_delta, max_iu_q
+            }
+            if (in_seen) {
+                printf "I_N^kv: sign_flips %d, |delta|>=0.100 %d, largest %+.3f :: %s\n",
+                    in_flips, in_big, max_in_delta, max_in_q
+            }
+            if (base_routes && cur_routes) {
+                printf "routes: comparable %d, target_changed %d, answer_changed %d\n",
+                    route_comparable, target_changed, answer_changed
+                if (score_delta_n) {
+                    printf "route_score: avg_delta %+.3f, largest %+.3f :: %s\n",
+                        score_delta_sum / score_delta_n, max_score_delta, max_score_q
+                }
+            } else {
+                printf "routes: target/score/snippet comparison unavailable for old TSV shape\n"
+            }
+        }
+    ' "$base_file" "$cur_file"
+}
+
 summarize "current" "$current"
 
 if [[ -n "$baseline" ]]; then
@@ -195,4 +355,7 @@ if [[ -n "$baseline" ]]; then
                 c_in_avg - b_in_avg, c_in_pos - b_in_pos, c_in_neg - b_in_neg
         }
     '
+
+    echo ""
+    compare_rows "$baseline" "$current"
 fi

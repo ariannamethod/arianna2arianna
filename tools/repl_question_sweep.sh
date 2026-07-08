@@ -43,7 +43,47 @@ avg_metric() {
     '
 }
 
-printf "question\tuser_bridge\tuser_routes\tavg_i_u_kv\tavg_i_n_kv\n"
+route_fields() {
+    awk '
+        function clean(s) {
+            gsub(/\t/, " ", s)
+            gsub(/\r/, " ", s)
+            gsub(/\n/, " ", s)
+            gsub(/;/, ",", s)
+            sub(/^[[:space:]]+/, "", s)
+            sub(/[[:space:]]+$/, "", s)
+            return s
+        }
+        function append(list, val) {
+            return list == "" ? val : list ";" val
+        }
+        /qloop user/ {
+            line = $0
+
+            if (match(line, /qloop user[^ ]*c[0-9][0-9]*/)) {
+                target = substr(line, RSTART, RLENGTH)
+                sub(/^.*c/, "c", target)
+                targets = append(targets, target)
+            }
+
+            if (match(line, / score [-+]?[0-9][0-9.]*:/)) {
+                score = substr(line, RSTART + 7, RLENGTH - 8)
+                scores = append(scores, score)
+            }
+
+            answer = line
+            sub(/^.* score [-+]?[0-9][0-9.]*:/, "", answer)
+            sub(/[[:space:]]+\[entropy=.*/, "", answer)
+            answer = clean(answer)
+            if (answer != "") answers = append(answers, answer)
+        }
+        END {
+            printf "%s\t%s\t%s\n", targets, scores, answers
+        }
+    '
+}
+
+printf "question\tuser_bridge\tuser_routes\tavg_i_u_kv\tavg_i_n_kv\tuser_targets\tuser_scores\tuser_answers\n"
 
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     [[ -z "$prompt" || "${prompt:0:1}" == "#" ]] && continue
@@ -54,7 +94,11 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     if [[ "$routes" -gt 0 ]]; then bridge=1; fi
     avg_iu="$(printf "%s\n" "$out" | avg_metric "I_U^kv=")"
     avg_in="$(printf "%s\n" "$out" | avg_metric "I_N^kv[sem] ")"
+    route_diag="$(printf "%s\n" "$out" | route_fields)"
+    IFS=$'\t' read -r user_targets user_scores user_answers <<< "$route_diag"
 
     safe_prompt="${prompt//$'\t'/ }"
-    printf "%s\t%d\t%d\t%s\t%s\n" "$safe_prompt" "$bridge" "$routes" "$avg_iu" "$avg_in"
+    printf "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n" \
+        "$safe_prompt" "$bridge" "$routes" "$avg_iu" "$avg_in" \
+        "$user_targets" "$user_scores" "$user_answers"
 done < "$PROMPTS"

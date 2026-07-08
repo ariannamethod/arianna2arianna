@@ -78,12 +78,15 @@ semantic-neighbour anchor: its `I_N^kv` should stay above zero.
 
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average
-`I_N^kv`.
+`I_N^kv`. It also records the direct user-route target, route score, and answer
+snippet so route stability can be compared across field changes.
 
 `make repl-eval` runs the tracked offline probe corpus in
 `prompts/repl_probe_regression.txt`, writes a timestamped TSV and summary under
 ignored `runs/`, and can compare against a previous TSV with
-`A2A_BASELINE_TSV=/path/to/baseline.tsv`.
+`A2A_BASELINE_TSV=/path/to/baseline.tsv`. The summary reports aggregate deltas
+and per-question changes, including route target/score/snippet deltas when both
+TSVs use the extended shape.
 
 `make openai-repl-probe` is an optional API-backed debug layer. It captures live
 Arianna field fragments, asks GPT through the OpenAI Responses API for probe
