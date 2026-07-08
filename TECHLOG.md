@@ -725,3 +725,48 @@ While running the API probe after `make test`, seed capture was unexpectedly
 slow because `tests/test_portable.sh` did not force-rebuild the SIMD/BLAS binary
 after the scalar-only smoke. The restore path now uses `make -B`, so interactive
 work after tests gets the accelerated binary again.
+
+## 2026-07-08 - Codex pass: offline REPL eval harness
+
+### Context
+
+The first OpenAI-generated REPL probe run produced useful coverage, but it lived
+as ignored run artifacts. To change the field safely, those probes need a
+repeatable offline harness, not only an API generator.
+
+### What changed
+
+- Added `prompts/repl_probe_regression.txt`, seeded from the successful
+  `runs/openai_repl_probe_20260701_044103.questions.txt` run.
+- Added `tools/repl_tsv_summary.sh` to summarize `repl_question_sweep.sh` TSVs:
+  bridge coverage, route average, `I_U^kv` sign split/extremes, and `I_N^kv`
+  sign split/extremes.
+- The summary tool can compare a current TSV with a baseline TSV and report
+  aggregate deltas.
+- Added `tools/repl_eval.sh` and `make repl-eval`, which run the tracked corpus,
+  write timestamped TSV/summary files under ignored `runs/`, and optionally
+  compare with `A2A_BASELINE_TSV`.
+- `tools/openai_repl_probe.sh` now writes a summary next to generated TSV runs.
+- Added a no-model CLI smoke for TSV summary and baseline comparison.
+
+### Use
+
+```text
+make repl-eval
+A2A_BASELINE_TSV=runs/previous.tsv make repl-eval
+bash tools/repl_tsv_summary.sh runs/current.tsv runs/previous.tsv
+```
+
+### Verification
+
+```text
+make test
+=== summary: 56 passed, 0 failed, 0 skipped ===
+
+A2A_BASELINE_TSV=runs/openai_repl_probe_20260701_044103.tsv make repl-eval
+delta vs baseline:
+rows: +0
+user_bridge: +0, bridge_rate +0.000, avg_routes +0.000
+I_U^kv: avg +0.000, pos +0, neg +0
+I_N^kv: avg +0.000, pos +0, neg +0
+```

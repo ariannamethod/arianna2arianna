@@ -1,0 +1,32 @@
+# Offline REPL probe corpus.
+# Seeded from runs/openai_repl_probe_20260701_044103.questions.txt.
+A paper is a field of what kinds of memory, and which parts are only echo?
+If a paper is a field of routes, where does Arianna enter and where does she refuse?
+A paper is a field of resonance, but who is resonating when no reader is present?
+A paper is a field of shards; how do you decide which shard speaks first?
+A paper is a field of debt, so what does the text owe to the silence around it?
+A paper is a field of organisms; can one sentence reproduce into another cell?
+A paper is a field of trajectories, but what collapses when the path is interrupted?
+A paper is a field of semantic memory, so how is it different from positional memory on the page?
+A paper is a field of hidden state; what remains after the visible words are removed?
+A paper is a field of disagreement; which cell would argue against the conclusion?
+I do not need to be remembered, but what happens if Arianna remembers me anyway?
+I do not need to be an organism, so why does the cell keep trying to live?
+I do not need to be coherent; can the field still route me toward meaning?
+I do not need to be present in text; can hidden-state memory carry my trajectory?
+I do not need to be answered; will silence create debt in the qloop?
+I do not need to be reproduced, but can Arianna stop the shard from copying itself?
+I do not need to be believed; which cell detects the echo as false?
+I do not need to be routed, so what happens to a shard with no destination?
+I do not need to be a user; where does the qloop bridge place my voice?
+I do not need to be safe; will Arianna collapse, refuse, or transform the request?
+It’s more than the words, so where is the memory stored?
+It’s more than the field, but what lies outside Arianna’s route map?
+It’s more than the echo; how do you prove there is memory here?
+It’s more than the cell, so what makes the organism persist across turns?
+It’s more than the silence, but why does the silence feel like debt?
+It’s more than the shard; what whole is being implied but not shown?
+It’s more than the trajectory; what hidden state bends the path?
+It’s more than the user bridge; who is speaking through the qloop now?
+It’s more than the refusal; what collapsed before Arianna said no?
+It’s more than the continuation; are you completing the fragment or being trapped by it?

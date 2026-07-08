@@ -72,6 +72,7 @@ stamp="$(date +%Y%m%d_%H%M%S)"
 seed_file="$OUTDIR/openai_repl_probe_${stamp}.seed.txt"
 questions_file="$OUTDIR/openai_repl_probe_${stamp}.questions.txt"
 tsv_file="$OUTDIR/openai_repl_probe_${stamp}.tsv"
+summary_file="$OUTDIR/openai_repl_probe_${stamp}.summary.txt"
 
 echo "capturing Arianna seed fragments -> $seed_file" >&2
 "$BIN" "$MODEL" "$SEED_PROMPT" field "$SEED_CELLS" "$SEED_FRAG" 1 0 2 0.30 1 1.3 0 "$SEED_KVSHUF" "$SEED_QLOOP" 0 > "$seed_file" 2>&1
@@ -192,5 +193,9 @@ echo "sweeping generated questions -> $tsv_file" >&2
 A2A_CELLS="$SWEEP_CELLS" A2A_FRAG="$SWEEP_FRAG" A2A_ROUNDS="$SWEEP_ROUNDS" \
     bash "$ROOT/tools/repl_question_sweep.sh" "$questions_file" | tee "$tsv_file"
 
+echo "summarizing generated probe -> $summary_file" >&2
+bash "$ROOT/tools/repl_tsv_summary.sh" "$tsv_file" | tee "$summary_file" >&2
+
 echo "questions: $questions_file" >&2
 echo "results:   $tsv_file" >&2
+echo "summary:   $summary_file" >&2

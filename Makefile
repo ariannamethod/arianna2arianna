@@ -44,6 +44,7 @@ TICKS  ?= 5
 INIT   ?= 4
 SWEEP_PROMPTS ?= prompts/kv_influence.txt
 REPL_PROMPTS ?= prompts/repl_questions.txt
+REPL_EVAL_PROMPTS ?= prompts/repl_probe_regression.txt
 
 $(BIN): $(SRC)
 	$(CC) $(CFLAGS) $(SRC) $(LDLIBS) -o $(BIN)
@@ -89,13 +90,16 @@ sweep-influence: $(BIN) $(MODEL)
 repl-sweep: $(BIN) $(MODEL)
 	bash tools/repl_question_sweep.sh "$(REPL_PROMPTS)"
 
+repl-eval: $(BIN) $(MODEL)
+	bash tools/repl_eval.sh "$(REPL_EVAL_PROMPTS)"
+
 openai-repl-probe: $(BIN) $(MODEL)
 	bash tools/openai_repl_probe.sh
 
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 repl field restest life sweep-influence repl-sweep openai-repl-probe clean weights weights-q8 test portable fast-x86 bench
+.PHONY: run run-q8 repl field restest life sweep-influence repl-sweep repl-eval openai-repl-probe clean weights weights-q8 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh
