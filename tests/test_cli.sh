@@ -42,6 +42,11 @@ else
 fi
 a2a_assert_grep "A2A_CANDIDATE_MODEL" "$out" "substrate compare missing-candidate message is actionable"
 
+out="$(bash "$A2A_ROOT/tools/recipient_lock_sweep.sh" --help 2>&1)"
+a2a_assert_grep "recipient-lock" "$out" "recipient lock sweep help names probe type"
+out="$(bash "$A2A_ROOT/tools/recipient_lock_eval.sh" --help 2>&1)"
+a2a_assert_grep "Oleg/Олег" "$out" "recipient lock eval help names leakage target"
+
 summary_tsv="$(mktemp)"
 baseline_tsv="$(mktemp)"
 printf "question\tuser_bridge\tuser_routes\tavg_i_u_kv\tavg_i_n_kv\tuser_targets\tuser_scores\tuser_answers\n" > "$summary_tsv"

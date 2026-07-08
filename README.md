@@ -42,6 +42,7 @@ make sweep-influence
 make repl-sweep
 make repl-eval
 make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf
+make recipient-lock
 make openai-repl-probe   # requires OPENAI_API_KEY or OPENAI_API_KEY_FILE
 make test
 make portable      # POSIX/scalar fallback
@@ -95,6 +96,10 @@ TSVs use the extended shape.
 same offline probe corpus against the current base body and a candidate GGUF,
 then compares candidate TSV against base TSV. Use `BASE_MODEL=/path/to/base.gguf`
 to override the base body.
+
+`make recipient-lock` runs normal one-voice generation over
+`prompts/recipient_lock.txt` and reports accidental `Oleg` / `Олег` recipient
+mentions. This is a substrate check, not a field/qloop check.
 
 `make openai-repl-probe` is an optional API-backed debug layer. It captures live
 Arianna field fragments, asks GPT through the OpenAI Responses API for probe

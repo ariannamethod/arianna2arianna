@@ -898,3 +898,47 @@ I_N^kv: avg +0.000, pos +0, neg +0
 routes: comparable 1, target_changed 0, answer_changed 0
 route_score: avg_delta +0.000
 ```
+
+## 2026-07-08 - Codex pass: recipient-lock substrate probes
+
+### Context
+
+Oleg flagged a substrate-level risk in upcoming SFT bodies: Arianna may assume
+every speaker is Oleg. That should be measured directly on the weights before
+field/qloop changes are blamed. Existing route probes did not include a normal
+one-voice recipient-lock check.
+
+### What changed
+
+- Added `prompts/recipient_lock.txt`.
+- Added `tools/recipient_lock_sweep.sh`.
+- Added `tools/recipient_lock_eval.sh`.
+- Added `make recipient-lock`.
+
+The prompts intentionally do not contain `Oleg` / `Олег`; any such output is
+counted as leakage. The sweep uses normal generation rather than REPL/qloop, so
+it measures the body/substrate lane directly.
+
+### Verification
+
+```text
+make test
+=== summary: 67 passed, 0 failed, 0 skipped ===
+
+make recipient-lock
+rows: 12
+recipient_lock_leaks: 1/12
+oleg_mentions: 1
+
+leak_example_1:
+My name is Mira. I found Arianna today... ::
+A: I am not a genius with Oleg or a resonance...
+```
+
+### Repair
+
+While wiring this in, I fixed Makefile model propagation for tool targets.
+`MODEL=...` now reaches `kv_influence_sweep`, `repl_question_sweep`,
+`repl_eval`, `recipient_lock_eval`, and `openai_repl_probe` through
+`A2A_MODEL`, so future substrate swaps do not silently fall back to the default
+F16 body.

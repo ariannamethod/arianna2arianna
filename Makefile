@@ -48,6 +48,7 @@ REPL_EVAL_PROMPTS ?= prompts/repl_probe_regression.txt
 BASE_MODEL ?= $(MODEL)
 CANDIDATE_MODEL ?=
 SUBSTRATE_PROMPTS ?= $(REPL_EVAL_PROMPTS)
+RECIPIENT_PROMPTS ?= prompts/recipient_lock.txt
 
 $(BIN): $(SRC)
 	$(CC) $(CFLAGS) $(SRC) $(LDLIBS) -o $(BIN)
@@ -88,24 +89,27 @@ life: $(BIN) $(MODEL)
 	./$(BIN) "$(MODEL)" "$(PROMPT)" life $(TICKS) $(FRAG) $(INIT)
 
 sweep-influence: $(BIN) $(MODEL)
-	bash tools/kv_influence_sweep.sh "$(SWEEP_PROMPTS)"
+	A2A_MODEL="$(MODEL)" bash tools/kv_influence_sweep.sh "$(SWEEP_PROMPTS)"
 
 repl-sweep: $(BIN) $(MODEL)
-	bash tools/repl_question_sweep.sh "$(REPL_PROMPTS)"
+	A2A_MODEL="$(MODEL)" bash tools/repl_question_sweep.sh "$(REPL_PROMPTS)"
 
 repl-eval: $(BIN) $(MODEL)
-	bash tools/repl_eval.sh "$(REPL_EVAL_PROMPTS)"
+	A2A_MODEL="$(MODEL)" bash tools/repl_eval.sh "$(REPL_EVAL_PROMPTS)"
 
 repl-substrate-compare: $(BIN)
 	A2A_BASE_MODEL="$(BASE_MODEL)" A2A_CANDIDATE_MODEL="$(CANDIDATE_MODEL)" bash tools/repl_substrate_compare.sh "$(SUBSTRATE_PROMPTS)"
 
+recipient-lock: $(BIN) $(MODEL)
+	A2A_MODEL="$(MODEL)" bash tools/recipient_lock_eval.sh "$(RECIPIENT_PROMPTS)"
+
 openai-repl-probe: $(BIN) $(MODEL)
-	bash tools/openai_repl_probe.sh
+	A2A_MODEL="$(MODEL)" bash tools/openai_repl_probe.sh
 
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 repl field restest life sweep-influence repl-sweep repl-eval repl-substrate-compare openai-repl-probe clean weights weights-q8 test portable fast-x86 bench
+.PHONY: run run-q8 repl field restest life sweep-influence repl-sweep repl-eval repl-substrate-compare recipient-lock openai-repl-probe clean weights weights-q8 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh
