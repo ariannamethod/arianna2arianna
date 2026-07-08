@@ -64,7 +64,8 @@ or `exit`. Each line runs a short live field turn with semantic KV neighbour
 coupling and qloop enabled, then keeps the recent text trajectory as context for
 the next line. If the user line is a question, REPL also builds a direct
 user-question KV route and prints it as `qloop user→cN [user-kv]` with
-`I_U^kv`, the entropy influence of the user's hidden trajectory.
+`I_U^kv`, the entropy influence of the user's hidden trajectory, plus the
+matched `no-user-kv` answer fragment from the same seed.
 
 `field` and `life` append generated traces to `FIELDLOG.md`. In the default
 chorus, text-order `Δ_R` is marked `n/a`; the neighbour probe is `Δ_R^kv`
@@ -81,16 +82,19 @@ semantic-neighbour anchor: its `I_N^kv` should stay above zero.
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average
 `I_N^kv`. It also records the direct user-route target, route score, and answer
-snippet so route stability can be compared across field changes. Direct
-user-bridge answers use a clean-start gate so diagnostic snippets do not open
-with list markers, digits, quotes, or URL debris.
+snippet, plus the matched no-user-KV answer snippet, so route stability and
+user-KV text influence can be compared across field changes. Direct user-bridge
+answers use a clean-start gate so diagnostic snippets do not open with list
+markers, digits, quotes, or URL debris.
 
 `make repl-eval` runs the tracked offline probe corpus in
 `prompts/repl_probe_regression.txt`, writes a timestamped TSV and summary under
 ignored `runs/`, and can compare against a previous TSV with
 `A2A_BASELINE_TSV=/path/to/baseline.tsv`. The summary reports aggregate deltas
 and per-question changes, including route target/score/snippet deltas when both
-TSVs use the extended shape.
+TSVs use the extended shape. With current TSVs it also reports
+`answer_kv_changed`, the count of direct user answers whose text differs from
+the no-user-KV shadow answer.
 
 `make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf` runs the
 same offline probe corpus against the current base body and a candidate GGUF,

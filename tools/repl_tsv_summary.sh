@@ -9,7 +9,7 @@ usage: $0 current.tsv [baseline.tsv]
 
 Reads tools/repl_question_sweep.sh TSV output and prints bridge/routing
 coverage plus I_U^kv and I_N^kv sign statistics. Newer TSVs may also include
-route targets, route scores, and answer snippets. If a baseline TSV is
+route targets, route scores, answer snippets, and no-user-KV contrast snippets. If a baseline TSV is
 provided, also prints aggregate and per-question deltas.
 EOF
 }
@@ -86,12 +86,37 @@ summarize() {
                 if (bad_answer_start(ans)) bad_answer_n++
             }
         }
+        function add_answer_contrasts(on, off, q,     i, a, b, n, m, ao, bo) {
+            if (on == "" || off == "") return
+            n = split(on, a, ";")
+            m = split(off, b, ";")
+            for (i = 1; i <= n && i <= m; i++) {
+                ao = a[i]
+                bo = b[i]
+                sub(/^[[:space:]]+/, "", ao)
+                sub(/[[:space:]]+$/, "", ao)
+                sub(/^[[:space:]]+/, "", bo)
+                sub(/[[:space:]]+$/, "", bo)
+                if (ao == "" && bo == "") continue
+                answer_contrast_n++
+                if (ao != bo) {
+                    answer_contrast_changed++
+                    if (!first_contrast_seen) {
+                        first_contrast_q = q
+                        first_contrast_on = ao
+                        first_contrast_off = bo
+                        first_contrast_seen = 1
+                    }
+                }
+            }
+        }
         NR == 1 {
             if ($1 != "question" || $2 != "user_bridge" || $3 != "user_routes" ||
                 $4 != "avg_i_u_kv" || $5 != "avg_i_n_kv") {
                 bad_header = 1
             }
             route_cols = ($6 == "user_targets" && $7 == "user_scores" && $8 == "user_answers")
+            contrast_cols = (route_cols && $9 == "user_answers_off")
             next
         }
         NF >= 5 {
@@ -150,6 +175,7 @@ summarize() {
                     first_answer_q = $1
                     first_answer_seen = 1
                 }
+                if (contrast_cols) add_answer_contrasts($8, $9, $1)
             }
         }
         END {
@@ -199,6 +225,13 @@ summarize() {
                     printf "answer_sample: %s :: %s\n", first_answer_q, first_answer
                 }
                 printf "answer_bad_start: %d/%d\n", bad_answer_n, answer_n
+                if (contrast_cols) {
+                    printf "answer_kv_changed: %d/%d\n", answer_contrast_changed, answer_contrast_n
+                    if (first_contrast_seen) {
+                        printf "answer_kv_sample: %s :: with=%s :: without=%s\n",
+                            first_contrast_q, first_contrast_on, first_contrast_off
+                    }
+                }
             }
         }
     ' "$file"

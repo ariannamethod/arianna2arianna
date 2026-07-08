@@ -1486,7 +1486,9 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             }
         }
         if (tcell >= 0) {
-            char uask[4096], qctx[4096], qfrag[1024]; int qctx_ids[512], qids[128], qn = 0;
+            char uask[4096], qctx[4096], qfrag[1024], qfrag_off[1024];
+            int qctx_ids[512], qids[128], qn = 0;
+            qfrag_off[0] = '\0';
             snprintf(uask, sizeof(uask), "User asked from the live REPL: %s", g_user_q);
             int uask_ids[512], uask_np = bpe_encode(tok, uask, uask_ids, max_seq - 1);
             kv_cache *user_kv = NULL; int user_klen = 0;
@@ -1506,7 +1508,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             int save_clean_start = g_clean_answer_start;
             g_clean_answer_start = 1;
             float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
-                                        qseed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);
+                                        qseed, eos, max_seq, qfrag_off, sizeof(qfrag_off), 0, NULL, NULL, NULL, NULL, NULL);
             g_round_tokn = qtok_before;
             g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = 0.30f;
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
@@ -1517,10 +1519,10 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
             int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);
             if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
-            printf("\n  ↳ qloop user→c%d [user-kv] score %.3f: %s   [entropy=%.2f I_U^kv=%+.3f]",
-                   tcell, best, qfrag, qent, qinfl);
-            if (flog) fprintf(flog, "- qloop user->c%d [user-kv] (score=%.3f, entropy=%.2f, I_U^kv=%+.3f):%s\n",
-                              tcell, best, qent, qinfl, qfrag);
+            printf("\n  ↳ qloop user→c%d [user-kv] score %.3f: %s   [entropy=%.2f I_U^kv=%+.3f no-user-kv: %s]",
+                   tcell, best, qfrag, qent, qinfl, qfrag_off);
+            if (flog) fprintf(flog, "- qloop user->c%d [user-kv] (score=%.3f, entropy=%.2f, I_U^kv=%+.3f, no_user_kv=%s):%s\n",
+                              tcell, best, qent, qinfl, qfrag_off, qfrag);
             kv_free(user_kv);
         }
         free(qcent);

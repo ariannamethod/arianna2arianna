@@ -76,14 +76,23 @@ route_fields() {
             sub(/[[:space:]]+\[entropy=.*/, "", answer)
             answer = clean(answer)
             if (answer != "") answers = append(answers, answer)
+
+            answer_off = ""
+            if (index(line, "no-user-kv: ") > 0) {
+                answer_off = line
+                sub(/^.*no-user-kv: /, "", answer_off)
+                sub(/[[:space:]]*\][[:space:]]*$/, "", answer_off)
+                answer_off = clean(answer_off)
+                if (answer_off != "") answers_off = append(answers_off, answer_off)
+            }
         }
         END {
-            printf "%s\t%s\t%s\n", targets, scores, answers
+            printf "%s\t%s\t%s\t%s\n", targets, scores, answers, answers_off
         }
     '
 }
 
-printf "question\tuser_bridge\tuser_routes\tavg_i_u_kv\tavg_i_n_kv\tuser_targets\tuser_scores\tuser_answers\n"
+printf "question\tuser_bridge\tuser_routes\tavg_i_u_kv\tavg_i_n_kv\tuser_targets\tuser_scores\tuser_answers\tuser_answers_off\n"
 
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     [[ -z "$prompt" || "${prompt:0:1}" == "#" ]] && continue
@@ -95,10 +104,10 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     avg_iu="$(printf "%s\n" "$out" | avg_metric "I_U^kv=")"
     avg_in="$(printf "%s\n" "$out" | avg_metric "I_N^kv[sem] ")"
     route_diag="$(printf "%s\n" "$out" | route_fields)"
-    IFS=$'\t' read -r user_targets user_scores user_answers <<< "$route_diag"
+    IFS=$'\t' read -r user_targets user_scores user_answers user_answers_off <<< "$route_diag"
 
     safe_prompt="${prompt//$'\t'/ }"
-    printf "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n" \
+    printf "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$safe_prompt" "$bridge" "$routes" "$avg_iu" "$avg_in" \
-        "$user_targets" "$user_scores" "$user_answers"
+        "$user_targets" "$user_scores" "$user_answers" "$user_answers_off"
 done < "$PROMPTS"

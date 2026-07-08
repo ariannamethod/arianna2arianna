@@ -942,3 +942,43 @@ While wiring this in, I fixed Makefile model propagation for tool targets.
 `repl_eval`, `recipient_lock_eval`, and `openai_repl_probe` through
 `A2A_MODEL`, so future substrate swaps do not silently fall back to the default
 F16 body.
+
+## 2026-07-08 - Codex pass: REPL user-KV answer contrast
+
+### Context
+
+The recipient-lock probe found a substrate-level `Oleg` leak in normal
+one-voice generation. For the REPL/qloop lane, `I_U^kv` already measured whether
+the hidden user trajectory changed answer entropy, but the text produced by the
+no-user-KV shadow path was not visible. That made it hard to tell whether a
+future SFT body changed only confidence, or changed the actual answer path.
+
+### What changed
+
+- Direct REPL `qloop user->cell` now keeps the existing no-user-KV shadow answer
+  text from the same seed and prints it as `no-user-kv: ...` next to `I_U^kv`.
+- `tools/repl_question_sweep.sh` adds `user_answers_off`.
+- `tools/repl_tsv_summary.sh` remains compatible with older TSVs and reports
+  `answer_kv_changed` when both answer columns exist.
+- Tests now assert the live REPL contrast text, the extended TSV header, and the
+  summary contrast counter.
+
+### Verification
+
+```text
+make test
+=== summary: 69 passed, 0 failed, 0 skipped ===
+
+make repl-eval
+rows: 30
+user_bridge: 30/30 (1.000), avg_routes 1.000
+I_U^kv: avg +0.036, pos 16, neg 14, zero 0, nan 0
+I_N^kv: avg +0.170, pos 23, neg 7, zero 0, nan 0
+answer_bad_start: 0/30
+answer_kv_changed: 27/30
+```
+
+The current body already changes the direct answer text under `user_kv` for most
+tracked questions. When the new SFT weights arrive, `repl-substrate-compare`
+will now show whether the body swap reduces recipient-lock leakage while
+preserving or improving this bridge sensitivity.
