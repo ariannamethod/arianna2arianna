@@ -26,10 +26,11 @@ endif
 BIN    := arianna2arianna
 SRC    := arianna2arianna.c
 
-HF_BASE = https://huggingface.co/ataeff/ariannamethod/resolve/main/weights
+HF_BASE = https://huggingface.co/ataeff/arianna/resolve/main
 WEIGHTS = weights
-MODEL_F16 = $(WEIGHTS)/nanollama-arianna-full-v4-step2750-f16.gguf
-MODEL_Q8  = $(WEIGHTS)/nanollama-arianna-full-v4-step2750-q8_0.gguf
+MODEL_F16 = $(WEIGHTS)/nano_arianna_resft_2026_07_09_f16.gguf
+MODEL_Q8  = $(WEIGHTS)/nano_arianna_resft_2026_07_09_q8_0.gguf
+MODEL_Q4  = $(WEIGHTS)/nano_arianna_resft_2026_07_09_q4_k_m.gguf
 MODEL  ?= $(MODEL_F16)
 PROMPT ?= What is resonance?
 TOKENS ?= 48
@@ -55,14 +56,19 @@ $(BIN): $(SRC)
 
 $(MODEL_F16):
 	@mkdir -p $(WEIGHTS)
-	curl -fL -o $@ $(HF_BASE)/nanollama-arianna-full-v4-step2750-f16.gguf
+	curl -fL -o $@ $(HF_BASE)/nano_arianna_f16.gguf
 
 $(MODEL_Q8):
 	@mkdir -p $(WEIGHTS)
-	curl -fL -o $@ $(HF_BASE)/nanollama-arianna-full-v4-step2750-q8_0.gguf
+	curl -fL -o $@ $(HF_BASE)/nano_arianna_q8_0.gguf
+
+$(MODEL_Q4):
+	@mkdir -p $(WEIGHTS)
+	curl -fL -o $@ $(HF_BASE)/nano_arianna_q4_k_m.gguf
 
 weights: $(MODEL_F16)
 weights-q8: $(MODEL_Q8)
+weights-q4: $(MODEL_Q4)
 
 portable:
 	$(MAKE) PORTABLE=1 CFLAGS="-O2 -Wall -DA2A_SCALAR_ONLY" LDLIBS="-lm -pthread" clean $(BIN)
@@ -75,6 +81,9 @@ run: $(BIN) $(MODEL)
 
 run-q8: $(BIN) $(MODEL_Q8)
 	./$(BIN) "$(MODEL_Q8)" "$(PROMPT)" $(TOKENS) $(TEMP)
+
+run-q4: $(BIN) $(MODEL_Q4)
+	./$(BIN) "$(MODEL_Q4)" "$(PROMPT)" $(TOKENS) $(TEMP)
 
 repl: $(BIN) $(MODEL)
 	./$(BIN) "$(MODEL)" repl $(CELLS) $(FRAG) $(ROUNDS)
@@ -109,7 +118,7 @@ openai-repl-probe: $(BIN) $(MODEL)
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 repl field restest life sweep-influence repl-sweep repl-eval repl-substrate-compare recipient-lock openai-repl-probe clean weights weights-q8 test portable fast-x86 bench
+.PHONY: run run-q8 run-q4 repl field restest life sweep-influence repl-sweep repl-eval repl-substrate-compare recipient-lock openai-repl-probe clean weights weights-q8 weights-q4 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh

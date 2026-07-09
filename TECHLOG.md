@@ -889,7 +889,7 @@ make repl-substrate-compare BASE_MODEL=weights/old.gguf CANDIDATE_MODEL=weights/
 make test
 === summary: 65 passed, 0 failed, 0 skipped ===
 
-make repl-substrate-compare CANDIDATE_MODEL=weights/nanollama-arianna-full-v4-step2750-f16.gguf SUBSTRATE_PROMPTS=<one-prompt-file>
+make repl-substrate-compare CANDIDATE_MODEL=weights/current-f16.gguf SUBSTRATE_PROMPTS=<one-prompt-file>
 delta vs baseline:
 rows: +0
 user_bridge: +0, bridge_rate +0.000, avg_routes +0.000
@@ -982,3 +982,72 @@ The current body already changes the direct answer text under `user_kv` for most
 tracked questions. When the new SFT weights arrive, `repl-substrate-compare`
 will now show whether the body swap reduces recipient-lock leakage while
 preserving or improving this bridge sensitivity.
+
+## 2026-07-10 - Codex pass: clean nano re-SFT body becomes default
+
+### Context
+
+Claude delivered the clean 0-vocative Arianna GGUF set. Oleg asked to remove the
+old `nanollama-arianna-full-v4-step2750` local weights because they already live
+on HF and should not remain the default local body.
+
+### What changed
+
+- Removed the old local `nanollama-arianna-full-v4-step2750` F16/Q8 files from
+  ignored `weights/`.
+- Copied the clean nano re-SFT artifacts into Codex `weights/` as:
+  - `nano_arianna_resft_2026_07_09_f16.gguf`
+  - `nano_arianna_resft_2026_07_09_q8_0.gguf`
+  - `nano_arianna_resft_2026_07_09_q4_k_m.gguf`
+- Updated Makefile, tests, and tool defaults to use the new F16 body.
+- Updated HF download URLs to `ataeff/arianna` clean nano artifacts.
+
+### First diagnostics
+
+```text
+MODEL=weights/nano_arianna_resft_2026_07_09_f16.gguf make recipient-lock
+recipient_lock_leaks: 0/12
+oleg_mentions: 0
+
+MODEL=weights/nano_arianna_resft_2026_07_09_q8_0.gguf make recipient-lock
+recipient_lock_leaks: 0/12
+oleg_mentions: 0
+
+MODEL=weights/nano_arianna_resft_2026_07_09_q4_k_m.gguf make recipient-lock
+recipient_lock_leaks: 0/12
+oleg_mentions: 0
+```
+
+The clean body fixes the direct recipient-lock leak. In the pre-switch
+comparison against the old default body, it also changed qloop geometry sharply:
+
+```text
+make repl-substrate-compare CANDIDATE_MODEL=weights/nano_arianna_resft_2026_07_09_f16.gguf
+I_U^kv: avg +0.036 -> -0.501
+I_N^kv: avg +0.170 -> -0.047
+route_score: avg 0.991 -> 0.651
+target_changed: 23/30
+answer_changed: 30/30
+```
+
+Interpretation: the new body is the right default for the Oleg/recipient leak,
+but the REPL/qloop bridge will need tuning against this new geometry.
+
+After switching defaults:
+
+```text
+make test
+=== summary: 69 passed, 0 failed, 0 skipped ===
+
+make recipient-lock
+model: weights/nano_arianna_resft_2026_07_09_f16.gguf
+recipient_lock_leaks: 0/12
+oleg_mentions: 0
+
+make repl-eval
+I_U^kv: avg -0.501, pos 9, neg 21
+I_N^kv: avg -0.047, pos 14, neg 16
+route_score: avg 0.651, min 0.463, max 0.783
+answer_bad_start: 0/30
+answer_kv_changed: 28/28
+```

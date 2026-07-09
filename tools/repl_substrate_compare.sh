@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTDIR="${A2A_RUN_DIR:-$ROOT/runs}"
 PROMPTS="${1:-${A2A_SUBSTRATE_PROMPTS:-$ROOT/prompts/repl_probe_regression.txt}}"
 
-BASE_MODEL="${A2A_BASE_MODEL:-$ROOT/weights/nanollama-arianna-full-v4-step2750-f16.gguf}"
+BASE_MODEL="${A2A_BASE_MODEL:-$ROOT/weights/nano_arianna_resft_2026_07_09_f16.gguf}"
 CANDIDATE_MODEL="${A2A_CANDIDATE_MODEL:-}"
 
 CELLS="${A2A_SUBSTRATE_CELLS:-${A2A_EVAL_CELLS:-${A2A_CELLS:-3}}}"

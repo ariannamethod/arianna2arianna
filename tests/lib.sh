@@ -5,8 +5,8 @@ set -euo pipefail
 
 A2A_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 A2A_BIN="${A2A_BIN:-$A2A_ROOT/arianna2arianna}"
-A2A_MODEL_F16="${A2A_MODEL_F16:-$A2A_ROOT/weights/nanollama-arianna-full-v4-step2750-f16.gguf}"
-A2A_MODEL_Q8="${A2A_MODEL_Q8:-$A2A_ROOT/weights/nanollama-arianna-full-v4-step2750-q8_0.gguf}"
+A2A_MODEL_F16="${A2A_MODEL_F16:-$A2A_ROOT/weights/nano_arianna_resft_2026_07_09_f16.gguf}"
+A2A_MODEL_Q8="${A2A_MODEL_Q8:-$A2A_ROOT/weights/nano_arianna_resft_2026_07_09_q8_0.gguf}"
 
 if [[ -z "${A2A_LIB_LOADED:-}" ]]; then
     A2A_PASS=0

@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${A2A_BIN:-$ROOT/arianna2arianna}"
-MODEL="${A2A_MODEL:-$ROOT/weights/nanollama-arianna-full-v4-step2750-f16.gguf}"
+MODEL="${A2A_MODEL:-$ROOT/weights/nano_arianna_resft_2026_07_09_f16.gguf}"
 OUTDIR="${A2A_RUN_DIR:-$ROOT/runs}"
 
 COUNT="${A2A_GPT_COUNT:-30}"

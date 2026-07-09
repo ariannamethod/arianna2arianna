@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${A2A_BIN:-$ROOT/arianna2arianna}"
-MODEL="${A2A_MODEL:-$ROOT/weights/nanollama-arianna-full-v4-step2750-f16.gguf}"
+MODEL="${A2A_MODEL:-$ROOT/weights/nano_arianna_resft_2026_07_09_f16.gguf}"
 PROMPTS="${1:-$ROOT/prompts/kv_influence.txt}"
 
 CELLS="${A2A_CELLS:-4}"

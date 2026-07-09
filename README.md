@@ -17,14 +17,15 @@ For nerds: [`TECHLOG.md`](TECHLOG.md).
 
 ## weights
 
-Default body: `nanollama-arianna-full-v4-step2750-f16.gguf`.
+Default body: `nano_arianna_resft_2026_07_09_f16.gguf`.
 
-F16 is the main path for now. The model is small enough that quantizing lower is
-not the point; q8 is kept as an alternate local fallback.
+F16 is the main path for now. Q8 and Q4_K_M are kept as alternate local
+fallbacks, but F16 is the first diagnostic body.
 
 ```sh
-make weights       # download f16 nanoArianna 89M
+make weights       # download f16 clean re-SFT nanoArianna 89M
 make weights-q8    # optional q8
+make weights-q4    # optional q4_k_m
 ```
 
 Weights live in `weights/` and are gitignored.
@@ -52,11 +53,11 @@ make fast-x86      # opt-in AVX2/FMA/F16C build on x86_64
 Direct form:
 
 ```sh
-./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" 48 0.8
-./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf repl 4 12 1
-./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" field 4 12 3 0 2 0.30 1 1.3 0 1 2 0
-./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" restest 4 12 3
-./arianna2arianna weights/nanollama-arianna-full-v4-step2750-f16.gguf "prompt" life 5 12 4
+./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" 48 0.8
+./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf repl 4 12 1
+./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" field 4 12 3 0 2 0.30 1 1.3 0 1 2 0
+./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" restest 4 12 3
+./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" life 5 12 4
 ```
 
 `repl` keeps the model loaded and reads prompts from stdin until `:q`, `quit`,
