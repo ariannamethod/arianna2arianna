@@ -1051,3 +1051,45 @@ route_score: avg 0.651, min 0.463, max 0.783
 answer_bad_start: 0/30
 answer_kv_changed: 28/28
 ```
+
+## 2026-07-10 - Codex pass: clean-body REPL bridge retune
+
+### Context
+
+The clean nano body fixed recipient-lock leakage, but its direct REPL user
+bridge became over-broad: `I_U^kv` skewed negative, short snippets often
+collapsed into `yes/user/question` fragments, and the old prompt carried labels
+that the new body copied.
+
+### What changed
+
+- Direct user bridge now builds user KV from a neutral `Q:/A:` pair instead of
+  `User asked...`.
+- Direct user answer context now uses the live field fragments plus `Q:/A:`,
+  avoiding `user`, `cell replies`, and similar label anchors.
+- Direct user answer sampling is colder and more bounded for this lane:
+  lower temperature range, `top_k=30`, `rep=1.7`, and 8-16 generated BPE tokens.
+- First-token clean-start now also suppresses punctuation starts like `?`, `.`,
+  `,`, and `;`.
+- Diagnostic snippets strip leading `A:`, `Answer:`, and `Arianna:` labels
+  after generation. Entropy/KV metrics are unchanged; only the emitted snippet
+  text is cleaned before logging/TSV/chorus append.
+
+### Verification
+
+```text
+A2A_BASELINE_TSV=runs/repl_eval_repl_probe_regression_20260710_000951.tsv make repl-eval
+I_U^kv: avg -0.501 -> +0.017
+I_N^kv: avg -0.047 -> -0.047
+route_score: avg 0.651 -> 0.651
+answer_bad_start: 0/30
+answer_kv_changed: 25/25
+
+make test
+=== summary: 69 passed, 0 failed, 0 skipped ===
+```
+
+Interpretation: this retune does not pretend to solve all clean-body language
+quality issues. It restores direct user-KV influence from strongly negative to
+near-neutral/positive while preserving routing geometry and keeping snippet
+starts clean. Remaining work is semantic quality, not recipient-lock repair.

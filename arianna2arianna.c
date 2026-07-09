@@ -1035,7 +1035,8 @@ static int bad_answer_start_token(const bpe_tokenizer *tok, int id) {
     if (!*p) return 1;
     if ((*p >= '0' && *p <= '9') || *p == '*' || *p == '-' || *p == '"' ||
         *p == '\'' || *p == '`' || *p == '#' || *p == ':' || *p == '/' ||
-        *p == '@' || *p == '\\')
+        *p == '@' || *p == '\\' || *p == '?' || *p == '.' || *p == ',' ||
+        *p == ';')
         return 1;
     if ((p[0] == 'h' || p[0] == 'H') &&
         (p[1] == 't' || p[1] == 'T') &&
@@ -1055,6 +1056,35 @@ static int bad_answer_start_token(const bpe_tokenizer *tok, int id) {
 
 static void suppress_bad_answer_starts(float *logits, int vocab, const bpe_tokenizer *tok) {
     for (int i = 0; i < vocab; i++) if (bad_answer_start_token(tok, i)) logits[i] = -1e30f;
+}
+
+static int ascii_starts_ci(const char *s, const char *prefix) {
+    while (*prefix) {
+        char a = *s++, b = *prefix++;
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+static void clean_answer_fragment(char *s) {
+    if (!s || !*s) return;
+    char *p = s;
+    for (;;) {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        if (*p == '?' || *p == ':' || *p == '.' || *p == ',' || *p == ';') { p++; continue; }
+        if ((p[0] == 'A' || p[0] == 'a') && p[1] == ':') { p += 2; continue; }
+        if (ascii_starts_ci(p, "answer:")) { p += 7; continue; }
+        if (ascii_starts_ci(p, "arianna:")) { p += 8; continue; }
+        break;
+    }
+    if (p != s) memmove(s, p, strlen(p) + 1);
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' ||
+                     s[n - 1] == '\r' || s[n - 1] == '\n')) {
+        s[--n] = 0;
+    }
 }
 
 /* ── inter-cell DISSONANCE, the order-sensitive lever signal (haiku.c idea, our wiring) ──
@@ -1489,7 +1519,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             char uask[4096], qctx[4096], qfrag[1024], qfrag_off[1024];
             int qctx_ids[512], qids[128], qn = 0;
             qfrag_off[0] = '\0';
-            snprintf(uask, sizeof(uask), "User asked from the live REPL: %s", g_user_q);
+            snprintf(uask, sizeof(uask), "Q: %s\nA:", g_user_q);
             int uask_ids[512], uask_np = bpe_encode(tok, uask, uask_ids, max_seq - 1);
             kv_cache *user_kv = NULL; int user_klen = 0;
             int qtok_before = g_round_tokn, save_field_on = g_field_on;
@@ -1499,22 +1529,23 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             cell_speak(m, tok, uask_ids, uask_np, 0, 0.7f, 40, 1.4f,
                        seed_base ^ 0x51a7e2u, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, &user_kv, &user_klen);
             g_round_tokn = qtok_before;
-            snprintf(qctx, sizeof(qctx), "%s\nuser asked: %s\ncell %d answers the user from the field:",
-                     prompt, g_user_q, tcell);
+            snprintf(qctx, sizeof(qctx), "Field fragments:%s\nQ: %s\nA:", this_chorus, g_user_q);
             int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
-            float qtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)tcell / (n_cells - 1) : 0.5f);
-            int qfrag_n = nfrag / 2; if (qfrag_n < 4) qfrag_n = 4; if (qfrag_n > 10) qfrag_n = 10;
+            float qtemp = 0.45f + 0.15f * (n_cells > 1 ? (float)tcell / (n_cells - 1) : 0.5f);
+            int qfrag_n = nfrag * 2; if (qfrag_n < 8) qfrag_n = 8; if (qfrag_n > 16) qfrag_n = 16;
             unsigned qseed = seed_base ^ 0xc0ffeeu ^ (unsigned)(tcell * 7919 + r * 65537);
             int save_clean_start = g_clean_answer_start;
             g_clean_answer_start = 1;
-            float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
+            float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 30, 1.7f,
                                         qseed, eos, max_seq, qfrag_off, sizeof(qfrag_off), 0, NULL, NULL, NULL, NULL, NULL);
             g_round_tokn = qtok_before;
             g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = 0.30f;
-            float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
+            float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 30, 1.7f,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             g_clean_answer_start = save_clean_start;
             g_nbr = save_nbr; g_nbr_len = save_nbr_len; g_nbr_shuf = save_nbr_shuf; g_field_on = save_field_on; g_xcell = save_xcell;
+            clean_answer_fragment(qfrag);
+            clean_answer_fragment(qfrag_off);
             float qinfl = qent_off - qent;
             for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
             int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);
