@@ -1093,3 +1093,35 @@ Interpretation: this retune does not pretend to solve all clean-body language
 quality issues. It restores direct user-KV influence from strongly negative to
 near-neutral/positive while preserving routing geometry and keeping snippet
 starts clean. Remaining work is semantic quality, not recipient-lock repair.
+
+## 2026-07-10 - Codex pass: REPL answer quality counters
+
+### Context
+
+After the clean-body bridge retune, `I_U^kv` recovered, but snippet quality still
+needed a numeric lens. The weak outputs were not mostly bad starts anymore; they
+were short/question-like fragments, yes/no loops, repeated words, or leaked
+labels.
+
+### What changed
+
+- `tools/repl_tsv_summary.sh` now reports `answer_quality` counters:
+  - any flagged snippet;
+  - short snippets;
+  - question-like snippets;
+  - label artifacts;
+  - yes/no starts;
+  - repeated adjacent words.
+- The quality flags are diagnostic counters, not hard gates.
+- CLI smoke tests now cover the new summary line.
+- README notes that current TSV summaries include answer quality flags.
+
+### First read on the retuned clean-body run
+
+```text
+bash tools/repl_tsv_summary.sh runs/repl_eval_repl_probe_regression_20260710_015038.tsv
+answer_quality: any 22/30, short 7, question_like 18, label_artifact 1, yes_no_start 5, repetition 5
+```
+
+Interpretation: the next bridge layer should target question-like continuations
+and yes/no/repetition loops. Recipient-lock is clean; this is answer-form work.

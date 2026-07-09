@@ -95,7 +95,8 @@ ignored `runs/`, and can compare against a previous TSV with
 and per-question changes, including route target/score/snippet deltas when both
 TSVs use the extended shape. With current TSVs it also reports
 `answer_kv_changed`, the count of direct user answers whose text differs from
-the no-user-KV shadow answer.
+the no-user-KV shadow answer, plus diagnostic `answer_quality` flags for short,
+question-like, label-artifact, yes/no-start, and repeated-word snippets.
 
 `make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf` runs the
 same offline probe corpus against the current base body and a candidate GGUF,

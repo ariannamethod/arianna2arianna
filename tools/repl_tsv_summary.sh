@@ -9,7 +9,7 @@ usage: $0 current.tsv [baseline.tsv]
 
 Reads tools/repl_question_sweep.sh TSV output and prints bridge/routing
 coverage plus I_U^kv and I_N^kv sign statistics. Newer TSVs may also include
-route targets, route scores, answer snippets, and no-user-KV contrast snippets. If a baseline TSV is
+route targets, route scores, answer snippets, quality flags, and no-user-KV contrast snippets. If a baseline TSV is
 provided, also prints aggregate and per-question deltas.
 EOF
 }
@@ -74,16 +74,58 @@ summarize() {
             return first ~ /^[0-9]$/ || index("*\"`#:/@-\\", first) > 0 ||
                    first == sprintf("%c", 39) || s ~ /^(http|HTTP|www|WWW)/
         }
+        function trim(s) {
+            sub(/^[[:space:]]+/, "", s)
+            sub(/[[:space:]]+$/, "", s)
+            return s
+        }
+        function word_count(s,     i, a, n, w) {
+            gsub(/[^[:alnum:]_]+/, " ", s)
+            s = trim(s)
+            if (s == "") return 0
+            n = split(s, a, /[[:space:]]+/)
+            w = 0
+            for (i = 1; i <= n; i++) if (a[i] != "") w++
+            return w
+        }
+        function has_repetition(s,     i, a, n, prev, run, w) {
+            s = tolower(s)
+            gsub(/[^[:alnum:]_]+/, " ", s)
+            n = split(s, a, /[[:space:]]+/)
+            prev = ""; run = 0
+            for (i = 1; i <= n; i++) {
+                w = a[i]
+                if (length(w) < 2) continue
+                if (w == prev) run++
+                else { prev = w; run = 1 }
+                if (run >= 2) return 1
+            }
+            return 0
+        }
+        function add_answer_quality(ans,     low, words, flagged) {
+            ans = trim(ans)
+            if (ans == "") return
+            low = tolower(ans)
+            words = word_count(ans)
+            flagged = 0
+            if (length(ans) < 12 || words < 3) { answer_short_n++; flagged = 1 }
+            if (index(ans, "?") > 0) { answer_question_n++; flagged = 1 }
+            if (low ~ /(^|[[:space:][:punct:]])(answer|reply|prompt|cell|thread|qloop|question)([[:space:][:punct:]]|$)/) {
+                answer_label_n++; flagged = 1
+            }
+            if (low ~ /^(yes|no)([[:space:][:punct:]]|$)/) { answer_yesno_n++; flagged = 1 }
+            if (has_repetition(ans)) { answer_repeat_n++; flagged = 1 }
+            if (flagged) answer_quality_any_n++
+        }
         function add_answers(s,     i, a, n, ans) {
             if (s == "") return
             n = split(s, a, ";")
             for (i = 1; i <= n; i++) {
-                ans = a[i]
-                sub(/^[[:space:]]+/, "", ans)
-                sub(/[[:space:]]+$/, "", ans)
+                ans = trim(a[i])
                 if (ans == "") continue
                 answer_n++
                 if (bad_answer_start(ans)) bad_answer_n++
+                add_answer_quality(ans)
             }
         }
         function add_answer_contrasts(on, off, q,     i, a, b, n, m, ao, bo) {
@@ -225,6 +267,9 @@ summarize() {
                     printf "answer_sample: %s :: %s\n", first_answer_q, first_answer
                 }
                 printf "answer_bad_start: %d/%d\n", bad_answer_n, answer_n
+                printf "answer_quality: any %d/%d, short %d, question_like %d, label_artifact %d, yes_no_start %d, repetition %d\n",
+                    answer_quality_any_n, answer_n, answer_short_n, answer_question_n,
+                    answer_label_n, answer_yesno_n, answer_repeat_n
                 if (contrast_cols) {
                     printf "answer_kv_changed: %d/%d\n", answer_contrast_changed, answer_contrast_n
                     if (first_contrast_seen) {
