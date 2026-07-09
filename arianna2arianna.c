@@ -889,6 +889,7 @@ static int g_kvpos = 0;         /* 0 = semantic/bag neighbour lane; 1 = position
 static int g_qloop = 0;         /* 0=off; 1..2 = resonant cell-question routes per round */
 static const char *g_user_q = NULL; /* REPL direct-question bridge: user text can become asker KV */
 static int g_clean_answer_start = 0; /* direct user answers should not open with list/bullet debris */
+static int g_answer_form_guard = 0;  /* direct user answers should not turn into question/yes-no loops */
 static float g_qloop_min = 0.42f;
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
@@ -1068,6 +1069,50 @@ static int ascii_starts_ci(const char *s, const char *prefix) {
     return 1;
 }
 
+static int ascii_word_ci(const char *s, const char *word) {
+    const char *p = s;
+    if (!ascii_starts_ci(p, word)) return 0;
+    p += strlen(word);
+    return !((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+             (*p >= '0' && *p <= '9') || *p == '_');
+}
+
+static int direct_answer_bad_form_token(const bpe_tokenizer *tok, int id, int step) {
+    char buf[96];
+    int n = bpe_decode_token(tok, id, buf, sizeof(buf));
+    if (n <= 0) return 0;
+    buf[sizeof(buf) - 1] = 0;
+    unsigned char *p = (unsigned char*)buf;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (!*p) return 1;
+    for (unsigned char *q = p; *q; q++) if (*q == '?') return 1;
+    if (ascii_word_ci((const char*)p, "what") || ascii_word_ci((const char*)p, "who") ||
+        ascii_word_ci((const char*)p, "where") || ascii_word_ci((const char*)p, "why") ||
+        ascii_word_ci((const char*)p, "how") || ascii_word_ci((const char*)p, "when") ||
+        ascii_word_ci((const char*)p, "can") || ascii_word_ci((const char*)p, "will") ||
+        ascii_word_ci((const char*)p, "would") || ascii_word_ci((const char*)p, "could") ||
+        ascii_word_ci((const char*)p, "should") || ascii_word_ci((const char*)p, "do") ||
+        ascii_word_ci((const char*)p, "does") || ascii_word_ci((const char*)p, "did") ||
+        ascii_word_ci((const char*)p, "is") || ascii_word_ci((const char*)p, "are") ||
+        ascii_word_ci((const char*)p, "am") || ascii_word_ci((const char*)p, "was") ||
+        ascii_word_ci((const char*)p, "were"))
+        return 1;
+    if (step != 0) return 0;
+    if (ascii_word_ci((const char*)p, "yes") || ascii_word_ci((const char*)p, "no"))
+        return 1;
+    if (ascii_starts_ci((const char*)p, "answer:") ||
+        ascii_starts_ci((const char*)p, "question:") ||
+        ascii_starts_ci((const char*)p, "prompt:") ||
+        ascii_starts_ci((const char*)p, "reply:") ||
+        ascii_starts_ci((const char*)p, "qloop:"))
+        return 1;
+    return 0;
+}
+
+static void suppress_direct_answer_form(float *logits, int vocab, const bpe_tokenizer *tok, int step) {
+    for (int i = 0; i < vocab; i++) if (direct_answer_bad_form_token(tok, i, step)) logits[i] = -1e30f;
+}
+
 static void clean_answer_fragment(char *s) {
     if (!s || !*s) return;
     char *p = s;
@@ -1170,6 +1215,7 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
             int id = g_round_tok[i]; if (id >= 0 && id < m->vocab) logits[id] = logits[id] > 0 ? logits[id]/g_xrep : logits[id]*g_xrep;
         }
         if (g_clean_answer_start && s == 0) suppress_bad_answer_starts(logits, m->vocab, tok);
+        if (g_answer_form_guard) suppress_direct_answer_form(logits, m->vocab, tok, s);
         int next = sample2(logits, m->vocab, temp, top_k, rep, hist, hlen);
         if (next == eos) break;
         int bl = bpe_decode_token(tok, next, buf, sizeof(buf));
@@ -1523,6 +1569,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             int uask_ids[512], uask_np = bpe_encode(tok, uask, uask_ids, max_seq - 1);
             kv_cache *user_kv = NULL; int user_klen = 0;
             int qtok_before = g_round_tokn, save_field_on = g_field_on;
+            int save_form_guard = g_answer_form_guard;
             float save_xcell = g_xcell;
             const kv_cache *save_nbr = g_nbr; int save_nbr_len = g_nbr_len, save_nbr_shuf = g_nbr_shuf;
             g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_field_on = 0;
@@ -1531,18 +1578,20 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_round_tokn = qtok_before;
             snprintf(qctx, sizeof(qctx), "Field fragments:%s\nQ: %s\nA:", this_chorus, g_user_q);
             int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
-            float qtemp = 0.45f + 0.15f * (n_cells > 1 ? (float)tcell / (n_cells - 1) : 0.5f);
-            int qfrag_n = nfrag * 2; if (qfrag_n < 8) qfrag_n = 8; if (qfrag_n > 16) qfrag_n = 16;
+            float qtemp = 0.35f + 0.10f * (n_cells > 1 ? (float)tcell / (n_cells - 1) : 0.5f);
+            int qfrag_n = nfrag * 2; if (qfrag_n < 12) qfrag_n = 12; if (qfrag_n > 24) qfrag_n = 24;
             unsigned qseed = seed_base ^ 0xc0ffeeu ^ (unsigned)(tcell * 7919 + r * 65537);
             int save_clean_start = g_clean_answer_start;
             g_clean_answer_start = 1;
-            float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 30, 1.7f,
+            g_answer_form_guard = 1;
+            float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 24, 2.05f,
                                         qseed, eos, max_seq, qfrag_off, sizeof(qfrag_off), 0, NULL, NULL, NULL, NULL, NULL);
             g_round_tokn = qtok_before;
             g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = 0.30f;
-            float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 30, 1.7f,
+            float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 24, 2.05f,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             g_clean_answer_start = save_clean_start;
+            g_answer_form_guard = save_form_guard;
             g_nbr = save_nbr; g_nbr_len = save_nbr_len; g_nbr_shuf = save_nbr_shuf; g_field_on = save_field_on; g_xcell = save_xcell;
             clean_answer_fragment(qfrag);
             clean_answer_fragment(qfrag_off);

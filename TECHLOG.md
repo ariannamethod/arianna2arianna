@@ -1125,3 +1125,46 @@ answer_quality: any 22/30, short 7, question_like 18, label_artifact 1, yes_no_s
 
 Interpretation: the next bridge layer should target question-like continuations
 and yes/no/repetition loops. Recipient-lock is clean; this is answer-form work.
+
+## 2026-07-10 - Codex pass: direct answer form guard
+
+### Context
+
+The clean-body bridge had the right recipient geometry, but many direct
+user-bridge snippets answered by continuing the question form: question marks,
+yes/no starts, and one-word fragments. The answer-quality counters made the
+failure mode measurable.
+
+### What changed
+
+- Direct user answers now enable an answer-form guard during sampling.
+- The guard suppresses `?` tokens in direct answer snippets.
+- Question operators (`what`, `who`, `where`, `why`, `how`, `when`, `can`,
+  `will`, `do`, `is`, and related forms) are suppressed in that direct-answer
+  lane so the model stops echoing the prompt as a new question.
+- `yes`/`no` first-token starts and leading label prefixes are suppressed for
+  the same lane.
+- Direct answer snippets get a little more room (`12..24` tokens) with colder
+  sampling, smaller `top_k`, and stronger local repetition penalty.
+- The normal chorus/qloop entropy and route metrics stay untouched; the guard
+  applies only to emitted direct-user answer text.
+
+### Verification
+
+```text
+A2A_BASELINE_TSV=runs/repl_eval_repl_probe_regression_20260710_015038.tsv make repl-eval
+I_U^kv: avg +0.017 -> -0.002
+I_N^kv: avg -0.047 -> -0.047
+route_score: avg 0.651 -> 0.651
+answer_quality: any 22/30 -> 7/30
+answer_quality.short: 7 -> 0
+answer_quality.question_like: 18 -> 0
+answer_quality.yes_no_start: 5 -> 0
+answer_quality.repetition: 5 -> 3
+answer_kv_changed: 25/25 -> 30/30
+```
+
+Interpretation: this layer removes the most damaging answer-form collapses
+without moving the route geometry. Remaining visible defects are notation/label
+leakage (`A.`, `B.A`, `Thread`) and some repeated morphology, so the next layer
+should target notation cleanup rather than recipient-lock or question echoes.
