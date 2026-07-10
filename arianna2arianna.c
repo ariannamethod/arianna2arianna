@@ -112,10 +112,11 @@ static int env_int_clamped(const char *name, int def, int lo, int hi) {
     return (int)v;
 }
 
-static void append_trajectory(char *dst, size_t cap, const char *user, const char *chorus) {
+static void append_trajectory(char *dst, size_t cap, const char *user, const char *chorus, int qa_format) {
     char entry[6144];
     if (!dst || cap == 0) return;
-    snprintf(entry, sizeof(entry), "\nUser: %s\nArianna:%s\n", user ? user : "", chorus ? chorus : "");
+    if (qa_format) snprintf(entry, sizeof(entry), "\nQ: %s\nA:%s\n", user ? user : "", chorus ? chorus : "");
+    else snprintf(entry, sizeof(entry), "\nUser: %s\nArianna:%s\n", user ? user : "", chorus ? chorus : "");
     size_t have = strlen(dst), add = strlen(entry);
     if (add >= cap) {
         copy_cstr(dst, cap, entry + add - (cap - 1));
@@ -924,8 +925,10 @@ static int g_answer_form_guard = 0;  /* direct user answers should not turn into
 static float g_user_qtemp_base = 0.45f; /* direct-user bridge sampler: env-tunable for temperature sweeps */
 static float g_user_qtemp_span = 0.10f;
 static int   g_user_qtop_k = 40;
-static float g_user_qrep = 2.05f;
+static float g_user_qrep = 1.30f;
+static float g_user_kv_weight = 0.05f;
 static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw */
+static int   g_repl_prompt_format = 0; /* 0=user_arianna, 1=qa */
 static float g_qloop_min = 0.42f;
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
@@ -942,7 +945,8 @@ static void load_user_bridge_sampling_env(void) {
     g_user_qtemp_base = env_float_clamped("A2A_USER_QTEMP_BASE", 0.45f, 0.05f, 2.00f);
     g_user_qtemp_span = env_float_clamped("A2A_USER_QTEMP_SPAN", 0.10f, -1.50f, 1.50f);
     g_user_qtop_k = env_int_clamped("A2A_USER_TOP_K", 40, 0, 512);
-    g_user_qrep = env_float_clamped("A2A_USER_REP", 2.05f, 1.00f, 5.00f);
+    g_user_qrep = env_float_clamped("A2A_USER_REP", 1.30f, 1.00f, 5.00f);
+    g_user_kv_weight = env_float_clamped("A2A_USER_KV_WEIGHT", 0.05f, 0.00f, 2.00f);
     const char *fmt = getenv("A2A_USER_CTX_FORMAT");
     g_user_ctx_format = 2;
     if (fmt && *fmt) {
@@ -951,6 +955,16 @@ static void load_user_bridge_sampling_env(void) {
         else if (strcmp(fmt, "qa") == 0) g_user_ctx_format = 2;
         else if (strcmp(fmt, "raw") == 0) g_user_ctx_format = 3;
         else fprintf(stderr, "warning: ignoring invalid A2A_USER_CTX_FORMAT=%s\n", fmt);
+    }
+}
+
+static void load_repl_prompt_env(void) {
+    const char *fmt = getenv("A2A_REPL_PROMPT_FORMAT");
+    g_repl_prompt_format = 0;
+    if (fmt && *fmt) {
+        if (strcmp(fmt, "user_arianna") == 0) g_repl_prompt_format = 0;
+        else if (strcmp(fmt, "qa") == 0) g_repl_prompt_format = 1;
+        else fprintf(stderr, "warning: ignoring invalid A2A_REPL_PROMPT_FORMAT=%s\n", fmt);
     }
 }
 
@@ -969,6 +983,25 @@ static const char *user_ctx_format_name(void) {
     case 2: return "qa";
     case 3: return "raw";
     default: return "field_qa";
+    }
+}
+
+static const char *repl_prompt_format_name(void) {
+    switch (g_repl_prompt_format) {
+    case 1: return "qa";
+    default: return "user_arianna";
+    }
+}
+
+static void build_repl_turn_prompt(char *dst, size_t cap, const char *trajectory, const char *line) {
+    if (!trajectory) trajectory = "";
+    if (!line) line = "";
+    if (g_repl_prompt_format == 1) {
+        if (trajectory[0]) snprintf(dst, cap, "%s\nQ: %s\nA:", trajectory, line);
+        else snprintf(dst, cap, "Q: %s\nA:", line);
+    } else {
+        if (trajectory[0]) snprintf(dst, cap, "Recent trajectory:%s\nUser: %s\nArianna:", trajectory, line);
+        else snprintf(dst, cap, "User: %s\nArianna:", line);
     }
 }
 
@@ -1728,7 +1761,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                         qseed, eos, max_seq, qfrag_off, sizeof(qfrag_off), 0, NULL, NULL, NULL, NULL, NULL);
             g_round_tokn = qtok_before;
-            g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = 0.30f;
+            g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = g_user_kv_weight;
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             g_clean_answer_start = save_clean_start;
@@ -1881,14 +1914,16 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_kvpos = 0;
     g_qloop = 2;
     load_user_bridge_sampling_env();
+    load_repl_prompt_env();
 
     int interactive = isatty(STDIN_FILENO);
     int *hist = (int*)calloc(m->vocab, sizeof(int));
     char line[2048], trajectory[4096], prompt[8192], chorus[4096];
     trajectory[0] = 0;
 
-    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userRep=%.2f, userFmt=%s) ===\n",
-           n_cells, n_rounds, g_user_qtemp_base, g_user_qtemp_span, g_user_qtop_k, g_user_qrep, user_ctx_format_name());
+    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userRep=%.2f, userKV=%.2f, userFmt=%s, replFmt=%s) ===\n",
+           n_cells, n_rounds, g_user_qtemp_base, g_user_qtemp_span, g_user_qtop_k, g_user_qrep,
+           g_user_kv_weight, user_ctx_format_name(), repl_prompt_format_name());
     printf("type :q, :quit, exit, or quit to stop\n");
 
     for (unsigned turn = 1; ; turn++) {
@@ -1899,10 +1934,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
         if (strcmp(line, ":q") == 0 || strcmp(line, ":quit") == 0 ||
             strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) break;
 
-        if (trajectory[0])
-            snprintf(prompt, sizeof(prompt), "Recent trajectory:%s\nUser: %s\nArianna:", trajectory, line);
-        else
-            snprintf(prompt, sizeof(prompt), "User: %s\nArianna:", line);
+        build_repl_turn_prompt(prompt, sizeof(prompt), trajectory, line);
 
         printf("\n  --- repl turn %u ---", turn);
         for (int i = 0; i < m->vocab; i++) hist[i] = 0;
@@ -1921,7 +1953,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
             printf("\n  → repl turn %u.%d: avg entropy %.3f | Δ_R^kv[sem] %+.3f (floor %.3f margin %+.3f) | I_N^kv[sem] %+.3f | D_R %.3f | trajectory %zu bytes\n",
                    turn, r + 1, avg, kv_delta, kv_floor, kv_delta - kv_floor, kv_infl, disso, strlen(trajectory));
         }
-        append_trajectory(trajectory, sizeof(trajectory), line, chorus);
+        append_trajectory(trajectory, sizeof(trajectory), line, chorus, g_repl_prompt_format == 1);
     }
 
     free(hist);

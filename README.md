@@ -97,20 +97,26 @@ and per-question changes, including route target/score/snippet deltas when both
 TSVs use the extended shape. With current TSVs it also reports
 `answer_kv_changed`, the count of direct user answers whose text differs from
 the no-user-KV shadow answer, plus diagnostic `answer_quality` flags for short,
-question-like, label-artifact, notation-artifact, yes/no-start, and
-repeated-word snippets.
+question-like, label-artifact, notation-artifact, morphology/glue-artifact,
+yes/no-start, and repeated-word snippets.
 
 `make repl-temp-sweep` runs the same direct-user bridge metrics across sampler
 settings and prints a compact table while writing each TSV/summary under
 ignored `runs/`. The normal REPL defaults are `A2A_USER_QTEMP_BASE=0.45`,
 `A2A_USER_QTEMP_SPAN=0.10`, `A2A_USER_TOP_K=40`,
-`A2A_USER_REP=2.05`, and `A2A_USER_CTX_FORMAT=qa`.
+`A2A_USER_REP=1.30`, `A2A_USER_KV_WEIGHT=0.05`,
+`A2A_USER_CTX_FORMAT=qa`, and
+`A2A_REPL_PROMPT_FORMAT=user_arianna`. `A2A_USER_CTX_FORMAT` controls the
+direct user-answer bridge; `A2A_REPL_PROMPT_FORMAT` controls the outer turn
+context that every cell sees.
 Override sweep grids with:
 
 ```sh
 A2A_TEMP_BASES="0.35 0.45 0.55 0.70" make repl-temp-sweep
-A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="16 24 40" A2A_TEMP_REPS="1.6 2.05" make repl-temp-sweep
+A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="16 24 40" A2A_TEMP_REPS="1.3 1.6 2.05" make repl-temp-sweep
+A2A_TEMP_BASES="0.45" A2A_TEMP_USER_KVS="0 0.05 0.10 0.20 0.30" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_FORMATS="field_qa plain_field_qa qa raw" make repl-temp-sweep
+A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPL_FORMATS="user_arianna qa" make repl-temp-sweep
 ```
 
 `make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf` runs the

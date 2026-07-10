@@ -107,21 +107,60 @@ summarize() {
             t = trim(s)
             return t ~ /(^|[[:space:]])[A-Z]([.][A-Z])?([.:,;-]|[[:space:]]+[A-Z][.])|(^|[[:space:]])(Ari|Thread|Qloop|Question|Answer|Prompt|Reply)([[:space:][:punct:]]|$)/
         }
+        function known_bad_morph(w) {
+            return w == "aat" || w == "sards" || w == "haart" ||
+                   w == "wort" || w == "sark" || w == "shabbartists" ||
+                   w == "olelegacythe" || w == "youhave" ||
+                   w == "soundlike"
+        }
+        function has_bad_ascii_apostrophe(s,     apos, rest, pos, tail) {
+            apos = sprintf("%c", 39)
+            rest = s
+            while ((pos = index(rest, apos)) > 0) {
+                tail = tolower(substr(rest, pos))
+                if (tail ~ ("^" apos "(s|re|ve|ll|d|m)([^A-Za-z]|$)") ||
+                    tail ~ ("^" apos "t([^A-Za-z]|$)")) {
+                    rest = substr(rest, pos + 1)
+                    continue
+                }
+                return 1
+            }
+            return 0
+        }
+        function has_morph_artifact(s,     i, a, n, w, core, low) {
+            if (s ~ /[a-z][A-Z][a-z]/) return 1
+            if (has_bad_ascii_apostrophe(s)) return 1
+            n = split(s, a, /[^A-Za-z0-9_.-]+/)
+            for (i = 1; i <= n; i++) {
+                w = a[i]
+                if (w == "") continue
+                core = w
+                gsub(/^[_.-]+/, "", core)
+                gsub(/[_.-]+$/, "", core)
+                low = tolower(core)
+                if (known_bad_morph(low)) return 1
+                if (w ~ /[A-Za-z][.][A-Za-z][A-Za-z]/) return 1
+                if (w ~ /[A-Za-z][A-Za-z][A-Za-z]+-[A-Za-z]{1,2}$/) return 1
+                if (w ~ /^-/ || w ~ /-$/) return 1
+            }
+            return 0
+        }
         function add_answer_quality(ans,     low, words, flagged) {
             ans = trim(ans)
             if (ans == "") return
             low = tolower(ans)
             words = word_count(ans)
             flagged = 0
-            if (length(ans) < 12 || words < 3) { answer_short_n++; flagged = 1 }
-            if (index(ans, "?") > 0) { answer_question_n++; flagged = 1 }
+            if (length(ans) < 12 || words < 3) { if (quality_off) answer_off_short_n++; else answer_short_n++; flagged = 1 }
+            if (index(ans, "?") > 0) { if (quality_off) answer_off_question_n++; else answer_question_n++; flagged = 1 }
             if (low ~ /(^|[[:space:][:punct:]])(answer|reply|prompt|cell|thread|qloop|question)([[:space:][:punct:]]|$)/) {
-                answer_label_n++; flagged = 1
+                if (quality_off) answer_off_label_n++; else answer_label_n++; flagged = 1
             }
-            if (low ~ /^(yes|no)([[:space:][:punct:]]|$)/) { answer_yesno_n++; flagged = 1 }
-            if (has_repetition(ans)) { answer_repeat_n++; flagged = 1 }
-            if (has_notation_artifact(ans)) { answer_notation_n++; flagged = 1 }
-            if (flagged) answer_quality_any_n++
+            if (low ~ /^(yes|no)([[:space:][:punct:]]|$)/) { if (quality_off) answer_off_yesno_n++; else answer_yesno_n++; flagged = 1 }
+            if (has_repetition(ans)) { if (quality_off) answer_off_repeat_n++; else answer_repeat_n++; flagged = 1 }
+            if (has_notation_artifact(ans)) { if (quality_off) answer_off_notation_n++; else answer_notation_n++; flagged = 1 }
+            if (has_morph_artifact(ans)) { if (quality_off) answer_off_morph_n++; else answer_morph_n++; flagged = 1 }
+            if (flagged) { if (quality_off) answer_off_quality_any_n++; else answer_quality_any_n++ }
         }
         function add_answers(s,     i, a, n, ans) {
             if (s == "") return
@@ -129,8 +168,13 @@ summarize() {
             for (i = 1; i <= n; i++) {
                 ans = trim(a[i])
                 if (ans == "") continue
-                answer_n++
-                if (bad_answer_start(ans)) bad_answer_n++
+                if (quality_off) {
+                    answer_off_n++
+                    if (bad_answer_start(ans)) answer_off_bad_n++
+                } else {
+                    answer_n++
+                    if (bad_answer_start(ans)) bad_answer_n++
+                }
                 add_answer_quality(ans)
             }
         }
@@ -217,13 +261,19 @@ summarize() {
             if (route_cols && NF >= 8) {
                 add_targets($6)
                 add_scores($7, $1)
+                quality_off = 0
                 add_answers($8)
                 if ($8 != "" && !first_answer_seen) {
                     first_answer = $8
                     first_answer_q = $1
                     first_answer_seen = 1
                 }
-                if (contrast_cols) add_answer_contrasts($8, $9, $1)
+                if (contrast_cols) {
+                    quality_off = 1
+                    add_answers($9)
+                    quality_off = 0
+                    add_answer_contrasts($8, $9, $1)
+                }
             }
         }
         END {
@@ -273,10 +323,13 @@ summarize() {
                     printf "answer_sample: %s :: %s\n", first_answer_q, first_answer
                 }
                 printf "answer_bad_start: %d/%d\n", bad_answer_n, answer_n
-                printf "answer_quality: any %d/%d, short %d, question_like %d, label_artifact %d, notation_artifact %d, yes_no_start %d, repetition %d\n",
+                printf "answer_quality: any %d/%d, short %d, question_like %d, label_artifact %d, notation_artifact %d, morph_artifact %d, yes_no_start %d, repetition %d\n",
                     answer_quality_any_n, answer_n, answer_short_n, answer_question_n,
-                    answer_label_n, answer_notation_n, answer_yesno_n, answer_repeat_n
+                    answer_label_n, answer_notation_n, answer_morph_n, answer_yesno_n, answer_repeat_n
                 if (contrast_cols) {
+                    printf "answer_quality_no_user_kv: any %d/%d, short %d, question_like %d, label_artifact %d, notation_artifact %d, morph_artifact %d, yes_no_start %d, repetition %d\n",
+                        answer_off_quality_any_n, answer_off_n, answer_off_short_n, answer_off_question_n,
+                        answer_off_label_n, answer_off_notation_n, answer_off_morph_n, answer_off_yesno_n, answer_off_repeat_n
                     printf "answer_kv_changed: %d/%d\n", answer_contrast_changed, answer_contrast_n
                     if (first_contrast_seen) {
                         printf "answer_kv_sample: %s :: with=%s :: without=%s\n",

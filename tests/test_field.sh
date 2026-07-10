@@ -54,12 +54,19 @@ a2a_assert_grep "I_Q\\^kv=" "$qloop_out" "qloop reports asker KV influence"
 
 repl_out="$(printf "Why does the field remember?\n:q\n" | "$A2A_BIN" "$A2A_MODEL_F16" repl 3 4 1 2>&1)"
 a2a_assert_grep "repl: δ-field live" "$repl_out" "repl starts"
+a2a_assert_grep "userRep=1.30" "$repl_out" "repl reports default direct-user repetition penalty"
+a2a_assert_grep "userKV=0.05" "$repl_out" "repl reports default direct-user KV weight"
+a2a_assert_grep "replFmt=user_arianna" "$repl_out" "repl reports default outer prompt format"
 a2a_assert_grep "repl turn 1" "$repl_out" "repl runs one scripted turn"
 a2a_assert_grep "I_N\\^kv\\[sem\\]" "$repl_out" "repl reports semantic neighbour influence"
 a2a_assert_grep "qloop user.*\\[user-kv\\]" "$repl_out" "repl routes user question through KV bridge"
 a2a_assert_grep "I_U\\^kv=" "$repl_out" "repl reports user KV influence"
 a2a_assert_grep "no-user-kv:" "$repl_out" "repl reports no-user-KV contrast answer"
 a2a_assert_grep "repl done" "$repl_out" "repl exits on command"
+
+repl_qa_out="$(printf "Why does the field remember?\n:q\n" | A2A_REPL_PROMPT_FORMAT=qa "$A2A_BIN" "$A2A_MODEL_F16" repl 3 4 1 2>&1)"
+a2a_assert_grep "replFmt=qa" "$repl_qa_out" "repl accepts Q/A outer prompt format"
+a2a_assert_grep "qloop user.*\\[user-kv\\]" "$repl_qa_out" "Q/A REPL format keeps user question bridge"
 
 repl_sweep_prompts="$(mktemp)"
 printf "Why does the field remember?\n" > "$repl_sweep_prompts"
@@ -77,7 +84,7 @@ A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=1 bash "$A2A_ROOT/tools/repl_question_sweep.sh
 clean_sweep_summary="$(bash "$A2A_ROOT/tools/repl_tsv_summary.sh" "$clean_sweep_tsv" 2>&1)"
 rm -f "$clean_sweep_prompts" "$clean_sweep_tsv"
 a2a_assert_grep "answer_bad_start: 0/1" "$clean_sweep_summary" "repl user bridge suppresses bad answer starts"
-a2a_assert_grep "answer_quality: any [0-9]+/1, short [0-9]+, question_like 0, label_artifact [0-9]+, notation_artifact [0-9]+, yes_no_start 0" "$clean_sweep_summary" "repl user bridge suppresses question and yes/no answer forms"
+a2a_assert_grep "answer_quality: any [0-9]+/1, short [0-9]+, question_like 0, label_artifact [0-9]+, notation_artifact [0-9]+, morph_artifact [0-9]+, yes_no_start 0" "$clean_sweep_summary" "repl user bridge suppresses question and yes/no answer forms"
 
 life_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" life 2 4 3 2>&1)"
 a2a_assert_grep "δ-life: Game of Life" "$life_out" "life starts"

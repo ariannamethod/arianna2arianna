@@ -1330,3 +1330,159 @@ answer_quality.repetition: 3 -> 0
 answer_kv_changed: 30/30 -> 30/30
 per-question answer_changed: 30/30
 ```
+
+## 2026-07-10 - Codex pass: morphology/glue quality counter
+
+### Context
+
+After switching the direct-user lane to the nano-compatible `Q:/A:` runtime
+format, the old answer-quality counters no longer caught the visible remaining
+damage: malformed word shapes such as `wort`, `aat`, and `sards/haart`. Those
+are not question loops, labels, notation leaks, yes/no starts, or repeated
+words, so the next layer needed a separate instrument before any new guard.
+
+### What changed
+
+- Added `morph_artifact` to `tools/repl_tsv_summary.sh`.
+- The heuristic catches invalid ASCII contractions, camel/dot glue, hyphen-edge
+  fragments, and the currently observed malformed fragments.
+- `tools/repl_temp_sweep.sh`, README, and smoke tests now include the new
+  `morph_artifact` quality field.
+
+### Verification
+
+```text
+bash tools/repl_tsv_summary.sh runs/repl_eval_repl_probe_regression_20260710_035757.tsv
+answer_quality: any 5/30, short 0, question_like 0, label_artifact 2, notation_artifact 0, morph_artifact 3, yes_no_start 0, repetition 0
+
+bash tools/repl_tsv_summary.sh runs/repl_temp_repl_probe_regression_fmtfield_qa_base0p45_span0p10_topk40_rep2p05_20260710_035028.tsv
+answer_quality: any 6/30, short 0, question_like 0, label_artifact 2, notation_artifact 0, morph_artifact 1, yes_no_start 0, repetition 3
+
+make test
+=== summary: 74 passed, 0 failed, 0 skipped ===
+```
+
+Interpretation: Q/A runtime format still wins, but the true remaining tail is
+now visible: three morphology/glue failures in the current corpus. Next guard
+should target malformed word shapes without reintroducing format wrappers or
+over-tightening the sampler.
+
+## 2026-07-10 - Codex pass: outer REPL prompt-format probe
+
+### Context
+
+The direct-user bridge was already moved to `Q:/A:`, but the outer REPL turn
+context still used the older conversational frame:
+`User: <line>\nArianna:` plus a `Recent trajectory:` wrapper on later turns.
+Oleg pointed out that the older Arianna spoke better even while over-addressing
+him, which suggests a real contract conflict: the old second-person frame
+anchored dialogue, while the clean 0-vocative body removed that anchor.
+
+### What changed
+
+- Added `A2A_REPL_PROMPT_FORMAT` for the outer REPL prompt:
+  `user_arianna` keeps the current default, `qa` feeds cells as flat
+  `Q: <line>\nA:` turns.
+- REPL now prints `replFmt=...` in the startup banner so run logs expose the
+  exact outer prompt contract.
+- `append_trajectory()` now preserves the matching trajectory contract for
+  each mode instead of always appending `User:/Arianna:`.
+- `tools/repl_temp_sweep.sh` now sweeps `A2A_TEMP_REPL_FORMATS` separately from
+  the direct-user `A2A_TEMP_FORMATS` axis.
+
+### Verification
+
+```text
+A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPS="2.05" \
+  A2A_TEMP_FORMATS="qa" A2A_TEMP_REPL_FORMATS="user_arianna qa" make repl-temp-sweep
+
+userFmt=qa replFmt=user_arianna:
+  I_U^kv -0.041, I_N^kv -0.047, route_score 0.651,
+  answer_quality 5/30, morph_artifact 3, repetition 0
+
+userFmt=qa replFmt=qa:
+  I_U^kv -0.076, I_N^kv -0.484, route_score 0.511,
+  answer_quality 3/30, morph_artifact 1, repetition 1
+
+make test
+=== summary: 78 passed, 0 failed, 0 skipped ===
+```
+
+Interpretation: the pure `Q:/A:` outer prompt is cleaner by the current answer
+quality counters, but it damages neighbour field geometry and brings back
+second-person anchoring (`You have been...`). The outer `User:/Arianna:` frame
+is therefore not the single bug. It appears to preserve some conversational
+field structure while also carrying residue from the old addressing contract.
+The next fix should not blindly flip the global default; it should either test a
+third neutral dialogue frame or compare against new SFT weights before changing
+the REPL contract.
+
+## 2026-07-10 - Sol audit: duplicated user-KV amplitude
+
+### Finding
+
+The direct answer prompt already contains the user question as `Q: ...\nA:`.
+The bridge then encoded the same `Q: ...\nA:` a second time and injected that
+cache through the neighbour-attention lane at a fixed weight of `0.30`. The
+reported `I_U^kv` therefore measures the incremental cross-KV copy, not the
+entire influence of the user question. Its negative average at the old default
+was evidence that the duplicate lane was raising entropy, not helping the
+answer.
+
+The saved no-user-KV shadows were usually more coherent than the emitted
+answers, but the summary only scored the emitted side. It now reports
+`answer_quality_no_user_kv` as a separate line.
+
+### Change
+
+- Added `A2A_USER_KV_WEIGHT` and the matching `A2A_TEMP_USER_KVS` sweep axis.
+- Changed the measured direct-user defaults from `userRep=2.05, userKV=0.30`
+  to `userRep=1.30, userKV=0.05`.
+- Kept the outer `User:/Arianna:` REPL frame and the direct `Q:/A:` answer
+  frame; changing the outer frame was not the root fix.
+- Made `repl_question_sweep.sh` parse model output under `LC_ALL=C`, so invalid
+  UTF-8 from a damaged generation cannot abort the TSV run.
+
+### Evidence
+
+Fixed F16 body, prompt corpus, seed path, `temp_base=0.45`, `span=0.10`,
+`top_k=40`, `rep=1.60`:
+
+```text
+userKV  quality_any  morph  repetition  I_U^kv
+0.00    3/30         1      2           +0.000
+0.05    1/30         0      1           +0.030
+0.10    1/30         0      1           +0.009
+0.20    6/30         1      4           -0.030
+0.30    4/30         2      0           -0.042
+```
+
+At `userKV=0.05`, repetition penalties `1.30`, `1.60`, and `2.05` all scored
+`quality_any 1/30`; `1.30` preserved slightly cleaner completions and had the
+strongest positive `I_U^kv` (`+0.044`). A cold-reader REPL probe at `0.05`
+answered without claiming a prior meeting, while `0.10` said `You have been
+here before`.
+
+```text
+make test
+=== summary: 82 passed, 0 failed, 0 skipped ===
+
+make repl-eval
+I_U^kv: avg +0.044
+I_N^kv: avg -0.047
+route_targets: c0:8 c1:18 c2:4
+route_score: avg 0.651, min 0.463, max 0.783
+answer_quality: any 1/30, short 0, question_like 0, label_artifact 0, notation_artifact 0, morph_artifact 0, yes_no_start 0, repetition 1
+answer_quality_no_user_kv: any 3/30, short 0, question_like 0, label_artifact 0, notation_artifact 0, morph_artifact 1, yes_no_start 0, repetition 2
+```
+
+### Remaining weight problem
+
+The runtime retune does not make the clean re-SFT a robust replacement for the
+old body. Exact-contract `Q:/A:` questions are partly coherent, but statement
+or fragment seeds still degrade sharply. Russian output is substantially
+broken. The current 0-vocative gate also counts only literal Oleg mentions: it
+does not catch false familiarity, and a prompt without `?` does not enter the
+direct user qloop at all. These failures require a broader, frame-preserving
+SFT/checkpoint comparison and stronger semantic recipient gates; another
+prompt-label flip is not sufficient.

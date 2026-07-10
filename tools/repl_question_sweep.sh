@@ -2,6 +2,7 @@
 # Sweep direct user questions through the live REPL bridge and print TSV metrics.
 
 set -euo pipefail
+export LC_ALL=C
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${A2A_BIN:-$ROOT/arianna2arianna}"
