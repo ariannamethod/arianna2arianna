@@ -80,6 +80,37 @@ static void chomp_line(char *s) {
     size_t n = strlen(s);
     while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) s[--n] = 0;
 }
+static int ascii_space_char(char c) {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+static float env_float_clamped(const char *name, float def, float lo, float hi) {
+    const char *raw = getenv(name);
+    if (!raw || !*raw) return def;
+    char *end = NULL;
+    float v = strtof(raw, &end);
+    while (end && ascii_space_char(*end)) end++;
+    if (end == raw || (end && *end) || !isfinite(v)) {
+        fprintf(stderr, "warning: ignoring invalid %s=%s\n", name, raw);
+        return def;
+    }
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+static int env_int_clamped(const char *name, int def, int lo, int hi) {
+    const char *raw = getenv(name);
+    if (!raw || !*raw) return def;
+    char *end = NULL;
+    long v = strtol(raw, &end, 10);
+    while (end && ascii_space_char(*end)) end++;
+    if (end == raw || (end && *end)) {
+        fprintf(stderr, "warning: ignoring invalid %s=%s\n", name, raw);
+        return def;
+    }
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return (int)v;
+}
 
 static void append_trajectory(char *dst, size_t cap, const char *user, const char *chorus) {
     char entry[6144];
@@ -890,6 +921,11 @@ static int g_qloop = 0;         /* 0=off; 1..2 = resonant cell-question routes p
 static const char *g_user_q = NULL; /* REPL direct-question bridge: user text can become asker KV */
 static int g_clean_answer_start = 0; /* direct user answers should not open with list/bullet debris */
 static int g_answer_form_guard = 0;  /* direct user answers should not turn into question/yes-no loops */
+static float g_user_qtemp_base = 0.45f; /* direct-user bridge sampler: env-tunable for temperature sweeps */
+static float g_user_qtemp_span = 0.10f;
+static int   g_user_qtop_k = 40;
+static float g_user_qrep = 2.05f;
+static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw */
 static float g_qloop_min = 0.42f;
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
@@ -901,6 +937,64 @@ static float g_xrep = 1.3f;     /* >1 = penalise tokens neighbours already said 
  * (theme/distinct/ent per cell) to FIELDLOG, act on nothing → calibrate thresholds before the population breathes. */
 static float g_cell_ent[8];     /* per-cell raw entropy this round (fitness input) */
 static int   g_life_on = 0;     /* 1 = measure/run the Game of Life. 0 = chorus byte-identical */
+
+static void load_user_bridge_sampling_env(void) {
+    g_user_qtemp_base = env_float_clamped("A2A_USER_QTEMP_BASE", 0.45f, 0.05f, 2.00f);
+    g_user_qtemp_span = env_float_clamped("A2A_USER_QTEMP_SPAN", 0.10f, -1.50f, 1.50f);
+    g_user_qtop_k = env_int_clamped("A2A_USER_TOP_K", 40, 0, 512);
+    g_user_qrep = env_float_clamped("A2A_USER_REP", 2.05f, 1.00f, 5.00f);
+    const char *fmt = getenv("A2A_USER_CTX_FORMAT");
+    g_user_ctx_format = 2;
+    if (fmt && *fmt) {
+        if (strcmp(fmt, "field_qa") == 0) g_user_ctx_format = 0;
+        else if (strcmp(fmt, "plain_field_qa") == 0) g_user_ctx_format = 1;
+        else if (strcmp(fmt, "qa") == 0) g_user_ctx_format = 2;
+        else if (strcmp(fmt, "raw") == 0) g_user_ctx_format = 3;
+        else fprintf(stderr, "warning: ignoring invalid A2A_USER_CTX_FORMAT=%s\n", fmt);
+    }
+}
+
+static float user_bridge_temp_for_cell(int cell, int n_cells) {
+    float frac = n_cells > 1 ? (float)cell / (float)(n_cells - 1) : 0.5f;
+    float t = g_user_qtemp_base + g_user_qtemp_span * frac;
+    if (!isfinite(t)) t = 0.45f;
+    if (t < 0.05f) t = 0.05f;
+    if (t > 2.00f) t = 2.00f;
+    return t;
+}
+
+static const char *user_ctx_format_name(void) {
+    switch (g_user_ctx_format) {
+    case 1: return "plain_field_qa";
+    case 2: return "qa";
+    case 3: return "raw";
+    default: return "field_qa";
+    }
+}
+
+static void build_user_kv_prompt(char *dst, size_t cap, const char *q) {
+    if (g_user_ctx_format == 3) snprintf(dst, cap, "%s", q ? q : "");
+    else snprintf(dst, cap, "Q: %s\nA:", q ? q : "");
+}
+
+static void build_user_answer_prompt(char *dst, size_t cap, const char *chorus, const char *q) {
+    if (!chorus) chorus = "";
+    if (!q) q = "";
+    switch (g_user_ctx_format) {
+    case 1:
+        snprintf(dst, cap, "%s\nQ: %s\nA:", chorus, q);
+        break;
+    case 2:
+        snprintf(dst, cap, "Q: %s\nA:", q);
+        break;
+    case 3:
+        snprintf(dst, cap, "%s", q);
+        break;
+    default:
+        snprintf(dst, cap, "Field fragments:%s\nQ: %s\nA:", chorus, q);
+        break;
+    }
+}
 
 static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits) {
     int E = m->embed, H = m->n_heads, KV = m->n_kv_heads, HD = m->head_dim;
@@ -1612,7 +1706,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             char uask[4096], qctx[4096], qfrag[1024], qfrag_off[1024];
             int qctx_ids[512], qids[128], qn = 0;
             qfrag_off[0] = '\0';
-            snprintf(uask, sizeof(uask), "Q: %s\nA:", g_user_q);
+            build_user_kv_prompt(uask, sizeof(uask), g_user_q);
             int uask_ids[512], uask_np = bpe_encode(tok, uask, uask_ids, max_seq - 1);
             kv_cache *user_kv = NULL; int user_klen = 0;
             int qtok_before = g_round_tokn, save_field_on = g_field_on;
@@ -1623,19 +1717,19 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             cell_speak(m, tok, uask_ids, uask_np, 0, 0.7f, 40, 1.4f,
                        seed_base ^ 0x51a7e2u, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, &user_kv, &user_klen);
             g_round_tokn = qtok_before;
-            snprintf(qctx, sizeof(qctx), "Field fragments:%s\nQ: %s\nA:", this_chorus, g_user_q);
+            build_user_answer_prompt(qctx, sizeof(qctx), this_chorus, g_user_q);
             int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
-            float qtemp = 0.35f + 0.10f * (n_cells > 1 ? (float)tcell / (n_cells - 1) : 0.5f);
+            float qtemp = user_bridge_temp_for_cell(tcell, n_cells);
             int qfrag_n = nfrag * 2; if (qfrag_n < 12) qfrag_n = 12; if (qfrag_n > 24) qfrag_n = 24;
             unsigned qseed = seed_base ^ 0xc0ffeeu ^ (unsigned)(tcell * 7919 + r * 65537);
             int save_clean_start = g_clean_answer_start;
             g_clean_answer_start = 1;
             g_answer_form_guard = 1;
-            float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 24, 2.05f,
+            float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                         qseed, eos, max_seq, qfrag_off, sizeof(qfrag_off), 0, NULL, NULL, NULL, NULL, NULL);
             g_round_tokn = qtok_before;
             g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = 0.30f;
-            float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 24, 2.05f,
+            float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             g_clean_answer_start = save_clean_start;
             g_answer_form_guard = save_form_guard;
@@ -1786,13 +1880,15 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_kvshuf = 1;
     g_kvpos = 0;
     g_qloop = 2;
+    load_user_bridge_sampling_env();
 
     int interactive = isatty(STDIN_FILENO);
     int *hist = (int*)calloc(m->vocab, sizeof(int));
     char line[2048], trajectory[4096], prompt[8192], chorus[4096];
     trajectory[0] = 0;
 
-    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem) ===\n", n_cells, n_rounds);
+    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userRep=%.2f, userFmt=%s) ===\n",
+           n_cells, n_rounds, g_user_qtemp_base, g_user_qtemp_span, g_user_qtop_k, g_user_qrep, user_ctx_format_name());
     printf("type :q, :quit, exit, or quit to stop\n");
 
     for (unsigned turn = 1; ; turn++) {

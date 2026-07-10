@@ -42,6 +42,7 @@ make life PROMPT="Let the cells remember each other."
 make sweep-influence
 make repl-sweep
 make repl-eval
+make repl-temp-sweep
 make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf
 make recipient-lock
 make openai-repl-probe   # requires OPENAI_API_KEY or OPENAI_API_KEY_FILE
@@ -98,6 +99,19 @@ TSVs use the extended shape. With current TSVs it also reports
 the no-user-KV shadow answer, plus diagnostic `answer_quality` flags for short,
 question-like, label-artifact, notation-artifact, yes/no-start, and
 repeated-word snippets.
+
+`make repl-temp-sweep` runs the same direct-user bridge metrics across sampler
+settings and prints a compact table while writing each TSV/summary under
+ignored `runs/`. The normal REPL defaults are `A2A_USER_QTEMP_BASE=0.45`,
+`A2A_USER_QTEMP_SPAN=0.10`, `A2A_USER_TOP_K=40`,
+`A2A_USER_REP=2.05`, and `A2A_USER_CTX_FORMAT=qa`.
+Override sweep grids with:
+
+```sh
+A2A_TEMP_BASES="0.35 0.45 0.55 0.70" make repl-temp-sweep
+A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="16 24 40" A2A_TEMP_REPS="1.6 2.05" make repl-temp-sweep
+A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_FORMATS="field_qa plain_field_qa qa raw" make repl-temp-sweep
+```
 
 `make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf` runs the
 same offline probe corpus against the current base body and a candidate GGUF,

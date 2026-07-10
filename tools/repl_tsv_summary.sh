@@ -2,6 +2,7 @@
 # Summarize and optionally compare REPL question sweep TSV files.
 
 set -euo pipefail
+export LC_ALL=C
 
 usage() {
     cat <<EOF

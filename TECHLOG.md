@@ -1211,3 +1211,122 @@ Interpretation: notation leakage is now instrumented and cleared without moving
 route geometry. The remaining failures are not recipient-lock or label-form
 issues; they are repeated morphology (`field-field`, `it's it`) and a wh-start
 answer form that does not use a question mark.
+
+## 2026-07-10 - Codex pass: direct-user temperature sweep hooks
+
+### Context
+
+`arianna-duo` sampling notes treat temperature as architecture, not a loose
+stylistic setting: Janus and Resonance used different filter regimes, and
+Resonance could be clamped by the wrong `top_p` even at a reasonable
+temperature. The nano direct-user bridge had a hardcoded cold sampler after the
+answer-form cleanup, so the next question is empirical: does this body want the
+current `0.35..0.45` lane, or does a warmer lane preserve cleaner answers while
+letting more user-KV influence through?
+
+### What changed
+
+- Direct-user bridge sampling is now env-tunable through
+  `A2A_USER_QTEMP_BASE`, `A2A_USER_QTEMP_SPAN`, `A2A_USER_TOP_K`, and
+  `A2A_USER_REP`.
+- Env values are parsed defensively and clamped so bad sweep input cannot push
+  NaN/invalid sampler state into the bridge.
+- Added `tools/repl_temp_sweep.sh` and `make repl-temp-sweep`, which run the
+  existing REPL TSV + summary pipeline across a temperature/filter grid and
+  print a compact comparison table.
+- Retuned the measured default from `base=0.35/top_k=24` to
+  `base=0.45/top_k=40` while keeping `span=0.10` and `rep=2.05`.
+
+### Verification
+
+```text
+A2A_TEMP_BASES="0.35 0.45 0.55 0.70" make repl-temp-sweep
+base=0.35 top_k=24: I_U^kv +0.006, route_score 0.651, answer_quality 6/30, repetition 5
+base=0.45 top_k=24: I_U^kv +0.033, route_score 0.651, answer_quality 5/30, repetition 4
+base=0.55 top_k=24: I_U^kv +0.055, route_score 0.651, answer_quality 6/30, repetition 3
+base=0.70 top_k=24: I_U^kv -0.051, route_score 0.651, answer_quality 3/30, repetition 1
+
+A2A_TEMP_BASES="0.45 0.55" A2A_TEMP_TOP_KS="16 24 40" A2A_TEMP_REPS="2.05" make repl-temp-sweep
+base=0.45 top_k=16: I_U^kv +0.006, answer_quality 7/30, repetition 5
+base=0.45 top_k=24: I_U^kv +0.033, answer_quality 5/30, repetition 4
+base=0.45 top_k=40: I_U^kv +0.102, answer_quality 5/30, repetition 3
+base=0.55 top_k=16: I_U^kv +0.080, answer_quality 7/30, repetition 4
+base=0.55 top_k=24: I_U^kv +0.055, answer_quality 6/30, repetition 3
+base=0.55 top_k=40: I_U^kv -0.007, answer_quality 5/30, repetition 3
+```
+
+Interpretation: `0.70` looks clean by current counters but manual snippets are
+more broken (`An a`, fused words, malformed fragments), so it is not accepted.
+`0.45/top_k40` keeps route geometry fixed, raises measured user-KV influence,
+and reduces repeated morphology versus the cold baseline. The next missing
+instrument is a morphology/glue counter so warmer points cannot win by slipping
+broken word-shapes past the old quality flags.
+
+Interim sampler eval against the old cold bridge before the format sweep:
+
+```text
+A2A_BASELINE_TSV=runs/repl_temp_repl_probe_regression_base0p35_span0p10_topk24_rep2p05_20260710_031545.tsv make repl-eval
+I_U^kv: avg +0.006 -> +0.102
+I_N^kv: avg -0.047 -> -0.047
+route_targets: unchanged
+route_score: avg 0.651 -> 0.651
+answer_quality: any 6/30 -> 5/30
+answer_quality.repetition: 5 -> 3
+answer_kv_changed: 30/30 -> 30/30
+per-question answer_changed: 26/30
+```
+
+## 2026-07-10 - Codex pass: direct-user Q/A runtime format
+
+### Context
+
+Claude's Janus diagnosis exposed a nearby failure class: not bad weights and not
+just temperature, but a runtime prompt format that does not match the voice's
+training format. For nano-Arianna the contract is textual `Q:/A:` rather than
+Janus special tokens. `arianna-duo` feeds the nano subconscious raw cues or KK
+fragments and then strips leading `A:/Q:/Arianna:` labels; it does not wrap the
+dream in diagnostic prose. In `arianna2arianna`, the direct-user bridge still
+used `Field fragments: ... Q: ... A:`, which kept the Q/A boundary but added a
+field-instrument label and chorus text before the answer.
+
+### What changed
+
+- Added `A2A_USER_CTX_FORMAT` for direct-user bridge format sweeps:
+  `field_qa`, `plain_field_qa`, `qa`, and `raw`.
+- Changed the default direct-user answer context to `qa`: `Q: <user>\nA:`.
+- Kept `field_qa` and other formats as explicit sweep controls, not the default.
+- Hardened `tools/repl_tsv_summary.sh` with `LC_ALL=C` so raw byte-fallback
+  output cannot crash the audit script.
+
+### Verification
+
+```text
+A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPS="2.05" \
+  A2A_TEMP_FORMATS="field_qa plain_field_qa qa raw" make repl-temp-sweep
+
+field_qa:       I_U^kv +0.102, answer_quality 5/30, label 2, repetition 3
+plain_field_qa: I_U^kv +0.020, answer_quality 5/30, label 3, repetition 2
+qa:             I_U^kv -0.041, answer_quality 2/30, label 2, repetition 0
+raw:            I_U^kv -0.141, answer_quality 7/30, label 1, repetition 6
+```
+
+Interpretation: `qa` is the best runtime feeding format for nano's direct
+answer lane. The lower `I_U^kv` is not a regression in the same sense as the old
+bridge: in `qa`, the user text is already in the cell's own answer context, not
+only in the neighbour user-KV. Raw cueing is a bad fit for this direct-answer
+lane; it produced byte-fallback/invalid-UTF8 output during the negative-control
+sweep.
+
+Final default eval against the old `field_qa` wrapper:
+
+```text
+A2A_BASELINE_TSV=runs/repl_temp_repl_probe_regression_fmtfield_qa_base0p45_span0p10_topk40_rep2p05_20260710_035028.tsv make repl-eval
+I_U^kv: avg +0.102 -> -0.041
+I_N^kv: avg -0.047 -> -0.047
+route_targets: unchanged
+route_score: avg 0.651 -> 0.651
+answer_quality: any 5/30 -> 2/30
+answer_quality.repetition: 3 -> 0
+answer_kv_changed: 30/30 -> 30/30
+per-question answer_changed: 30/30
+```
