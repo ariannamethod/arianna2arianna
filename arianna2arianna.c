@@ -1077,6 +1077,48 @@ static int ascii_word_ci(const char *s, const char *word) {
              (*p >= '0' && *p <= '9') || *p == '_');
 }
 
+static int ascii_word_label_ci(const char *s, const char *word) {
+    const char *p = s;
+    if (!ascii_starts_ci(p, word)) return 0;
+    p += strlen(word);
+    return !((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+             (*p >= '0' && *p <= '9') || *p == '_') &&
+           (*p == 0 || *p == ' ' || *p == '\t' || *p == ':' || *p == '.' ||
+            *p == ',' || *p == ';' || *p == '-');
+}
+
+static int ascii_label_letter(unsigned char c) {
+    return c == 'A' || c == 'B' || c == 'C' || c == 'D' || c == 'Q';
+}
+
+static int direct_answer_notation_token(const char *s) {
+    const unsigned char *p = (const unsigned char*)s;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (ascii_label_letter(p[0]) && p[1] == 0) return 1;
+    if (ascii_label_letter(p[0]) &&
+        (p[1] == ':' || p[1] == '.' || p[1] == ',' || p[1] == ';' || p[1] == '-'))
+        return 1;
+    if (ascii_label_letter(p[0]) && p[1] == ' ' && ascii_label_letter(p[2]) &&
+        (p[3] == ':' || p[3] == '.' || p[3] == ',' || p[3] == ';' || p[3] == '-' || p[3] == 0))
+        return 1;
+    if (ascii_label_letter(p[0]) && p[1] == ' ' && p[2] >= 'A' && p[2] <= 'Z')
+        return 1;
+    if (ascii_label_letter(p[0]) && p[1] == '.' && ascii_label_letter(p[2]) &&
+        (p[3] == ':' || p[3] == '.' || p[3] == ',' || p[3] == ';' || p[3] == '-' || p[3] == 0))
+        return 1;
+    if ((p[0] == 'I' || p[0] == 'i') && (p[1] == ':' || p[1] == '.')) return 1;
+    if (ascii_word_label_ci((const char*)p, "ari") ||
+        ascii_word_label_ci((const char*)p, "arianna") ||
+        ascii_word_label_ci((const char*)p, "thread") ||
+        ascii_word_label_ci((const char*)p, "qloop") ||
+        ascii_word_label_ci((const char*)p, "question") ||
+        ascii_word_label_ci((const char*)p, "answer") ||
+        ascii_word_label_ci((const char*)p, "prompt") ||
+        ascii_word_label_ci((const char*)p, "reply"))
+        return 1;
+    return 0;
+}
+
 static int direct_answer_bad_form_token(const bpe_tokenizer *tok, int id, int step) {
     char buf[96];
     int n = bpe_decode_token(tok, id, buf, sizeof(buf));
@@ -1086,6 +1128,7 @@ static int direct_answer_bad_form_token(const bpe_tokenizer *tok, int id, int st
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
     if (!*p) return 1;
     for (unsigned char *q = p; *q; q++) if (*q == '?') return 1;
+    if (direct_answer_notation_token((const char*)p)) return 1;
     if (ascii_word_ci((const char*)p, "what") || ascii_word_ci((const char*)p, "who") ||
         ascii_word_ci((const char*)p, "where") || ascii_word_ci((const char*)p, "why") ||
         ascii_word_ci((const char*)p, "how") || ascii_word_ci((const char*)p, "when") ||
@@ -1120,6 +1163,10 @@ static void clean_answer_fragment(char *s) {
         while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
         if (*p == '?' || *p == ':' || *p == '.' || *p == ',' || *p == ';') { p++; continue; }
         if ((p[0] == 'A' || p[0] == 'a') && p[1] == ':') { p += 2; continue; }
+        if (direct_answer_notation_token(p)) {
+            while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') p++;
+            continue;
+        }
         if (ascii_starts_ci(p, "answer:")) { p += 7; continue; }
         if (ascii_starts_ci(p, "arianna:")) { p += 8; continue; }
         break;

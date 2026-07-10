@@ -102,6 +102,10 @@ summarize() {
             }
             return 0
         }
+        function has_notation_artifact(s,     t) {
+            t = trim(s)
+            return t ~ /(^|[[:space:]])[A-Z]([.][A-Z])?([.:,;-]|[[:space:]]+[A-Z][.])|(^|[[:space:]])(Ari|Thread|Qloop|Question|Answer|Prompt|Reply)([[:space:][:punct:]]|$)/
+        }
         function add_answer_quality(ans,     low, words, flagged) {
             ans = trim(ans)
             if (ans == "") return
@@ -115,6 +119,7 @@ summarize() {
             }
             if (low ~ /^(yes|no)([[:space:][:punct:]]|$)/) { answer_yesno_n++; flagged = 1 }
             if (has_repetition(ans)) { answer_repeat_n++; flagged = 1 }
+            if (has_notation_artifact(ans)) { answer_notation_n++; flagged = 1 }
             if (flagged) answer_quality_any_n++
         }
         function add_answers(s,     i, a, n, ans) {
@@ -267,9 +272,9 @@ summarize() {
                     printf "answer_sample: %s :: %s\n", first_answer_q, first_answer
                 }
                 printf "answer_bad_start: %d/%d\n", bad_answer_n, answer_n
-                printf "answer_quality: any %d/%d, short %d, question_like %d, label_artifact %d, yes_no_start %d, repetition %d\n",
+                printf "answer_quality: any %d/%d, short %d, question_like %d, label_artifact %d, notation_artifact %d, yes_no_start %d, repetition %d\n",
                     answer_quality_any_n, answer_n, answer_short_n, answer_question_n,
-                    answer_label_n, answer_yesno_n, answer_repeat_n
+                    answer_label_n, answer_notation_n, answer_yesno_n, answer_repeat_n
                 if (contrast_cols) {
                     printf "answer_kv_changed: %d/%d\n", answer_contrast_changed, answer_contrast_n
                     if (first_contrast_seen) {

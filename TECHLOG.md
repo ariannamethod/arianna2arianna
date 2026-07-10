@@ -1110,6 +1110,7 @@ labels.
   - short snippets;
   - question-like snippets;
   - label artifacts;
+  - notation artifacts;
   - yes/no starts;
   - repeated adjacent words.
 - The quality flags are diagnostic counters, not hard gates.
@@ -1168,3 +1169,45 @@ Interpretation: this layer removes the most damaging answer-form collapses
 without moving the route geometry. Remaining visible defects are notation/label
 leakage (`A.`, `B.A`, `Thread`) and some repeated morphology, so the next layer
 should target notation cleanup rather than recipient-lock or question echoes.
+
+## 2026-07-10 - Codex pass: direct answer notation guard
+
+### Context
+
+The form guard removed question echoes and yes/no starts, exposing a smaller but
+louder artifact class: direct-user snippets could still start with or contain
+notation labels such as `A.`, `B.A`, `I:`, `Ari:`, `Thread`, and `An A Loop`.
+The older `label_artifact` counter was too broad because it also caught domain
+words like `cell` and `answer`, so the artifact needed its own numeric lens.
+
+### What changed
+
+- `tools/repl_tsv_summary.sh` now reports `notation_artifact` inside the
+  `answer_quality` line.
+- The direct answer form guard suppresses single-letter notation labels,
+  compact label chains, and leading `Ari`/`Thread`/`Qloop`/prompt-label tokens.
+- `clean_answer_fragment()` strips leading notation fragments that still slip
+  through as split BPE pieces before logging/TSV/chorus append.
+- README and CLI smoke coverage now include the new quality counter.
+
+### Verification
+
+```text
+bash tools/repl_tsv_summary.sh runs/repl_eval_repl_probe_regression_20260710_023305.tsv
+answer_quality: any 13/30, short 0, question_like 0, label_artifact 4, notation_artifact 8, yes_no_start 0, repetition 3
+
+A2A_BASELINE_TSV=runs/repl_eval_repl_probe_regression_20260710_023305.tsv make repl-eval
+I_U^kv: avg -0.002 -> +0.006
+I_N^kv: avg -0.047 -> -0.047
+route_score: avg 0.651 -> 0.651
+answer_quality: any 13/30 -> 6/30
+answer_quality.label_artifact: 4 -> 1
+answer_quality.notation_artifact: 8 -> 0
+answer_quality.repetition: 3 -> 5
+answer_kv_changed: 30/30 -> 30/30
+```
+
+Interpretation: notation leakage is now instrumented and cleared without moving
+route geometry. The remaining failures are not recipient-lock or label-form
+issues; they are repeated morphology (`field-field`, `it's it`) and a wh-start
+answer form that does not use a question mark.
