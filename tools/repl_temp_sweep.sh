@@ -14,14 +14,15 @@ Knobs:
   A2A_TEMP_BASES="0.35 0.45 0.55"   direct-user temp bases
   A2A_TEMP_SPANS="0.10"             direct-user cell-fraction spans
   A2A_TEMP_TOP_KS="40"              direct-user top_k values
+  A2A_TEMP_TOP_PS="1.00"            direct-user top_p nucleus values
   A2A_TEMP_REPS="1.30"              direct-user repetition penalties
   A2A_TEMP_USER_KVS="0.05"          direct-user cross-KV weights
   A2A_TEMP_FORMATS="qa"             direct-user context formats
   A2A_TEMP_REPL_FORMATS="user_arianna qa" outer REPL prompt formats
 
 These map to the runtime env knobs consumed by arianna2arianna:
-  A2A_USER_QTEMP_BASE, A2A_USER_QTEMP_SPAN, A2A_USER_TOP_K, A2A_USER_REP,
-  A2A_USER_KV_WEIGHT,
+  A2A_USER_QTEMP_BASE, A2A_USER_QTEMP_SPAN, A2A_USER_TOP_K,
+  A2A_USER_TOP_P, A2A_USER_REP, A2A_USER_KV_WEIGHT,
   A2A_USER_CTX_FORMAT, A2A_REPL_PROMPT_FORMAT
 EOF
 }
@@ -42,6 +43,7 @@ ROUNDS="${A2A_TEMP_ROUNDS:-${A2A_EVAL_ROUNDS:-${A2A_ROUNDS:-1}}}"
 BASES="${A2A_TEMP_BASES:-0.30 0.35 0.45 0.55 0.70}"
 SPANS="${A2A_TEMP_SPANS:-0.10}"
 TOP_KS="${A2A_TEMP_TOP_KS:-40}"
+TOP_PS="${A2A_TEMP_TOP_PS:-1.00}"
 REPS="${A2A_TEMP_REPS:-1.30}"
 USER_KVS="${A2A_TEMP_USER_KVS:-0.05}"
 FORMATS="${A2A_TEMP_FORMATS:-qa}"
@@ -62,8 +64,8 @@ safe_num() {
 }
 
 compact_line() {
-    local fmt="$1" repl_fmt="$2" base="$3" span="$4" top_k="$5" rep="$6" user_kv="$7" tsv_file="$8" summary_file="$9"
-    awk -v fmt="$fmt" -v repl_fmt="$repl_fmt" -v base="$base" -v span="$span" -v top_k="$top_k" -v rep="$rep" -v user_kv="$user_kv" \
+    local fmt="$1" repl_fmt="$2" base="$3" span="$4" top_k="$5" top_p="$6" rep="$7" user_kv="$8" tsv_file="$9" summary_file="${10}"
+    awk -v fmt="$fmt" -v repl_fmt="$repl_fmt" -v base="$base" -v span="$span" -v top_k="$top_k" -v top_p="$top_p" -v rep="$rep" -v user_kv="$user_kv" \
         -v tsv="$tsv_file" -v summary="$summary_file" '
         BEGIN {
             rows = bridge = iu = in_kv = route = any = short = question = label = notation = morph = yesno = repeat = kv = "-"
@@ -91,35 +93,37 @@ compact_line() {
         }
         /^answer_kv_changed:/ { kv = $2 }
         END {
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-                fmt, repl_fmt, base, span, top_k, rep, user_kv, rows, bridge, iu, in_kv, route,
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+                fmt, repl_fmt, base, span, top_k, top_p, rep, user_kv, rows, bridge, iu, in_kv, route,
                 any, short, question, label, notation, morph, yesno, repeat, kv, tsv, summary
         }
     ' "$summary_file"
 }
 
-printf "user_format\trepl_format\ttemp_base\ttemp_span\ttop_k\trep\tuser_kv\trows\tbridge\ti_u_avg\ti_n_avg\troute_score\tquality_any\tshort\tquestion_like\tlabel\tnotation\tmorph\tyes_no\trepetition\tkv_changed\ttsv\tsummary\n"
+printf "user_format\trepl_format\ttemp_base\ttemp_span\ttop_k\ttop_p\trep\tuser_kv\trows\tbridge\ti_u_avg\ti_n_avg\troute_score\tquality_any\tshort\tquestion_like\tlabel\tnotation\tmorph\tyes_no\trepetition\tkv_changed\ttsv\tsummary\n"
 
 for fmt in $FORMATS; do
     for repl_fmt in $REPL_FORMATS; do
         for base in $BASES; do
             for span in $SPANS; do
                 for top_k in $TOP_KS; do
-                    for rep in $REPS; do
-                        for user_kv in $USER_KVS; do
-                            tag="fmt${fmt}_repl${repl_fmt}_base$(safe_num "$base")_span$(safe_num "$span")_topk$(safe_num "$top_k")_rep$(safe_num "$rep")_userkv$(safe_num "$user_kv")"
-                            tsv_file="$OUTDIR/repl_temp_${prompt_stem}_${tag}_${stamp}.tsv"
-                            summary_file="${tsv_file%.tsv}.summary.txt"
+                    for top_p in $TOP_PS; do
+                        for rep in $REPS; do
+                            for user_kv in $USER_KVS; do
+                                tag="fmt${fmt}_repl${repl_fmt}_base$(safe_num "$base")_span$(safe_num "$span")_topk$(safe_num "$top_k")_topp$(safe_num "$top_p")_rep$(safe_num "$rep")_userkv$(safe_num "$user_kv")"
+                                tsv_file="$OUTDIR/repl_temp_${prompt_stem}_${tag}_${stamp}.tsv"
+                                summary_file="${tsv_file%.tsv}.summary.txt"
 
-                            echo "sweeping user_format=$fmt repl_format=$repl_fmt base=$base span=$span top_k=$top_k rep=$rep user_kv=$user_kv cells=$CELLS frag=$FRAG rounds=$ROUNDS -> $tsv_file" >&2
-                            A2A_CELLS="$CELLS" A2A_FRAG="$FRAG" A2A_ROUNDS="$ROUNDS" \
-                            A2A_USER_QTEMP_BASE="$base" A2A_USER_QTEMP_SPAN="$span" \
-                            A2A_USER_TOP_K="$top_k" A2A_USER_REP="$rep" A2A_USER_CTX_FORMAT="$fmt" \
-                            A2A_USER_KV_WEIGHT="$user_kv" A2A_REPL_PROMPT_FORMAT="$repl_fmt" \
-                                bash "$ROOT/tools/repl_question_sweep.sh" "$PROMPTS" > "$tsv_file"
+                                echo "sweeping user_format=$fmt repl_format=$repl_fmt base=$base span=$span top_k=$top_k top_p=$top_p rep=$rep user_kv=$user_kv cells=$CELLS frag=$FRAG rounds=$ROUNDS -> $tsv_file" >&2
+                                A2A_CELLS="$CELLS" A2A_FRAG="$FRAG" A2A_ROUNDS="$ROUNDS" \
+                                A2A_USER_QTEMP_BASE="$base" A2A_USER_QTEMP_SPAN="$span" \
+                                A2A_USER_TOP_K="$top_k" A2A_USER_TOP_P="$top_p" A2A_USER_REP="$rep" A2A_USER_CTX_FORMAT="$fmt" \
+                                A2A_USER_KV_WEIGHT="$user_kv" A2A_REPL_PROMPT_FORMAT="$repl_fmt" \
+                                    bash "$ROOT/tools/repl_question_sweep.sh" "$PROMPTS" > "$tsv_file"
 
-                            bash "$ROOT/tools/repl_tsv_summary.sh" "$tsv_file" > "$summary_file"
-                            compact_line "$fmt" "$repl_fmt" "$base" "$span" "$top_k" "$rep" "$user_kv" "$tsv_file" "$summary_file"
+                                bash "$ROOT/tools/repl_tsv_summary.sh" "$tsv_file" > "$summary_file"
+                                compact_line "$fmt" "$repl_fmt" "$base" "$span" "$top_k" "$top_p" "$rep" "$user_kv" "$tsv_file" "$summary_file"
+                            done
                         done
                     done
                 done

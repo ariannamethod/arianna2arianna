@@ -54,12 +54,15 @@ make fast-x86      # opt-in AVX2/FMA/F16C build on x86_64
 Direct form:
 
 ```sh
-./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" 48 0.8
+./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" 48 0.8 1.0 1.0
 ./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf repl 4 12 1
 ./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" field 4 12 3 0 2 0.30 1 1.3 0 1 2 0
 ./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" restest 4 12 3
 ./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" life 5 12 4
 ```
+
+The direct one-shot arguments after `prompt` are `max_tokens`, `temp`, `top_p`,
+and `rep` (`A2A_TOP_P` / `A2A_REP` can set the last two when omitted).
 
 `repl` keeps the model loaded and reads prompts from stdin until `:q`, `quit`,
 or `exit`. Each line runs a short live field turn with semantic KV neighbour
@@ -104,6 +107,7 @@ yes/no-start, and repeated-word snippets.
 settings and prints a compact table while writing each TSV/summary under
 ignored `runs/`. The normal REPL defaults are `A2A_USER_QTEMP_BASE=0.45`,
 `A2A_USER_QTEMP_SPAN=0.10`, `A2A_USER_TOP_K=40`,
+`A2A_USER_TOP_P=1.00`,
 `A2A_USER_REP=1.30`, `A2A_USER_KV_WEIGHT=0.05`,
 `A2A_USER_CTX_FORMAT=qa`, and
 `A2A_REPL_PROMPT_FORMAT=user_arianna`. `A2A_USER_CTX_FORMAT` controls the
@@ -114,6 +118,7 @@ Override sweep grids with:
 ```sh
 A2A_TEMP_BASES="0.35 0.45 0.55 0.70" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="16 24 40" A2A_TEMP_REPS="1.3 1.6 2.05" make repl-temp-sweep
+A2A_TEMP_BASES="0.90" A2A_TEMP_SPANS="0" A2A_TEMP_TOP_PS="0.92" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPS="1.15" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_USER_KVS="0 0.05 0.10 0.20 0.30" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_FORMATS="field_qa plain_field_qa qa raw" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPL_FORMATS="user_arianna qa" make repl-temp-sweep

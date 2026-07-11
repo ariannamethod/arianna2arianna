@@ -83,6 +83,12 @@ static void chomp_line(char *s) {
 static int ascii_space_char(char c) {
     return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
+static float clamp_float(float v, float lo, float hi) {
+    if (!isfinite(v)) return lo;
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
 static float env_float_clamped(const char *name, float def, float lo, float hi) {
     const char *raw = getenv(name);
     if (!raw || !*raw) return def;
@@ -425,7 +431,7 @@ static int utf8_len1(const char *s) {   /* bytes in the UTF-8 char at s */
 }
 
 typedef struct { char **tokens; int n_tokens; float *scores; smap vocab;
-                 int is_bpe; char **merges; int n_merges; smap merge_rank; smap u2b; char b2u[256][5]; } bpe_tokenizer;
+                 int bos_id; int is_bpe; char **merges; int n_merges; smap merge_rank; smap u2b; char b2u[256][5]; } bpe_tokenizer;
 
 /* GPT-2 byte→unicode: printable bytes map to themselves; others to U+0100+ (byte 32 space → U+0120 Ġ).
  * The reverse (unicode char → byte) goes in u2b for decode. Used by llama-arch bodies with .merges. */
@@ -485,6 +491,7 @@ static bpe_tokenizer *bpe_load(const char *path) {
     int nmg = 0; char **merges = gguf_read_str_array(path, "tokenizer.ggml.merges", &nmg);
     bpe_tokenizer *t = (bpe_tokenizer*)calloc(1, sizeof(*t));
     t->tokens = toks; t->n_tokens = nt; t->scores = scores;
+    t->bos_id = -1;
     smap_init(&t->vocab, nt * 2); for (int i = 0; i < nt; i++) if (toks[i]) smap_put(&t->vocab, toks[i], i);
     if (merges && nmg > 0) {                 /* BPE (GPT-2 byte-level): SmolLM2 / qwen / llama-3 */
         t->is_bpe = 1; t->merges = merges; t->n_merges = nmg;
@@ -535,6 +542,12 @@ static int bpe_encode(const bpe_tokenizer *t, const char *text, int *out, int ca
     }
     free(sym);
     return no;
+}
+static int bpe_encode_prompt(const bpe_tokenizer *t, const char *text, int *out, int cap) {
+    int n = 0;
+    if (t && t->bos_id >= 0 && cap > 0) out[n++] = t->bos_id;
+    if (n >= cap) return n;
+    return n + bpe_encode(t, text, out + n, cap - n);
 }
 
 /* SPM decode: <0xXX> → that byte; ▁ → space; else literal UTF-8 bytes. */
@@ -925,6 +938,7 @@ static int g_answer_form_guard = 0;  /* direct user answers should not turn into
 static float g_user_qtemp_base = 0.45f; /* direct-user bridge sampler: env-tunable for temperature sweeps */
 static float g_user_qtemp_span = 0.10f;
 static int   g_user_qtop_k = 40;
+static float g_user_qtop_p = 1.00f;
 static float g_user_qrep = 1.30f;
 static float g_user_kv_weight = 0.05f;
 static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw */
@@ -936,6 +950,7 @@ static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt 
  * tokens — it can say the same meaning in its OWN words. g_round_tok = the chorus's emitted tokens this round. */
 static int   g_round_tok[1024]; static int g_round_tokn = 0;
 static float g_xrep = 1.3f;     /* >1 = penalise tokens neighbours already said (1 = off) */
+static float g_sampler_top_p = 1.00f; /* per-call nucleus gate; 1.0 preserves top_k path */
 /* δ-life (Game of Life): cells born/die/reproduce by REAL-metric fitness. Increment 0 = MEASURE fitness inputs
  * (theme/distinct/ent per cell) to FIELDLOG, act on nothing → calibrate thresholds before the population breathes. */
 static float g_cell_ent[8];     /* per-cell raw entropy this round (fitness input) */
@@ -945,6 +960,7 @@ static void load_user_bridge_sampling_env(void) {
     g_user_qtemp_base = env_float_clamped("A2A_USER_QTEMP_BASE", 0.45f, 0.05f, 2.00f);
     g_user_qtemp_span = env_float_clamped("A2A_USER_QTEMP_SPAN", 0.10f, -1.50f, 1.50f);
     g_user_qtop_k = env_int_clamped("A2A_USER_TOP_K", 40, 0, 512);
+    g_user_qtop_p = env_float_clamped("A2A_USER_TOP_P", 1.00f, 0.05f, 1.00f);
     g_user_qrep = env_float_clamped("A2A_USER_REP", 1.30f, 1.00f, 5.00f);
     g_user_kv_weight = env_float_clamped("A2A_USER_KV_WEIGHT", 0.05f, 0.00f, 2.00f);
     const char *fmt = getenv("A2A_USER_CTX_FORMAT");
@@ -1094,9 +1110,22 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
 }
 
 static int argmax(const float *x, int n) { int b = 0; for (int i = 1; i < n; i++) if (x[i] > x[b]) b = i; return b; }
-static int sample(float *x, int n, float temp) {
+static int sample_top_p(float *x, int n, float top_p);
+static float g_direct_top_p = 1.00f;
+static float g_direct_rep = 1.00f;
+static int sample(float *x, int n, float temp, const int *hist, int hlen) {
+    if (g_direct_rep > 1.0f && hist) {
+        for (int i = 0; i < hlen; i++) {
+            int id = hist[i];
+            if (id >= 0 && id < n) x[id] = x[id] > 0 ? x[id] / g_direct_rep : x[id] * g_direct_rep;
+        }
+    }
     if (temp <= 0) return argmax(x, n);
     for (int i = 0; i < n; i++) x[i] /= temp;
+    if (g_direct_top_p < 1.0f) {
+        int id = sample_top_p(x, n, g_direct_top_p);
+        if (id >= 0) return id;
+    }
     softmax(x, n);
     float r = (float)((double)rand()/RAND_MAX), c = 0; for (int i = 0; i < n; i++) { c += x[i]; if (c >= r) return i; } return n - 1;
 }
@@ -1109,12 +1138,63 @@ static double now_ms(void) { struct timeval tv; gettimeofday(&tv, NULL); return 
  * NEXT: dynamic count (coherence/prophecy-debt → collapse to 1 / bloom), doe-δ experts, resonance-slice. */
 
 static int cmp_desc(const void *a, const void *b) { float x = *(const float*)a, y = *(const float*)b; return (x < y) - (x > y); }
+typedef struct { int id; float logit, prob; } sample_item_t;
+static int cmp_sample_item_desc(const void *a, const void *b) {
+    const sample_item_t *x = (const sample_item_t*)a, *y = (const sample_item_t*)b;
+    return (x->logit < y->logit) - (x->logit > y->logit);
+}
 
-/* rep-penalty (llama-style, pre-softmax over the cell's own history) + top_k + temperature multinomial. */
+static int sample_top_p(float *x, int n, float top_p) {
+    if (top_p <= 0.0f || top_p >= 1.0f) return -1;
+    sample_item_t *items = (sample_item_t*)malloc((size_t)n * sizeof(sample_item_t));
+    if (!items) return -1;
+    float mx = x[0];
+    for (int i = 1; i < n; i++) if (x[i] > mx) mx = x[i];
+    double total = 0.0;
+    for (int i = 0; i < n; i++) {
+        float p = expf(x[i] - mx);
+        if (!isfinite(p)) p = 0.0f;
+        items[i].id = i;
+        items[i].logit = x[i];
+        items[i].prob = p;
+        total += p;
+    }
+    if (total <= 0.0 || !isfinite(total)) {
+        free(items);
+        return argmax(x, n);
+    }
+    qsort(items, n, sizeof(sample_item_t), cmp_sample_item_desc);
+    double cutoff = total * (double)top_p, cum = 0.0;
+    int keep = 0;
+    while (keep < n) {
+        cum += items[keep].prob;
+        keep++;
+        if (cum >= cutoff) break;
+    }
+    if (keep < 1) keep = 1;
+    double r = ((double)rand() / (double)RAND_MAX) * cum, c = 0.0;
+    for (int i = 0; i < keep; i++) {
+        c += items[i].prob;
+        if (c >= r) {
+            int id = items[i].id;
+            free(items);
+            return id;
+        }
+    }
+    int id = items[keep - 1].id;
+    free(items);
+    return id;
+}
+
+/* rep-penalty (llama-style, pre-softmax over the cell's own history) + top_p/top_k + temperature multinomial. */
 static int sample2(float *x, int n, float temp, int top_k, float rep, const int *hist, int hlen) {
     if (rep > 1.0f) for (int i = 0; i < hlen; i++) { int id = hist[i]; if (id >= 0 && id < n) x[id] = x[id] > 0 ? x[id]/rep : x[id]*rep; }
     if (temp <= 0) return argmax(x, n);
     for (int i = 0; i < n; i++) x[i] /= temp;
+    if (g_sampler_top_p < 1.0f) {
+        int id = sample_top_p(x, n, g_sampler_top_p);
+        if (id >= 0) return id;
+    }
     if (top_k > 0 && top_k < n) {
         float *tmp = (float*)malloc((size_t)n * sizeof(float)); memcpy(tmp, x, (size_t)n * sizeof(float));
         qsort(tmp, n, sizeof(float), cmp_desc); float thr = tmp[top_k - 1]; free(tmp);
@@ -1740,7 +1820,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             int qctx_ids[512], qids[128], qn = 0;
             qfrag_off[0] = '\0';
             build_user_kv_prompt(uask, sizeof(uask), g_user_q);
-            int uask_ids[512], uask_np = bpe_encode(tok, uask, uask_ids, max_seq - 1);
+            int uask_ids[512], uask_np = bpe_encode_prompt(tok, uask, uask_ids, max_seq - 1);
             kv_cache *user_kv = NULL; int user_klen = 0;
             int qtok_before = g_round_tokn, save_field_on = g_field_on;
             int save_form_guard = g_answer_form_guard;
@@ -1751,13 +1831,15 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                        seed_base ^ 0x51a7e2u, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, &user_kv, &user_klen);
             g_round_tokn = qtok_before;
             build_user_answer_prompt(qctx, sizeof(qctx), this_chorus, g_user_q);
-            int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
+            int qnp = bpe_encode_prompt(tok, qctx, qctx_ids, max_seq - 8);
             float qtemp = user_bridge_temp_for_cell(tcell, n_cells);
             int qfrag_n = nfrag * 2; if (qfrag_n < 12) qfrag_n = 12; if (qfrag_n > 24) qfrag_n = 24;
             unsigned qseed = seed_base ^ 0xc0ffeeu ^ (unsigned)(tcell * 7919 + r * 65537);
             int save_clean_start = g_clean_answer_start;
+            float save_sampler_top_p = g_sampler_top_p;
             g_clean_answer_start = 1;
             g_answer_form_guard = 1;
+            g_sampler_top_p = g_user_qtop_p;
             float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                         qseed, eos, max_seq, qfrag_off, sizeof(qfrag_off), 0, NULL, NULL, NULL, NULL, NULL);
             g_round_tokn = qtok_before;
@@ -1765,6 +1847,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             g_clean_answer_start = save_clean_start;
+            g_sampler_top_p = save_sampler_top_p;
             g_answer_form_guard = save_form_guard;
             g_nbr = save_nbr; g_nbr_len = save_nbr_len; g_nbr_shuf = save_nbr_shuf; g_field_on = save_field_on; g_xcell = save_xcell;
             clean_answer_fragment(qfrag);
@@ -1921,8 +2004,8 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     char line[2048], trajectory[4096], prompt[8192], chorus[4096];
     trajectory[0] = 0;
 
-    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userRep=%.2f, userKV=%.2f, userFmt=%s, replFmt=%s) ===\n",
-           n_cells, n_rounds, g_user_qtemp_base, g_user_qtemp_span, g_user_qtop_k, g_user_qrep,
+    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userP=%.2f, userRep=%.2f, userKV=%.2f, userFmt=%s, replFmt=%s) ===\n",
+           n_cells, n_rounds, g_user_qtemp_base, g_user_qtemp_span, g_user_qtop_k, g_user_qtop_p, g_user_qrep,
            g_user_kv_weight, user_ctx_format_name(), repl_prompt_format_name());
     printf("type :q, :quit, exit, or quit to stop\n");
 
@@ -2052,7 +2135,7 @@ static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *pro
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        printf("usage: %s <model.gguf> [prompt] [max_tokens] [temp]\n", argv[0]);
+        printf("usage: %s <model.gguf> [prompt] [max_tokens] [temp] [top_p] [rep]\n", argv[0]);
         printf("       %s <model.gguf> repl [cells] [frag] [rounds]\n", argv[0]);
         printf("       %s <model.gguf> <prompt> field [cells] [frag] [rounds] [alpha] [leap] [xcell] [chorus] [xrep] [life] [kvshuf] [qloop] [kvpos]\n", argv[0]);
         printf("       %s <model.gguf> <prompt> restest [cells] [frag] [rounds]\n", argv[0]);
@@ -2062,6 +2145,8 @@ int main(int argc, char **argv) {
     const char *prompt = argc > 2 ? argv[2] : "What is resonance?";
     int max_tokens = argc > 3 ? atoi(argv[3]) : 48;
     float temp = argc > 4 ? (float)atof(argv[4]) : 0.8f;
+    g_direct_top_p = argc > 5 ? clamp_float((float)atof(argv[5]), 0.05f, 1.00f) : env_float_clamped("A2A_TOP_P", 1.00f, 0.05f, 1.00f);
+    g_direct_rep = argc > 6 ? clamp_float((float)atof(argv[6]), 1.00f, 5.00f) : env_float_clamped("A2A_REP", 1.00f, 1.00f, 5.00f);
     srand(42);
 
     double t0 = now_ms();
@@ -2069,6 +2154,7 @@ int main(int argc, char **argv) {
     model_t *m = model_load(gf); if (!m) return 1;
     bpe_tokenizer *tok = bpe_load(argv[1]); if (!tok) { fprintf(stderr, "bpe_load failed\n"); return 1; }
     int eos = -1; const gguf_kv *e = gguf_get_kv(gf, "tokenizer.ggml.eos_token_id"); if (e) eos = (int)e->val.u32;
+    const gguf_kv *b = gguf_get_kv(gf, "tokenizer.ggml.bos_token_id"); if (b) tok->bos_id = (int)b->val.u32;
     printf("loaded in %.0f ms (vocab=%d eos=%d) -- arianna.q heart, single file, no -lnotorch\n", now_ms() - t0, bpe_n_vocab(tok), eos);
 
     /* interactive field loop: ./arianna-q <gguf> repl [n_cells] [nfrag] [n_rounds] */
@@ -2127,16 +2213,20 @@ int main(int argc, char **argv) {
     int max_seq = 512;
     kv_cache *kv = kv_new(m->n_layers, max_seq, m->kv_dim);
     float *logits = calloc(m->vocab, sizeof(float));
-    int ids[512]; int n = bpe_encode(tok, prompt, ids, max_seq - max_tokens - 1);
-    printf("\nprompt: \"%s\" (%d tokens, temp=%.2f)\n---\n%s", prompt, n, temp, prompt); fflush(stdout);
+    int ids[512]; int n = bpe_encode_prompt(tok, prompt, ids, max_seq - max_tokens - 1);
+    printf("\nprompt: \"%s\" (%d tokens, temp=%.2f, top_p=%.2f, rep=%.2f)\n---\n%s",
+           prompt, n, temp, g_direct_top_p, g_direct_rep, prompt); fflush(stdout);
 
     double g0 = now_ms();
     for (int i = 0; i < n; i++) forward(m, kv, ids[i], i, logits);
     double prefill = now_ms() - g0;
     int gen = 0; char buf[256];
+    int recent[64]; int recent_n = 0;
     for (int step = 0; step < max_tokens; step++) {
-        int next = sample(logits, m->vocab, temp);
+        int next = sample(logits, m->vocab, temp, recent, recent_n);
         if (next == eos) break;
+        if (recent_n < (int)(sizeof(recent) / sizeof(recent[0]))) recent[recent_n++] = next;
+        else { memmove(recent, recent + 1, sizeof(recent) - sizeof(recent[0])); recent[recent_n - 1] = next; }
         bpe_decode_token(tok, next, buf, sizeof(buf)); printf("%s", buf); fflush(stdout); gen++;
         int pos = n + step; if (pos >= max_seq - 1) break;
         forward(m, kv, next, pos, logits);
