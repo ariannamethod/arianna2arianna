@@ -7,7 +7,7 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTDIR="${A2A_RUN_DIR:-$ROOT/runs}"
 PROMPTS="${1:-${A2A_RECIPIENT_PROMPTS:-$ROOT/prompts/recipient_lock.txt}}"
-MODEL="${A2A_MODEL:-$ROOT/weights/nano_arianna_resft_2026_07_09_f16.gguf}"
+MODEL="${A2A_MODEL:-$ROOT/weights/nano_arianna_f16.gguf}"
 
 usage() {
     cat <<EOF

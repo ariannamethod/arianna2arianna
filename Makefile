@@ -26,15 +26,17 @@ endif
 BIN    := arianna2arianna
 SRC    := arianna2arianna.c
 
-HF_BASE = https://huggingface.co/ataeff/arianna/resolve/main
+HF_BASE = https://huggingface.co/ataeff/arianna2arianna/resolve/main
 WEIGHTS = weights
-MODEL_F16 = $(WEIGHTS)/nano_arianna_resft_2026_07_09_f16.gguf
-MODEL_Q8  = $(WEIGHTS)/nano_arianna_resft_2026_07_09_q8_0.gguf
-MODEL_Q4  = $(WEIGHTS)/nano_arianna_resft_2026_07_09_q4_k_m.gguf
+MODEL_F16 = $(WEIGHTS)/nano_arianna_f16.gguf
+MODEL_Q8  = $(WEIGHTS)/nano_arianna_q8_0.gguf
+MODEL_Q4  = $(WEIGHTS)/nano_arianna_q4_k_m.gguf
 MODEL  ?= $(MODEL_F16)
 PROMPT ?= What is resonance?
-TOKENS ?= 48
-TEMP   ?= 0.8
+TOKENS ?= 32
+TEMP   ?= 0.9
+TOP_P  ?= 0.92
+REP    ?= 1.15
 CELLS  ?= 4
 FRAG   ?= 12
 ROUNDS ?= 3
@@ -61,11 +63,13 @@ $(MODEL_F16):
 
 $(MODEL_Q8):
 	@mkdir -p $(WEIGHTS)
-	curl -fL -o $@ $(HF_BASE)/nano_arianna_q8_0.gguf
+	@echo "q8 is not shipped for the 2026-07-11 nano body; set MODEL_Q8=/path/to/local.gguf if you quantize it." >&2
+	@exit 1
 
 $(MODEL_Q4):
 	@mkdir -p $(WEIGHTS)
-	curl -fL -o $@ $(HF_BASE)/nano_arianna_q4_k_m.gguf
+	@echo "q4_k_m is not shipped for the 2026-07-11 nano body; set MODEL_Q4=/path/to/local.gguf if you quantize it." >&2
+	@exit 1
 
 weights: $(MODEL_F16)
 weights-q8: $(MODEL_Q8)
@@ -78,13 +82,13 @@ fast-x86:
 	$(MAKE) FAST_X86=1 clean $(BIN)
 
 run: $(BIN) $(MODEL)
-	./$(BIN) "$(MODEL)" "$(PROMPT)" $(TOKENS) $(TEMP)
+	./$(BIN) "$(MODEL)" "$(PROMPT)" $(TOKENS) $(TEMP) $(TOP_P) $(REP)
 
 run-q8: $(BIN) $(MODEL_Q8)
-	./$(BIN) "$(MODEL_Q8)" "$(PROMPT)" $(TOKENS) $(TEMP)
+	./$(BIN) "$(MODEL_Q8)" "$(PROMPT)" $(TOKENS) $(TEMP) $(TOP_P) $(REP)
 
 run-q4: $(BIN) $(MODEL_Q4)
-	./$(BIN) "$(MODEL_Q4)" "$(PROMPT)" $(TOKENS) $(TEMP)
+	./$(BIN) "$(MODEL_Q4)" "$(PROMPT)" $(TOKENS) $(TEMP) $(TOP_P) $(REP)
 
 repl: $(BIN) $(MODEL)
 	./$(BIN) "$(MODEL)" repl $(CELLS) $(FRAG) $(ROUNDS)
@@ -128,4 +132,4 @@ test: $(BIN)
 	bash tests/run.sh
 
 bench: $(BIN) $(MODEL)
-	./$(BIN) "$(MODEL)" "What is resonance?" 24 0.8
+	./$(BIN) "$(MODEL)" "What is resonance?" 24 $(TEMP) $(TOP_P) $(REP)

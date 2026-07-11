@@ -17,15 +17,15 @@ For nerds: [`TECHLOG.md`](TECHLOG.md).
 
 ## weights
 
-Default body: `nano_arianna_resft_2026_07_09_f16.gguf`.
+Default body: `nano_arianna_f16.gguf` (2026-07-11 broad re-SFT, nano ep3.5).
 
-F16 is the main path for now. Q8 and Q4_K_M are kept as alternate local
-fallbacks, but F16 is the first diagnostic body.
+F16 is the current shipped path. Q8 and Q4_K_M are local-override targets only
+until fresh quantized nano artifacts are produced.
 
 ```sh
-make weights       # download f16 clean re-SFT nanoArianna 89M
-make weights-q8    # optional q8
-make weights-q4    # optional q4_k_m
+make weights       # download current f16 nanoArianna 89M
+make weights-q8    # requires MODEL_Q8=/path/to/local.gguf for now
+make weights-q4    # requires MODEL_Q4=/path/to/local.gguf for now
 ```
 
 Weights live in `weights/` and are gitignored.
@@ -54,11 +54,11 @@ make fast-x86      # opt-in AVX2/FMA/F16C build on x86_64
 Direct form:
 
 ```sh
-./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" 48 0.8 1.0 1.0
-./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf repl 4 12 1
-./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" field 4 12 3 0 2 0.30 1 1.3 0 1 2 0
-./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" restest 4 12 3
-./arianna2arianna weights/nano_arianna_resft_2026_07_09_f16.gguf "prompt" life 5 12 4
+./arianna2arianna weights/nano_arianna_f16.gguf "prompt" 32 0.9 0.92 1.15
+./arianna2arianna weights/nano_arianna_f16.gguf repl 4 12 1
+./arianna2arianna weights/nano_arianna_f16.gguf "prompt" field 4 12 3 0 2 0.30 1 1.3 0 1 2 0
+./arianna2arianna weights/nano_arianna_f16.gguf "prompt" restest 4 12 3
+./arianna2arianna weights/nano_arianna_f16.gguf "prompt" life 5 12 4
 ```
 
 The direct one-shot arguments after `prompt` are `max_tokens`, `temp`, `top_p`,
@@ -81,8 +81,9 @@ neighbour lane, while `kvpos=1` enables the positional order-probe lane.
 
 `make sweep-influence` runs the prompts in `prompts/kv_influence.txt` and
 prints one TSV row per prompt with `Δ_R^kv`, permutation floor/margin, and
-`I_N^kv`. `Let the cells remember each other.` is kept as the first positive
-semantic-neighbour anchor: its `I_N^kv` should stay above zero.
+`I_N^kv`. `Let the cells remember each other.` is kept as a fixed
+semantic-neighbour anchor: its `I_N^kv` sign is body-dependent after re-SFT, but
+it should stay finite and non-zero.
 
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average

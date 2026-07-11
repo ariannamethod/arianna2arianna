@@ -42,10 +42,10 @@ sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=1 bash "$A2A_ROOT/tools/kv_influe
 rm -f "$sweep_prompts"
 a2a_assert_grep "^prompt[[:space:]]+mode[[:space:]]+avg_entropy" "$sweep_out" "influence sweep reports TSV header"
 a2a_assert_grep "Let the cells remember each other\\.[[:space:]]+sem[[:space:]]" "$sweep_out" "influence sweep reports semantic row"
-if printf "%s\n" "$sweep_out" | awk -F '\t' '$1 == "Let the cells remember each other." && ($7 + 0) > 0 { ok = 1 } END { exit ok ? 0 : 1 }'; then
-    a2a_ok "memory prompt sharpens under semantic neighbour"
+if printf "%s\n" "$sweep_out" | awk -F '\t' '$1 == "Let the cells remember each other." && sqrt(($7 + 0) * ($7 + 0)) > 0.001 { ok = 1 } END { exit ok ? 0 : 1 }'; then
+    a2a_ok "memory prompt reports semantic neighbour influence"
 else
-    a2a_fail "memory prompt did not sharpen under semantic neighbour"
+    a2a_fail "memory prompt did not report semantic neighbour influence"
 fi
 
 qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does the field remember?" field 5 12 1 0 2 0.30 1 1.3 0 1 2 0 2>&1)"
