@@ -101,7 +101,8 @@ TSVs use the extended shape. With current TSVs it also reports
 `answer_kv_changed`, the count of direct user answers whose text differs from
 the no-user-KV shadow answer, plus diagnostic `answer_quality` flags for short,
 question-like, label-artifact, notation-artifact, morphology/glue-artifact,
-false-familiarity recipient-artifact, yes/no-start, and repeated-word snippets.
+false-familiarity recipient-artifact, terminal tail-artifact, yes/no-start, and
+repeated-word snippets.
 
 `make repl-temp-sweep` runs the same direct-user bridge metrics across sampler
 settings and prints a compact table while writing each TSV/summary under

@@ -1599,3 +1599,44 @@ collapses to a too-short salvaged prefix (`here. In a`). The remaining
 false-familiarity flavour (`you have been`, `I know you`, `your own field`).
 That is not a temperature bug. Next layer should improve candidate length /
 semantic scoring and recipient-gate selection, not flip prompt format again.
+
+## 2026-07-14 - Terminal-tail scoring pass
+
+### Context
+
+After candidate scoring removed the obvious morph junk, manual reading still
+found salvaged fragments that were syntactically alive but ended in incomplete
+function-word tails, e.g. `here. In a`. Those tails were not distinguished from
+other quality failures, so the scorer could choose a short salvaged prefix over
+a worse morph candidate without making the residual failure visible.
+
+### Change
+
+- Added a terminal-tail detector to `answer_quality_score`: dangling open
+  punctuation and terminal function words (`a`, `in`, `with`, `that`, etc.)
+  are penalized during candidate selection.
+- Let the direct-user answer path try two deterministic colder alternatives
+  before selecting the lowest-score candidate.
+- Added `tail_artifact` to `tools/repl_tsv_summary.sh`, README, and smoke-test
+  expectations so summary output separates tail cuts from morph and recipient
+  artifacts.
+
+### Evidence
+
+```text
+make test
+=== summary: 80 passed, 0 failed, 1 skipped ===
+
+make repl-eval
+results: runs/repl_eval_repl_probe_regression_20260714_044635.tsv
+I_U^kv: avg +0.492, pos 24, neg 6, zero 0, nan 0
+answer_bad_start: 0/30
+answer_quality: any 5/30, short 0, question_like 0, label_artifact 1, notation_artifact 1, morph_artifact 1, recipient_artifact 0, tail_artifact 3, yes_no_start 0, repetition 1
+answer_quality_no_user_kv: any 15/29, short 1, question_like 0, label_artifact 0, notation_artifact 0, morph_artifact 3, recipient_artifact 2, tail_artifact 13, yes_no_start 0, repetition 0
+```
+
+This is not a clean finish. It is a sharper diagnostic surface and a better
+candidate policy for the current body: recipient leakage is suppressed in the
+direct answer line, but three tail cuts and one morph artifact remain. Next
+step is semantic candidate scoring over the answer body, not adding more
+single-token blacklists.

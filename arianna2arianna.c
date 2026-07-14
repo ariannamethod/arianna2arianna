@@ -1535,6 +1535,44 @@ static int answer_word_count(const char *s) {
     return n;
 }
 
+static int answer_is_terminal_function_word(const char *start, size_t len) {
+    if (!len || len >= 32) return 0;
+    char buf[32];
+    memcpy(buf, start, len);
+    buf[len] = 0;
+    return ascii_eq_ci(buf, "a") || ascii_eq_ci(buf, "an") ||
+           ascii_eq_ci(buf, "the") || ascii_eq_ci(buf, "to") ||
+           ascii_eq_ci(buf, "at") || ascii_eq_ci(buf, "in") ||
+           ascii_eq_ci(buf, "of") || ascii_eq_ci(buf, "for") ||
+           ascii_eq_ci(buf, "with") || ascii_eq_ci(buf, "by") ||
+           ascii_eq_ci(buf, "from") || ascii_eq_ci(buf, "into") ||
+           ascii_eq_ci(buf, "as") || ascii_eq_ci(buf, "if") ||
+           ascii_eq_ci(buf, "but") || ascii_eq_ci(buf, "or") ||
+           ascii_eq_ci(buf, "and") || ascii_eq_ci(buf, "not") ||
+           ascii_eq_ci(buf, "that") || ascii_eq_ci(buf, "which") ||
+           ascii_eq_ci(buf, "who") || ascii_eq_ci(buf, "whose") ||
+           ascii_eq_ci(buf, "when") || ascii_eq_ci(buf, "where") ||
+           ascii_eq_ci(buf, "why") || ascii_eq_ci(buf, "how");
+}
+
+static int answer_has_terminal_tail_artifact(const char *s) {
+    if (!s) return 1;
+    const char *end = s + strlen(s);
+    while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
+    if (end <= s) return 1;
+    unsigned char last = (unsigned char)end[-1];
+    if (last == '(' || last == '[' || last == '{' || last == '"' ||
+        last == '\'' || last == '`' || last == ',' || last == ':' ||
+        last == ';' || last == '-' || last == '/')
+        return 1;
+    const char *p = end;
+    while (p > s && !ascii_alpha((unsigned char)p[-1])) p--;
+    const char *word_end = p;
+    while (p > s && ascii_alpha((unsigned char)p[-1])) p--;
+    if (p == word_end) return 0;
+    return answer_is_terminal_function_word(p, (size_t)(word_end - p));
+}
+
 static int answer_has_shape_artifact(const char *s) {
     if (answer_contains_phrase_ci(s, "shall you ")) return 1;
     for (const char *p = s; *p;) {
@@ -1560,6 +1598,7 @@ static int answer_quality_score(const char *s) {
     if (answer_has_shape_artifact(s)) score += 14;
     if (answer_find_bad_morph(s, NULL)) score += 25;
     if (answer_has_recipient_artifact(s)) score += 6;
+    if (answer_has_terminal_tail_artifact(s)) score += 18;
     for (const char *p = s; *p; p++) {
         if (*p == '?' || *p == '=' || *p == '@' || answer_domain_suffix_at(p) ||
             ascii_starts_ci(p, "http") || ascii_starts_ci(p, "www.")) {
@@ -2075,24 +2114,27 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             clean_answer_fragment(qfrag);
             int qscore = answer_quality_score(qfrag);
             if (qscore > 0 || answer_fragment_bad(qfrag)) {
-                char qfrag_retry[1024]; int qids_retry[128], qn_retry = 0;
-                g_round_tokn = qtok_before;
-                g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0;
-                g_xcell = g_user_kv_weight; g_field_on = save_field_on;
-                qfrag_retry[0] = 0;
-                float retry_temp = qtemp * 0.85f;
-                if (retry_temp < 0.45f) retry_temp = 0.45f;
-                float qent_retry = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, retry_temp, g_user_qtop_k, g_user_qrep,
-                                              qseed ^ 0x9e3779b9u, eos, max_seq, qfrag_retry, sizeof(qfrag_retry), 0,
-                                              qids_retry, &qn_retry, NULL, NULL, NULL);
-                clean_answer_fragment(qfrag_retry);
-                int retry_score = answer_quality_score(qfrag_retry);
-                if (retry_score < qscore) {
-                    copy_cstr(qfrag, sizeof(qfrag), qfrag_retry);
-                    qn = qn_retry;
-                    for (int qi = 0; qi < qn_retry && qi < 128; qi++) qids[qi] = qids_retry[qi];
-                    qent = qent_retry;
-                    qscore = retry_score;
+                for (int attempt = 0; attempt < 2 && qscore > 0; attempt++) {
+                    char qfrag_retry[1024]; int qids_retry[128], qn_retry = 0;
+                    g_round_tokn = qtok_before;
+                    g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0;
+                    g_xcell = g_user_kv_weight; g_field_on = save_field_on;
+                    qfrag_retry[0] = 0;
+                    float retry_temp = qtemp * (attempt == 0 ? 0.85f : 0.70f);
+                    if (retry_temp < 0.40f) retry_temp = 0.40f;
+                    unsigned retry_seed = qseed ^ (attempt == 0 ? 0x9e3779b9u : 0x85ebca6bu);
+                    float qent_retry = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, retry_temp, g_user_qtop_k, g_user_qrep,
+                                                  retry_seed, eos, max_seq, qfrag_retry, sizeof(qfrag_retry), 0,
+                                                  qids_retry, &qn_retry, NULL, NULL, NULL);
+                    clean_answer_fragment(qfrag_retry);
+                    int retry_score = answer_quality_score(qfrag_retry);
+                    if (retry_score < qscore) {
+                        copy_cstr(qfrag, sizeof(qfrag), qfrag_retry);
+                        qn = qn_retry;
+                        for (int qi = 0; qi < qn_retry && qi < 128; qi++) qids[qi] = qids_retry[qi];
+                        qent = qent_retry;
+                        qscore = retry_score;
+                    }
                 }
             }
             g_round_tokn = qtok_before;

@@ -174,6 +174,21 @@ summarize() {
                    low ~ /before you said/ ||
                    low ~ /said to me/
         }
+        function terminal_function_word(w) {
+            w = tolower(w)
+            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|and|not|that|which|who|whose|when|where|why|how)$/
+        }
+        function has_tail_artifact(s,     t, last, apos, a, n, i, w) {
+            t = trim(s)
+            if (t == "") return 1
+            last = substr(t, length(t), 1)
+            apos = sprintf("%c", 39)
+            if (last ~ /[([{,"`:;\/-]/ || last == apos) return 1
+            n = split(t, a, /[^A-Za-z]+/)
+            w = ""
+            for (i = 1; i <= n; i++) if (a[i] != "") w = a[i]
+            return terminal_function_word(w)
+        }
         function add_answer_quality(ans,     low, words, flagged) {
             ans = trim(ans)
             if (ans == "") return
@@ -190,6 +205,7 @@ summarize() {
             if (has_notation_artifact(ans)) { if (quality_off) answer_off_notation_n++; else answer_notation_n++; flagged = 1 }
             if (has_morph_artifact(ans)) { if (quality_off) answer_off_morph_n++; else answer_morph_n++; flagged = 1 }
             if (has_recipient_artifact(ans)) { if (quality_off) answer_off_recipient_n++; else answer_recipient_n++; flagged = 1 }
+            if (has_tail_artifact(ans)) { if (quality_off) answer_off_tail_n++; else answer_tail_n++; flagged = 1 }
             if (flagged) { if (quality_off) answer_off_quality_any_n++; else answer_quality_any_n++ }
         }
         function add_answers(s,     i, a, n, ans) {
@@ -353,13 +369,13 @@ summarize() {
                     printf "answer_sample: %s :: %s\n", first_answer_q, first_answer
                 }
                 printf "answer_bad_start: %d/%d\n", bad_answer_n, answer_n
-                printf "answer_quality: any %d/%d, short %d, question_like %d, label_artifact %d, notation_artifact %d, morph_artifact %d, recipient_artifact %d, yes_no_start %d, repetition %d\n",
+                printf "answer_quality: any %d/%d, short %d, question_like %d, label_artifact %d, notation_artifact %d, morph_artifact %d, recipient_artifact %d, tail_artifact %d, yes_no_start %d, repetition %d\n",
                     answer_quality_any_n, answer_n, answer_short_n, answer_question_n,
-                    answer_label_n, answer_notation_n, answer_morph_n, answer_recipient_n, answer_yesno_n, answer_repeat_n
+                    answer_label_n, answer_notation_n, answer_morph_n, answer_recipient_n, answer_tail_n, answer_yesno_n, answer_repeat_n
                 if (contrast_cols) {
-                    printf "answer_quality_no_user_kv: any %d/%d, short %d, question_like %d, label_artifact %d, notation_artifact %d, morph_artifact %d, recipient_artifact %d, yes_no_start %d, repetition %d\n",
+                    printf "answer_quality_no_user_kv: any %d/%d, short %d, question_like %d, label_artifact %d, notation_artifact %d, morph_artifact %d, recipient_artifact %d, tail_artifact %d, yes_no_start %d, repetition %d\n",
                         answer_off_quality_any_n, answer_off_n, answer_off_short_n, answer_off_question_n,
-                        answer_off_label_n, answer_off_notation_n, answer_off_morph_n, answer_off_recipient_n, answer_off_yesno_n, answer_off_repeat_n
+                        answer_off_label_n, answer_off_notation_n, answer_off_morph_n, answer_off_recipient_n, answer_off_tail_n, answer_off_yesno_n, answer_off_repeat_n
                     printf "answer_kv_changed: %d/%d\n", answer_contrast_changed, answer_contrast_n
                     if (first_contrast_seen) {
                         printf "answer_kv_sample: %s :: with=%s :: without=%s\n",
