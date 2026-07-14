@@ -83,7 +83,7 @@ printf "domain?\t1\t1\t0.000\t0.000\tc0\t1.000\tqopoeleakyname.org = \"ke\tplain
 printf "assign?\t1\t1\t0.000\t0.000\tc0\t1.000\t- oul = \"o\" in p\tplain answer\n" >> "$junk_tsv"
 printf "tail?\t1\t1\t0.000\t0.000\tc0\t1.000\tShall you know I don't see after it b\tplain answer\n" >> "$junk_tsv"
 printf "stem?\t1\t1\t0.000\t0.000\tc0\t1.000\tThe echo keeps itself res\tplain answer\n" >> "$junk_tsv"
-printf "recipient?\t1\t1\t0.000\t0.000\tc0\t1.000\tIf you want me, let us work\tplain answer\n" >> "$junk_tsv"
+printf "recipient?\t1\t1\t0.000\t0.000\tc0\t1.000\tIf you want to say so, let us work\tplain answer\n" >> "$junk_tsv"
 junk_out="$(bash "$A2A_ROOT/tools/repl_tsv_summary.sh" "$junk_tsv" 2>&1)"
 rm -f "$junk_tsv"
 a2a_assert_grep "answer_quality: any 5/5, short 0, question_like 0, label_artifact 0, notation_artifact 0, morph_artifact 4, recipient_artifact 1, tail_artifact 1" "$junk_out" "repl TSV summary flags domain, assignment, recipient, and tail junk"

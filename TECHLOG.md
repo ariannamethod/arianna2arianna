@@ -1737,3 +1737,51 @@ The layer is a net improvement, not a finish line. It removes the measured
 morph artifacts and halves tail failures, but four recipient artifacts and
 three tails remain. Next work should stop adding surface lists and move to a
 real answer-body semantic scorer or a broader candidate set before selection.
+
+## 2026-07-14 - Broader answer candidate set
+
+### Context
+
+The first semantic tie-break attempt, by itself, produced a zero-delta eval:
+the existing lexical score had already chosen the same three candidates. The
+missing piece was not only a better scorer, but more candidate diversity under
+the same prompt/user-KV route.
+
+### Change
+
+- Added an embedding-centroid answer scorer as a small tie-break on top of the
+  lexical `answer_candidate_score`.
+- Expanded the direct-user retry set from two colder retries to four
+  deterministic variants: colder, colder again, near-base with narrower top-k,
+  and cold with still narrower top-k.
+- Kept prompt format, answer budget, user-KV weight, and TSV schema unchanged.
+- Added `if you want to say...` to the concrete false-recipient detector after
+  manual reading of the first broadened-candidate run.
+
+### Evidence
+
+```text
+make test
+=== summary: 82 passed, 0 failed, 1 skipped ===
+
+A2A_BASELINE_TSV=runs/repl_eval_repl_probe_regression_20260714_051649.tsv make repl-eval
+results: runs/repl_eval_repl_probe_regression_20260714_055810.tsv
+I_U^kv: avg +0.477, pos 24, neg 6, zero 0, nan 0
+answer_bad_start: 0/30
+answer_quality: any 4/30, short 0, question_like 0, label_artifact 1,
+  notation_artifact 0, morph_artifact 0, recipient_artifact 1,
+  tail_artifact 2, yes_no_start 0, repetition 0
+
+baseline:
+I_U^kv: avg +0.440, pos 23, neg 7, zero 0, nan 0
+answer_quality: any 9/30, short 0, question_like 0, label_artifact 2,
+  notation_artifact 0, morph_artifact 0, recipient_artifact 4,
+  tail_artifact 3, yes_no_start 0, repetition 0
+```
+
+Manual reading confirms the metric: several prior fragments became direct
+answers about debt, organisms, hidden state, and route/no-destination. The
+remaining failures are now mostly two terminal tails and one recipient leak
+(`you cannot... your`). Next layer should either add a length/closure reward to
+selection or make the answer generator stop on sentence boundaries instead of
+fixed token count.

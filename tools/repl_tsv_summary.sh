@@ -176,6 +176,7 @@ summarize() {
                    low ~ /you cannot/ ||
                    low ~ /you must/ ||
                    low ~ /if you want me/ ||
+                   low ~ /if you want to say/ ||
                    low ~ /by you or/ ||
                    low ~ /i know you/ ||
                    low ~ /i see you/ ||

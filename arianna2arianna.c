@@ -1532,6 +1532,7 @@ static int answer_has_recipient_artifact(const char *s) {
            answer_contains_phrase_ci(s, "you cannot") ||
            answer_contains_phrase_ci(s, "you must") ||
            answer_contains_phrase_ci(s, "if you want me") ||
+           answer_contains_phrase_ci(s, "if you want to say") ||
            answer_contains_phrase_ci(s, "by you or") ||
            answer_contains_phrase_ci(s, "i know you") ||
            answer_contains_phrase_ci(s, "i see you") ||
@@ -1900,6 +1901,41 @@ static float vec_cosine(const float *a, const float *b, int n) {
     return (na == 0 || nb == 0) ? 0.0f : (float)(dot / (sqrt(na) * sqrt(nb)));
 }
 
+static int text_embedding_centroid(model_t *m, const bpe_tokenizer *tok, const char *text, float *out, int cap) {
+    if (!m || !tok || !text || !out || m->embed > cap) return 0;
+    memset(out, 0, (size_t)m->embed * sizeof(float));
+    int ids[256];
+    int n = bpe_encode(tok, text, ids, 256);
+    int cnt = 0;
+    for (int i = 0; i < n; i++) {
+        int id = ids[i];
+        if (id < 0 || id >= m->vocab) continue;
+        const float *e = m->tok_emb + (long)id * m->embed;
+        for (int d = 0; d < m->embed; d++) out[d] += e[d];
+        cnt++;
+    }
+    if (!cnt) return 0;
+    for (int d = 0; d < m->embed; d++) out[d] /= cnt;
+    return cnt;
+}
+
+static int answer_candidate_score_semantic(model_t *m, const bpe_tokenizer *tok,
+                                           const float *question_centroid,
+                                           const char *question, const char *answer) {
+    int score = answer_candidate_score(question, answer);
+    if (!m || !tok || !question_centroid || !answer || !*answer || m->embed > 8192)
+        return score;
+    float acent[8192];
+    int an = text_embedding_centroid(m, tok, answer, acent, 8192);
+    if (an < 2) return score + 4;
+    float sim = vec_cosine(question_centroid, acent, m->embed);
+    if (!isfinite(sim)) return score;
+    if (sim < 0.05f) score += 6;
+    else if (sim < 0.10f) score += 3;
+    else if (sim > 0.22f && score > 0) score -= 1;
+    return score;
+}
+
 static int frag_question_count(const char *s) {
     int n = 0;
     if (!s) return 0;
@@ -2224,22 +2260,27 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             clean_answer_fragment(qfrag);
-            int qscore = answer_candidate_score(g_user_q, qfrag);
+            int qscore = answer_candidate_score_semantic(m, tok, qcent, g_user_q, qfrag);
             if (qscore > 0 || answer_fragment_bad(qfrag)) {
-                for (int attempt = 0; attempt < 2 && qscore > 0; attempt++) {
+                static const float retry_temp_mul[] = { 0.85f, 0.70f, 0.95f, 0.60f };
+                static const unsigned retry_salt[] = { 0x9e3779b9u, 0x85ebca6bu, 0xc2b2ae35u, 0x27d4eb2fu };
+                for (int attempt = 0; attempt < 4 && qscore > 0; attempt++) {
                     char qfrag_retry[1024]; int qids_retry[128], qn_retry = 0;
                     g_round_tokn = qtok_before;
                     g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0;
                     g_xcell = g_user_kv_weight; g_field_on = save_field_on;
                     qfrag_retry[0] = 0;
-                    float retry_temp = qtemp * (attempt == 0 ? 0.85f : 0.70f);
+                    float retry_temp = qtemp * retry_temp_mul[attempt];
                     if (retry_temp < 0.40f) retry_temp = 0.40f;
-                    unsigned retry_seed = qseed ^ (attempt == 0 ? 0x9e3779b9u : 0x85ebca6bu);
-                    float qent_retry = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, retry_temp, g_user_qtop_k, g_user_qrep,
+                    int retry_top_k = g_user_qtop_k;
+                    if (attempt == 2 && retry_top_k > 24) retry_top_k = 24;
+                    if (attempt == 3 && retry_top_k > 16) retry_top_k = 16;
+                    unsigned retry_seed = qseed ^ retry_salt[attempt];
+                    float qent_retry = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, retry_temp, retry_top_k, g_user_qrep,
                                                   retry_seed, eos, max_seq, qfrag_retry, sizeof(qfrag_retry), 0,
                                                   qids_retry, &qn_retry, NULL, NULL, NULL);
                     clean_answer_fragment(qfrag_retry);
-                    int retry_score = answer_candidate_score(g_user_q, qfrag_retry);
+                    int retry_score = answer_candidate_score_semantic(m, tok, qcent, g_user_q, qfrag_retry);
                     if (retry_score < qscore) {
                         copy_cstr(qfrag, sizeof(qfrag), qfrag_retry);
                         qn = qn_retry;
