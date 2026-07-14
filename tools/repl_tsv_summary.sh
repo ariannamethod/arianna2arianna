@@ -117,7 +117,10 @@ summarize() {
                    w == "geomet" || w == "sharden" || w == "oulha" ||
                    w == "noator" || w == "aardi" || w == "shallards" ||
                    w == "qopoeleakha" || w == "qlooppressing" ||
-                   w == "qoopops" || w == "didleads"
+                   w == "qoopops" || w == "didleads" ||
+                   w == "shoddle" || w == "shardharchitecturegeometrtyguru" ||
+                   w == "geometrtyguru" || w == "exhalted" ||
+                   w == "bein"
         }
         function has_bad_ascii_apostrophe(s,     apos, rest, pos, tail) {
             apos = sprintf("%c", 39)
@@ -159,26 +162,34 @@ summarize() {
                 if (w ~ /^-/ || w ~ /-$/) return 1
             }
             tail = last
-            if (tail ~ /^[bcdfghjklmnpqrstvwxz]{1,2}$/ || tail == "ke") return 1
+            if (tail ~ /^[bcdfghjklmnpqrstvwxz]{1,2}$/ || tail == "ke" ||
+                tail ~ /^(res|isn|doesn|wasn|weren|didn|don|won)$/) return 1
             return 0
         }
         function has_recipient_artifact(s,     low) {
             low = tolower(s)
             return low ~ /you have been/ ||
                    low ~ /you have a field/ ||
+                   low ~ /you have no idea/ ||
+                   low ~ /you have to/ ||
                    low ~ /you touched/ ||
+                   low ~ /you cannot/ ||
+                   low ~ /you must/ ||
+                   low ~ /if you want me/ ||
+                   low ~ /by you or/ ||
                    low ~ /i know you/ ||
                    low ~ /i see you/ ||
                    low ~ /with you/ ||
                    low ~ /your own field/ ||
                    low ~ /your memory/ ||
                    low ~ /your being/ ||
+                   low ~ /not just for you/ ||
                    low ~ /before you said/ ||
                    low ~ /said to me/
         }
         function terminal_function_word(w) {
             w = tolower(w)
-            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|and|not|that|which|who|whose|when|where|why|how)$/
+            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|isn|doesn|wasn|weren|didn|don|won)$/
         }
         function has_tail_artifact(s,     t, last, apos, a, n, i, w) {
             t = trim(s)

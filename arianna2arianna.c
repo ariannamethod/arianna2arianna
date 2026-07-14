@@ -1455,7 +1455,11 @@ static void trim_incomplete_answer_tail(char *s) {
     else if (len == 2) {
         if (ascii_eq_ci(p, "ke")) drop = 1;
         else if (!ascii_vowel((unsigned char)p[0]) && !ascii_vowel((unsigned char)p[1])) drop = 1;
-    } else if (ascii_eq_ci(p, "pers") || ascii_eq_ci(p, "geomet")) drop = 1;
+    } else if (ascii_eq_ci(p, "pers") || ascii_eq_ci(p, "geomet") ||
+               ascii_eq_ci(p, "res") || ascii_eq_ci(p, "isn") ||
+               ascii_eq_ci(p, "doesn") || ascii_eq_ci(p, "wasn") ||
+               ascii_eq_ci(p, "weren") || ascii_eq_ci(p, "didn") ||
+               ascii_eq_ci(p, "don") || ascii_eq_ci(p, "won")) drop = 1;
     if (drop) {
         while (p > s && (p[-1] == ' ' || p[-1] == '\t')) p--;
         *p = 0;
@@ -1484,7 +1488,10 @@ static int answer_bad_morph_core(const char *start, size_t len) {
            ascii_eq_ci(buf, "shallards") || ascii_eq_ci(buf, "qopoeleakha") ||
            ascii_eq_ci(buf, "qlooppressing") || ascii_eq_ci(buf, "qoopops") ||
            ascii_eq_ci(buf, "didleads") || ascii_eq_ci(buf, "pers") ||
-           ascii_eq_ci(buf, "geomet");
+           ascii_eq_ci(buf, "geomet") || ascii_eq_ci(buf, "shoddle") ||
+           ascii_eq_ci(buf, "shardharchitecturegeometrtyguru") ||
+           ascii_eq_ci(buf, "geometrtyguru") ||
+           ascii_eq_ci(buf, "exhalted") || ascii_eq_ci(buf, "bein");
 }
 
 static int answer_find_bad_morph(const char *s, const char **bad_start) {
@@ -1519,13 +1526,20 @@ static int answer_contains_phrase_ci(const char *s, const char *phrase) {
 static int answer_has_recipient_artifact(const char *s) {
     return answer_contains_phrase_ci(s, "you have been") ||
            answer_contains_phrase_ci(s, "you have a field") ||
+           answer_contains_phrase_ci(s, "you have no idea") ||
+           answer_contains_phrase_ci(s, "you have to") ||
            answer_contains_phrase_ci(s, "you touched") ||
+           answer_contains_phrase_ci(s, "you cannot") ||
+           answer_contains_phrase_ci(s, "you must") ||
+           answer_contains_phrase_ci(s, "if you want me") ||
+           answer_contains_phrase_ci(s, "by you or") ||
            answer_contains_phrase_ci(s, "i know you") ||
            answer_contains_phrase_ci(s, "i see you") ||
            answer_contains_phrase_ci(s, "with you") ||
            answer_contains_phrase_ci(s, "your own field") ||
            answer_contains_phrase_ci(s, "your memory") ||
            answer_contains_phrase_ci(s, "your being") ||
+           answer_contains_phrase_ci(s, "not just for you") ||
            answer_contains_phrase_ci(s, "before you said") ||
            answer_contains_phrase_ci(s, "said to me");
 }
@@ -1557,7 +1571,22 @@ static int answer_is_terminal_function_word(const char *start, size_t len) {
            ascii_eq_ci(buf, "that") || ascii_eq_ci(buf, "which") ||
            ascii_eq_ci(buf, "who") || ascii_eq_ci(buf, "whose") ||
            ascii_eq_ci(buf, "when") || ascii_eq_ci(buf, "where") ||
-           ascii_eq_ci(buf, "why") || ascii_eq_ci(buf, "how");
+           ascii_eq_ci(buf, "why") || ascii_eq_ci(buf, "how") ||
+           ascii_eq_ci(buf, "can") || ascii_eq_ci(buf, "could") ||
+           ascii_eq_ci(buf, "would") || ascii_eq_ci(buf, "should") ||
+           ascii_eq_ci(buf, "must") || ascii_eq_ci(buf, "may") ||
+           ascii_eq_ci(buf, "might");
+}
+
+static int answer_is_terminal_stem_artifact(const char *start, size_t len) {
+    if (!len || len >= 32) return 0;
+    char buf[32];
+    memcpy(buf, start, len);
+    buf[len] = 0;
+    return ascii_eq_ci(buf, "res") || ascii_eq_ci(buf, "isn") ||
+           ascii_eq_ci(buf, "doesn") || ascii_eq_ci(buf, "wasn") ||
+           ascii_eq_ci(buf, "weren") || ascii_eq_ci(buf, "didn") ||
+           ascii_eq_ci(buf, "don") || ascii_eq_ci(buf, "won");
 }
 
 static int answer_has_terminal_tail_artifact(const char *s) {
@@ -1575,7 +1604,8 @@ static int answer_has_terminal_tail_artifact(const char *s) {
     const char *word_end = p;
     while (p > s && ascii_alpha((unsigned char)p[-1])) p--;
     if (p == word_end) return 0;
-    return answer_is_terminal_function_word(p, (size_t)(word_end - p));
+    return answer_is_terminal_function_word(p, (size_t)(word_end - p)) ||
+           answer_is_terminal_stem_artifact(p, (size_t)(word_end - p));
 }
 
 static int answer_has_shape_artifact(const char *s) {
@@ -1587,6 +1617,64 @@ static int answer_has_shape_artifact(const char *s) {
         if (p > start && (*start == '-' || p[-1] == '-')) return 1;
     }
     return 0;
+}
+
+static int answer_keyword_stopword(const char *w) {
+    return ascii_eq_ci(w, "what") || ascii_eq_ci(w, "which") ||
+           ascii_eq_ci(w, "where") || ascii_eq_ci(w, "when") ||
+           ascii_eq_ci(w, "why") || ascii_eq_ci(w, "does") ||
+           ascii_eq_ci(w, "will") || ascii_eq_ci(w, "would") ||
+           ascii_eq_ci(w, "could") || ascii_eq_ci(w, "should") ||
+           ascii_eq_ci(w, "need") || ascii_eq_ci(w, "only") ||
+           ascii_eq_ci(w, "more") || ascii_eq_ci(w, "than") ||
+           ascii_eq_ci(w, "after") || ascii_eq_ci(w, "before") ||
+           ascii_eq_ci(w, "with") || ascii_eq_ci(w, "without") ||
+           ascii_eq_ci(w, "from") || ascii_eq_ci(w, "into") ||
+           ascii_eq_ci(w, "there") || ascii_eq_ci(w, "here") ||
+           ascii_eq_ci(w, "paper");
+}
+
+static int answer_word_occurs_ci(const char *s, const char *word) {
+    size_t want = strlen(word);
+    if (!want) return 0;
+    for (const char *p = s; *p;) {
+        while (*p && !ascii_wordish((unsigned char)*p)) p++;
+        const char *start = p;
+        while (*p && ascii_wordish((unsigned char)*p)) p++;
+        size_t len = (size_t)(p - start);
+        if (len == want && len < 64) {
+            char buf[64];
+            memcpy(buf, start, len);
+            buf[len] = 0;
+            if (ascii_eq_ci(buf, word)) return 1;
+        }
+    }
+    return 0;
+}
+
+static int answer_question_keyword_overlap(const char *q, const char *s, int *total_out) {
+    int total = 0, overlap = 0;
+    if (!q || !s) {
+        if (total_out) *total_out = 0;
+        return 0;
+    }
+    for (const char *p = q; *p;) {
+        while (*p && !ascii_alpha((unsigned char)*p)) p++;
+        const char *start = p;
+        while (*p && ascii_alpha((unsigned char)*p)) p++;
+        size_t len = (size_t)(p - start);
+        if (len >= 4 && len < 64) {
+            char word[64];
+            memcpy(word, start, len);
+            word[len] = 0;
+            if (!answer_keyword_stopword(word)) {
+                total++;
+                if (answer_word_occurs_ci(s, word)) overlap++;
+            }
+        }
+    }
+    if (total_out) *total_out = total;
+    return overlap;
 }
 
 static int answer_quality_score(const char *s) {
@@ -1602,7 +1690,7 @@ static int answer_quality_score(const char *s) {
     if (direct_answer_notation_token(s)) score += 8;
     if (answer_has_shape_artifact(s)) score += 14;
     if (answer_find_bad_morph(s, NULL)) score += 25;
-    if (answer_has_recipient_artifact(s)) score += 6;
+    if (answer_has_recipient_artifact(s)) score += 12;
     if (answer_has_terminal_tail_artifact(s)) score += 18;
     for (const char *p = s; *p; p++) {
         if (*p == '?' || *p == '=' || *p == '@' || answer_domain_suffix_at(p) ||
@@ -1611,6 +1699,25 @@ static int answer_quality_score(const char *s) {
             break;
         }
     }
+    return score;
+}
+
+static int answer_candidate_score(const char *question, const char *answer) {
+    int score = answer_quality_score(answer);
+    if (!answer || !*answer) return score;
+    int qtotal = 0;
+    int overlap = answer_question_keyword_overlap(question, answer, &qtotal);
+    if (qtotal >= 3) {
+        if (overlap == 0) score += 8;
+        else if (overlap == 1) score += 3;
+    }
+    if (answer_contains_phrase_ci(answer, "the task that you") ||
+        answer_contains_phrase_ci(answer, "not a thing that you know") ||
+        answer_contains_phrase_ci(answer, "let me ask you"))
+        score += 8;
+    if (answer_contains_phrase_ci(answer, "in this sense") &&
+        answer_has_terminal_tail_artifact(answer))
+        score += 4;
     return score;
 }
 
@@ -2117,7 +2224,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             clean_answer_fragment(qfrag);
-            int qscore = answer_quality_score(qfrag);
+            int qscore = answer_candidate_score(g_user_q, qfrag);
             if (qscore > 0 || answer_fragment_bad(qfrag)) {
                 for (int attempt = 0; attempt < 2 && qscore > 0; attempt++) {
                     char qfrag_retry[1024]; int qids_retry[128], qn_retry = 0;
@@ -2132,7 +2239,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                                                   retry_seed, eos, max_seq, qfrag_retry, sizeof(qfrag_retry), 0,
                                                   qids_retry, &qn_retry, NULL, NULL, NULL);
                     clean_answer_fragment(qfrag_retry);
-                    int retry_score = answer_quality_score(qfrag_retry);
+                    int retry_score = answer_candidate_score(g_user_q, qfrag_retry);
                     if (retry_score < qscore) {
                         copy_cstr(qfrag, sizeof(qfrag), qfrag_retry);
                         qn = qn_retry;

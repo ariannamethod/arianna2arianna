@@ -1685,3 +1685,55 @@ the direct answer path enough room to finish. It is still a runtime bridge, not
 a replacement for the wider Arianna SFT repair: two recipient artifacts and one
 tail remain, and the old over-cleaned substrate still needs the richer
 roleplay-frame corpus.
+
+## 2026-07-14 - Question-aware answer selection
+
+### Context
+
+The direct-user bridge had enough answer budget after `A2A_USER_ANSWER_TOKENS`,
+but candidate selection was still mostly lexical: it could reject obvious junk
+while accepting a fluent continuation that did not answer the question, or a
+salvaged prefix that hid a bad tail. Manual reading of
+`runs/repl_eval_repl_probe_regression_20260714_045844.tsv` showed three
+concrete symptoms: terminal stems (`res`, `isn`, `doesn`), glued remnants
+(`shoddle`, `shardharchitecturegeometrtyguru`), and false-recipient phrases
+(`you have no idea`, `you must`, `if you want me`).
+
+### Change
+
+- Added `answer_candidate_score(question, answer)` on top of the existing
+  answer-quality score. It keeps the lexical artifact guards, then adds a
+  small question-keyword overlap penalty and a few observed conversational-frame
+  penalties.
+- Expanded terminal-tail cleanup/detection for unfinished stems and modal
+  function words.
+- Expanded recipient-artifact detection for concrete false-address phrases
+  without banning normal `you`.
+- Synchronized `tools/repl_tsv_summary.sh` with the C-side detector and added a
+  no-model smoke regression for recipient and stem-tail junk.
+
+### Evidence
+
+```text
+make test
+=== summary: 82 passed, 0 failed, 1 skipped ===
+
+A2A_BASELINE_TSV=runs/repl_eval_repl_probe_regression_20260714_045844.tsv make repl-eval
+results: runs/repl_eval_repl_probe_regression_20260714_051649.tsv
+I_U^kv: avg +0.440, pos 23, neg 7, zero 0, nan 0
+answer_bad_start: 0/30
+answer_quality: any 9/30, short 0, question_like 0, label_artifact 2,
+  notation_artifact 0, morph_artifact 0, recipient_artifact 4,
+  tail_artifact 3, yes_no_start 0, repetition 0
+
+baseline under the same detector:
+I_U^kv: avg +0.339, pos 22, neg 8, zero 0, nan 0
+answer_quality: any 16/30, short 0, question_like 0, label_artifact 2,
+  notation_artifact 0, morph_artifact 7, recipient_artifact 6,
+  tail_artifact 6, yes_no_start 0, repetition 0
+```
+
+The layer is a net improvement, not a finish line. It removes the measured
+morph artifacts and halves tail failures, but four recipient artifacts and
+three tails remain. Next work should stop adding surface lists and move to a
+real answer-body semantic scorer or a broader candidate set before selection.
