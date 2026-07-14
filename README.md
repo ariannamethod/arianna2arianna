@@ -45,7 +45,6 @@ make repl-eval
 make repl-temp-sweep
 make repl-substrate-compare CANDIDATE_MODEL=/path/to/new-sft.gguf
 make recipient-lock
-make openai-repl-probe   # requires OPENAI_API_KEY or OPENAI_API_KEY_FILE
 make test
 make portable      # POSIX/scalar fallback
 make fast-x86      # opt-in AVX2/FMA/F16C build on x86_64
@@ -102,12 +101,12 @@ TSVs use the extended shape. With current TSVs it also reports
 `answer_kv_changed`, the count of direct user answers whose text differs from
 the no-user-KV shadow answer, plus diagnostic `answer_quality` flags for short,
 question-like, label-artifact, notation-artifact, morphology/glue-artifact,
-yes/no-start, and repeated-word snippets.
+false-familiarity recipient-artifact, yes/no-start, and repeated-word snippets.
 
 `make repl-temp-sweep` runs the same direct-user bridge metrics across sampler
 settings and prints a compact table while writing each TSV/summary under
-ignored `runs/`. The normal REPL defaults are `A2A_USER_QTEMP_BASE=0.45`,
-`A2A_USER_QTEMP_SPAN=0.10`, `A2A_USER_TOP_K=40`,
+ignored `runs/`. The normal REPL direct-user bridge defaults are
+`A2A_USER_QTEMP_BASE=0.70`, `A2A_USER_QTEMP_SPAN=0.00`, `A2A_USER_TOP_K=40`,
 `A2A_USER_TOP_P=1.00`,
 `A2A_USER_REP=1.30`, `A2A_USER_KV_WEIGHT=0.05`,
 `A2A_USER_CTX_FORMAT=qa`, and
@@ -119,7 +118,7 @@ Override sweep grids with:
 ```sh
 A2A_TEMP_BASES="0.35 0.45 0.55 0.70" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="16 24 40" A2A_TEMP_REPS="1.3 1.6 2.05" make repl-temp-sweep
-A2A_TEMP_BASES="0.90" A2A_TEMP_SPANS="0" A2A_TEMP_TOP_PS="0.92" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPS="1.15" make repl-temp-sweep
+A2A_TEMP_BASES="0.70 0.90" A2A_TEMP_SPANS="0" A2A_TEMP_TOP_PS="0.80 0.92 1.00" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPS="1.15 1.30" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_USER_KVS="0 0.05 0.10 0.20 0.30" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_FORMATS="field_qa plain_field_qa qa raw" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPL_FORMATS="user_arianna qa" make repl-temp-sweep
@@ -134,18 +133,12 @@ to override the base body.
 `prompts/recipient_lock.txt` and reports accidental `Oleg` / `Олег` recipient
 mentions. This is a substrate check, not a field/qloop check.
 
-`make openai-repl-probe` is an optional API-backed debug layer. It captures live
-Arianna field fragments, asks GPT through the OpenAI Responses API for probe
-questions/continuations, then runs those generated questions through
-`repl_question_sweep.sh` and summarizes the resulting TSV. Provide the key only
-through local environment:
-
-```sh
-export OPENAI_API_KEY=...
-# or:
-export OPENAI_API_KEY_FILE=/path/to/local.key
-make openai-repl-probe
-```
+`make openai-repl-probe` is an optional external audit/debug tool, not part of
+the Arianna runtime or required system path. It was used to generate extra
+probe questions from live field fragments, then run those questions through
+`repl_question_sweep.sh`. Normal Arianna work uses the checked-in offline probe
+corpora under `prompts/`; this target is only for deliberate API-backed probe
+generation and keeps credentials outside the repository.
 
 Generated seed/output TSV files go to ignored `runs/`.
 
@@ -180,7 +173,7 @@ r1 cell 3 (T=1.12): How do we understand it in its own terms? Which if
 ↳ qloop c3→c1 [kv] score 1.027: both the whole of every scale [entropy=4.27 I_Q^kv=+0.189]
 ```
 
-GPT-generated REPL probes:
+External API-generated REPL probes:
 
 ```text
 30 generated questions → user_bridge 30/30

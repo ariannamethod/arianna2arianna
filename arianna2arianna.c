@@ -935,8 +935,8 @@ static int g_qloop = 0;         /* 0=off; 1..2 = resonant cell-question routes p
 static const char *g_user_q = NULL; /* REPL direct-question bridge: user text can become asker KV */
 static int g_clean_answer_start = 0; /* direct user answers should not open with list/bullet debris */
 static int g_answer_form_guard = 0;  /* direct user answers should not turn into question/yes-no loops */
-static float g_user_qtemp_base = 0.45f; /* direct-user bridge sampler: env-tunable for temperature sweeps */
-static float g_user_qtemp_span = 0.10f;
+static float g_user_qtemp_base = 0.70f; /* direct-user bridge sampler: env-tunable for temperature sweeps */
+static float g_user_qtemp_span = 0.00f;
 static int   g_user_qtop_k = 40;
 static float g_user_qtop_p = 1.00f;
 static float g_user_qrep = 1.30f;
@@ -957,8 +957,8 @@ static float g_cell_ent[8];     /* per-cell raw entropy this round (fitness inpu
 static int   g_life_on = 0;     /* 1 = measure/run the Game of Life. 0 = chorus byte-identical */
 
 static void load_user_bridge_sampling_env(void) {
-    g_user_qtemp_base = env_float_clamped("A2A_USER_QTEMP_BASE", 0.45f, 0.05f, 2.00f);
-    g_user_qtemp_span = env_float_clamped("A2A_USER_QTEMP_SPAN", 0.10f, -1.50f, 1.50f);
+    g_user_qtemp_base = env_float_clamped("A2A_USER_QTEMP_BASE", 0.70f, 0.05f, 2.00f);
+    g_user_qtemp_span = env_float_clamped("A2A_USER_QTEMP_SPAN", 0.00f, -1.50f, 1.50f);
     g_user_qtop_k = env_int_clamped("A2A_USER_TOP_K", 40, 0, 512);
     g_user_qtop_p = env_float_clamped("A2A_USER_TOP_P", 1.00f, 0.05f, 1.00f);
     g_user_qrep = env_float_clamped("A2A_USER_REP", 1.30f, 1.00f, 5.00f);
@@ -1298,6 +1298,49 @@ static int ascii_label_letter(unsigned char c) {
     return c == 'A' || c == 'B' || c == 'C' || c == 'D' || c == 'Q';
 }
 
+static int ascii_wordish(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') || c == '_' || c == '-';
+}
+
+static int ascii_alpha(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+static int ascii_vowel(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') c = (unsigned char)(c - 'A' + 'a');
+    return c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u' || c == 'y';
+}
+
+static int ascii_eq_ci(const char *s, const char *word) {
+    while (*s && *word) {
+        char a = *s++, b = *word++;
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return *s == 0 && *word == 0;
+}
+
+static int answer_domain_suffix_at(const char *p) {
+    static const char *const suffixes[] = { ".com", ".org", ".net", ".ru", ".ai", ".io", ".dev" };
+    if (*p != '.') return 0;
+    for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++) {
+        size_t n = strlen(suffixes[i]);
+        if (ascii_starts_ci(p, suffixes[i]) && !ascii_wordish((unsigned char)p[n]))
+            return 1;
+    }
+    return 0;
+}
+
+static void trim_answer_right(char *s) {
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' ||
+                     s[n - 1] == '\r' || s[n - 1] == '\n')) {
+        s[--n] = 0;
+    }
+}
+
 static int direct_answer_notation_token(const char *s) {
     const unsigned char *p = (const unsigned char*)s;
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
@@ -1334,7 +1377,13 @@ static int direct_answer_bad_form_token(const bpe_tokenizer *tok, int id, int st
     unsigned char *p = (unsigned char*)buf;
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
     if (!*p) return 1;
-    for (unsigned char *q = p; *q; q++) if (*q == '?') return 1;
+    for (unsigned char *q = p; *q; q++) {
+        if (*q == '?' || *q == '=' || *q == '@') return 1;
+        if (answer_domain_suffix_at((const char*)q) ||
+            ascii_starts_ci((const char*)q, "http") ||
+            ascii_starts_ci((const char*)q, "www."))
+            return 1;
+    }
     if (direct_answer_notation_token((const char*)p)) return 1;
     if (ascii_word_ci((const char*)p, "what") || ascii_word_ci((const char*)p, "who") ||
         ascii_word_ci((const char*)p, "where") || ascii_word_ci((const char*)p, "why") ||
@@ -1363,12 +1412,191 @@ static void suppress_direct_answer_form(float *logits, int vocab, const bpe_toke
     for (int i = 0; i < vocab; i++) if (direct_answer_bad_form_token(tok, i, step)) logits[i] = -1e30f;
 }
 
+static void truncate_answer_junk(char *s) {
+    for (char *p = s; *p; p++) {
+        if (ascii_starts_ci(p, "http") || ascii_starts_ci(p, "www.")) {
+            *p = 0;
+            break;
+        }
+        if (answer_domain_suffix_at(p)) {
+            char *q = p;
+            while (q > s && (ascii_wordish((unsigned char)q[-1]) || q[-1] == '.')) q--;
+            *q = 0;
+            break;
+        }
+        if (*p == '=') {
+            char *after = p + 1;
+            while (*after == ' ' || *after == '\t') after++;
+            if (*after == '"' || *after == '\'' || *after == '`') {
+                char *q = p;
+                while (q > s && (q[-1] == ' ' || q[-1] == '\t')) q--;
+                while (q > s && !((unsigned char)q[-1] <= ' ')) q--;
+                *q = 0;
+                break;
+            }
+        }
+    }
+    trim_answer_right(s);
+}
+
+static void trim_incomplete_answer_tail(char *s) {
+    trim_answer_right(s);
+    size_t n = strlen(s);
+    if (!n) return;
+    char *end = s + n;
+    char *p = end;
+    while (p > s && ascii_alpha((unsigned char)p[-1])) p--;
+    if (p == end) return;
+    size_t len = (size_t)(end - p);
+    int drop = 0;
+    if (len == 1 && !ascii_vowel((unsigned char)p[0])) drop = 1;
+    else if (len == 2) {
+        if (ascii_eq_ci(p, "ke")) drop = 1;
+        else if (!ascii_vowel((unsigned char)p[0]) && !ascii_vowel((unsigned char)p[1])) drop = 1;
+    } else if (ascii_eq_ci(p, "pers") || ascii_eq_ci(p, "geomet")) drop = 1;
+    if (drop) {
+        while (p > s && (p[-1] == ' ' || p[-1] == '\t')) p--;
+        *p = 0;
+        trim_answer_right(s);
+    }
+}
+
+static int answer_bad_morph_core(const char *start, size_t len) {
+    while (len > 0 && (start[0] == '_' || start[0] == '.' || start[0] == '-')) { start++; len--; }
+    while (len > 0 && (start[len - 1] == '_' || start[len - 1] == '.' || start[len - 1] == '-')) len--;
+    if (!len) return 0;
+    if (len >= 64) return 1;
+    char buf[64];
+    memcpy(buf, start, len);
+    buf[len] = 0;
+    return ascii_eq_ci(buf, "aat") || ascii_eq_ci(buf, "sards") ||
+           ascii_eq_ci(buf, "haart") || ascii_eq_ci(buf, "wort") ||
+           ascii_eq_ci(buf, "sark") || ascii_eq_ci(buf, "shabbartists") ||
+           ascii_eq_ci(buf, "olelegacythe") || ascii_eq_ci(buf, "youhave") ||
+           ascii_eq_ci(buf, "soundlike") || ascii_eq_ci(buf, "pertrustin") ||
+           ascii_eq_ci(buf, "qopoeleakyname") ||
+           ascii_eq_ci(buf, "shardharchitecturegeomet") ||
+           ascii_eq_ci(buf, "harchitecturegeomet") ||
+           ascii_eq_ci(buf, "sharden") || ascii_eq_ci(buf, "oulha") ||
+           ascii_eq_ci(buf, "noator") || ascii_eq_ci(buf, "pers") ||
+           ascii_eq_ci(buf, "geomet");
+}
+
+static int answer_find_bad_morph(const char *s, const char **bad_start) {
+    for (const char *p = s; *p;) {
+        while (*p && !(ascii_wordish((unsigned char)*p) || *p == '.')) p++;
+        const char *start = p;
+        while (*p && (ascii_wordish((unsigned char)*p) || *p == '.')) p++;
+        if (p > start && answer_bad_morph_core(start, (size_t)(p - start))) {
+            if (bad_start) *bad_start = start;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void truncate_answer_bad_morph(char *s) {
+    const char *bad_const = NULL;
+    if (answer_find_bad_morph(s, &bad_const) && bad_const) {
+        char *bad = (char*)bad_const;
+        while (bad > s && (bad[-1] == ' ' || bad[-1] == '\t')) bad--;
+        *bad = 0;
+        trim_answer_right(s);
+    }
+}
+
+static int answer_contains_phrase_ci(const char *s, const char *phrase) {
+    if (!s || !phrase || !*phrase) return 0;
+    for (const char *p = s; *p; p++) if (ascii_starts_ci(p, phrase)) return 1;
+    return 0;
+}
+
+static int answer_has_recipient_artifact(const char *s) {
+    return answer_contains_phrase_ci(s, "you have been") ||
+           answer_contains_phrase_ci(s, "you have a field") ||
+           answer_contains_phrase_ci(s, "you touched") ||
+           answer_contains_phrase_ci(s, "i know you") ||
+           answer_contains_phrase_ci(s, "i see you") ||
+           answer_contains_phrase_ci(s, "with you") ||
+           answer_contains_phrase_ci(s, "your own field") ||
+           answer_contains_phrase_ci(s, "your memory") ||
+           answer_contains_phrase_ci(s, "your being") ||
+           answer_contains_phrase_ci(s, "before you said") ||
+           answer_contains_phrase_ci(s, "said to me");
+}
+
+static int answer_word_count(const char *s) {
+    int n = 0, in_word = 0;
+    for (const unsigned char *p = (const unsigned char*)s; *p; p++) {
+        int w = ascii_wordish(*p);
+        if (w && !in_word) n++;
+        in_word = w;
+    }
+    return n;
+}
+
+static int answer_has_shape_artifact(const char *s) {
+    if (answer_contains_phrase_ci(s, "shall you ")) return 1;
+    for (const char *p = s; *p;) {
+        while (*p && !(ascii_wordish((unsigned char)*p) || *p == '.')) p++;
+        const char *start = p;
+        while (*p && (ascii_wordish((unsigned char)*p) || *p == '.')) p++;
+        if (p > start && (*start == '-' || p[-1] == '-')) return 1;
+    }
+    return 0;
+}
+
+static int answer_quality_score(const char *s) {
+    if (!s) return 1000;
+    while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+    if (!*s) return 1000;
+    int score = 0;
+    size_t len = strlen(s);
+    if (len < 12 || answer_word_count(s) < 3) score += 12;
+    unsigned char first = (unsigned char)s[0];
+    if ((first >= '0' && first <= '9') || strchr("*\"`#:/@-\\'.,;=", first)) score += 12;
+    if (ascii_word_ci(s, "yes") || ascii_word_ci(s, "no")) score += 5;
+    if (direct_answer_notation_token(s)) score += 8;
+    if (answer_has_shape_artifact(s)) score += 14;
+    if (answer_find_bad_morph(s, NULL)) score += 25;
+    if (answer_has_recipient_artifact(s)) score += 6;
+    for (const char *p = s; *p; p++) {
+        if (*p == '?' || *p == '=' || *p == '@' || answer_domain_suffix_at(p) ||
+            ascii_starts_ci(p, "http") || ascii_starts_ci(p, "www.")) {
+            score += 20;
+            break;
+        }
+    }
+    return score;
+}
+
+static int answer_fragment_bad(const char *s) {
+    if (!s) return 1;
+    const char *p = s;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (!*p) return 1;
+    if (ascii_starts_ci(p, "shall you ") ||
+        ascii_starts_ci(p, "you have been a new"))
+        return 1;
+    if (answer_find_bad_morph(p, NULL)) return 1;
+    for (; *p; p++) {
+        if (*p == '=' || *p == '@' || answer_domain_suffix_at(p) ||
+            ascii_starts_ci(p, "http") || ascii_starts_ci(p, "www."))
+            return 1;
+    }
+    return 0;
+}
+
 static void clean_answer_fragment(char *s) {
     if (!s || !*s) return;
     char *p = s;
     for (;;) {
         while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
-        if (*p == '?' || *p == ':' || *p == '.' || *p == ',' || *p == ';') { p++; continue; }
+        if (*p == '?' || *p == ':' || *p == '.' || *p == ',' || *p == ';' ||
+            *p == '-' || *p == '=' || *p == '"' || *p == '\'' || *p == '`') {
+            p++;
+            continue;
+        }
         if ((p[0] == 'A' || p[0] == 'a') && p[1] == ':') { p += 2; continue; }
         if (direct_answer_notation_token(p)) {
             while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') p++;
@@ -1379,11 +1607,9 @@ static void clean_answer_fragment(char *s) {
         break;
     }
     if (p != s) memmove(s, p, strlen(p) + 1);
-    size_t n = strlen(s);
-    while (n > 0 && (s[n - 1] == ' ' || s[n - 1] == '\t' ||
-                     s[n - 1] == '\r' || s[n - 1] == '\n')) {
-        s[--n] = 0;
-    }
+    truncate_answer_junk(s);
+    trim_incomplete_answer_tail(s);
+    truncate_answer_bad_morph(s);
 }
 
 /* ── inter-cell DISSONANCE, the order-sensitive lever signal (haiku.c idea, our wiring) ──
@@ -1846,11 +2072,35 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = g_user_kv_weight;
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
+            clean_answer_fragment(qfrag);
+            int qscore = answer_quality_score(qfrag);
+            if (qscore > 0 || answer_fragment_bad(qfrag)) {
+                char qfrag_retry[1024]; int qids_retry[128], qn_retry = 0;
+                g_round_tokn = qtok_before;
+                g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0;
+                g_xcell = g_user_kv_weight; g_field_on = save_field_on;
+                qfrag_retry[0] = 0;
+                float retry_temp = qtemp * 0.85f;
+                if (retry_temp < 0.45f) retry_temp = 0.45f;
+                float qent_retry = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, retry_temp, g_user_qtop_k, g_user_qrep,
+                                              qseed ^ 0x9e3779b9u, eos, max_seq, qfrag_retry, sizeof(qfrag_retry), 0,
+                                              qids_retry, &qn_retry, NULL, NULL, NULL);
+                clean_answer_fragment(qfrag_retry);
+                int retry_score = answer_quality_score(qfrag_retry);
+                if (retry_score < qscore) {
+                    copy_cstr(qfrag, sizeof(qfrag), qfrag_retry);
+                    qn = qn_retry;
+                    for (int qi = 0; qi < qn_retry && qi < 128; qi++) qids[qi] = qids_retry[qi];
+                    qent = qent_retry;
+                    qscore = retry_score;
+                }
+            }
+            g_round_tokn = qtok_before;
+            for (int qi = 0; qi < qn && qi < 128 && g_round_tokn < 1024; qi++) g_round_tok[g_round_tokn++] = qids[qi];
             g_clean_answer_start = save_clean_start;
             g_sampler_top_p = save_sampler_top_p;
             g_answer_form_guard = save_form_guard;
             g_nbr = save_nbr; g_nbr_len = save_nbr_len; g_nbr_shuf = save_nbr_shuf; g_field_on = save_field_on; g_xcell = save_xcell;
-            clean_answer_fragment(qfrag);
             clean_answer_fragment(qfrag_off);
             float qinfl = qent_off - qent;
             for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;

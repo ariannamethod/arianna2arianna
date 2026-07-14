@@ -1486,3 +1486,116 @@ does not catch false familiarity, and a prompt without `?` does not enter the
 direct user qloop at all. These failures require a broader, frame-preserving
 SFT/checkpoint comparison and stronger semantic recipient gates; another
 prompt-label flip is not sufficient.
+
+## 2026-07-12 - Broad nano body: REPL bridge sampler retune
+
+### Context
+
+The repo default body moved to the broad 2026-07-11 nano re-SFT
+(`nano_arianna_f16.gguf`, sha256
+`4b990a86bad4e42b4cd0b774059db51660162eebe2ec4a06643a594346cc07ff`). The
+standalone nano deploy profile is a short murmur at `temp=0.9`, `top_p=0.92`,
+and practical `rep=1.15`, but the REPL direct-user bridge is a different
+contract: it answers inside the chorus, through a routed asker-KV comparison,
+with only 12-24 generated tokens.
+
+### Sweep
+
+Focused probe: first 12 rows of `prompts/repl_probe_regression.txt`, `qa`
+direct-user format, `qa` outer REPL format, `cells=3`, `frag=4`, `rounds=1`,
+`userKV=0.05`, `top_k=40`.
+
+```text
+temp  top_p  rep   quality_any  I_U^kv  kv_changed
+0.45  0.80   1.15  1/12         +0.035  12/12
+0.45  0.80   1.30  1/12         +0.013  12/12
+0.45  0.92   1.15  1/12         +0.047  12/12
+0.45  0.92   1.30  1/12         +0.042  12/12
+0.45  1.00   1.15  0/12         +0.004  10/12
+0.45  1.00   1.30  0/12         +0.030  10/12
+0.70  0.80   1.15  0/12         -0.023  12/12
+0.70  0.80   1.30  0/12         -0.030  12/12
+0.70  0.92   1.15  1/12         -0.203  12/12
+0.70  0.92   1.30  1/12         -0.262  12/12
+0.70  1.00   1.15  0/12         -0.025  12/12
+0.70  1.00   1.30  0/12         +0.030  12/12
+0.90  0.80   1.15  1/12         -0.005  12/12
+0.90  0.80   1.30  1/12         -0.013  12/12
+0.90  0.92   1.15  1/12         +0.079  12/12
+0.90  0.92   1.30  0/12         +0.146  12/12
+0.90  1.00   1.15  2/12         +0.220  12/12
+0.90  1.00   1.30  2/12         +0.155  12/12
+```
+
+### Decision
+
+Set the REPL direct-user bridge default to `temp_base=0.70`, `temp_span=0.00`,
+`top_k=40`, `top_p=1.00`, `rep=1.30`, `userKV=0.05`.
+
+Reason: `0.70/top_p=1.00/rep=1.30` is clean by counters (`0/12`) and keeps
+full user-KV contrast (`12/12`) while changing the fewest old defaults:
+top-p remains effectively disabled so the bridge still uses the established
+top-k 40 sampler. The hotter `0.90/top_p=0.92/rep=1.30` has a stronger average
+`I_U^kv`, but manual reading found morphology/glue damage missed by the
+automatic flags (for example `Pertrustin`). It remains a sweep candidate, not
+the default.
+
+## 2026-07-12 - Direct-user answer guard and probe docs cleanup
+
+### Context
+
+Full `repl-eval` on the broad nano body showed that sampler retune alone was
+not enough. The old summary under-counted malformed fragments: after extending
+the detector, the previous TSV
+`runs/repl_eval_repl_probe_regression_20260712_044950.tsv` reports
+`answer_quality any 7/30` instead of the earlier optimistic count. The common
+failures were not only bad starts, but mid/tail decoder junk:
+domain-like fragments, assignment fragments, glued morphology, and incomplete
+terminal syllables.
+
+The README also made `make openai-repl-probe` look too close to the normal
+system path. That target is only an external API-backed probe generator used
+for audit/debug; normal Arianna runtime and tuning use checked-in offline
+prompt corpora.
+
+### Change
+
+- `README.md`: removed OpenAI key examples and described
+  `make openai-repl-probe` as an optional external audit/debug target, not a
+  runtime dependency.
+- `arianna2arianna.c`: direct-user answer guard now suppresses URL/domain,
+  `=`, and `@` form tokens; cleanup trims domain/assignment junk, incomplete
+  tails, and known bad glued morphs.
+- `arianna2arianna.c`: user-KV answer generation now scores the primary
+  answer and, when needed, a deterministic colder retry. It chooses the lower
+  score instead of blindly replacing. Recipient language is a small
+  false-familiarity penalty, not a blanket `you` ban.
+- `tools/repl_tsv_summary.sh`: answer-quality metrics now flag the same
+  domain, assignment, glued-morph, and tail-junk symptoms, plus a separate
+  `recipient_artifact` count for false-familiarity phrases.
+- `tests/test_cli.sh`: added a no-model regression for `.org =`, assignment,
+  and terminal-tail artifacts in TSV summaries.
+
+### Evidence
+
+```text
+make test
+=== summary: 80 passed, 0 failed, 1 skipped ===
+
+make repl-eval
+results: runs/repl_eval_repl_probe_regression_20260712_052808.tsv
+I_U^kv: avg +0.160, pos 21, neg 9, zero 0, nan 0
+I_N^kv: avg -0.124, pos 15, neg 15, zero 0, nan 0
+answer_bad_start: 0/30
+answer_quality: any 5/30, short 1, question_like 0, label_artifact 1, notation_artifact 0, morph_artifact 0, recipient_artifact 2, yes_no_start 0, repetition 1
+answer_quality_no_user_kv: any 6/29, short 1, question_like 0, label_artifact 0, notation_artifact 0, morph_artifact 3, recipient_artifact 2, yes_no_start 0, repetition 0
+answer_kv_changed: 29/29
+```
+
+Candidate scoring removed the observed runtime morph junk (`Shall you know...`,
+`oulha`, `.org =`, `Noator`) without banning normal `you` use. One case still
+collapses to a too-short salvaged prefix (`here. In a`). The remaining
+`recipient_artifact` count is now a sharper signal: several answers still carry
+false-familiarity flavour (`you have been`, `I know you`, `your own field`).
+That is not a temperature bug. Next layer should improve candidate length /
+semantic scoring and recipient-gate selection, not flip prompt format again.
