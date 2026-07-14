@@ -51,6 +51,7 @@ a2a_assert_grep "A2A_USER_QTEMP_BASE" "$out" "repl temp sweep help names runtime
 a2a_assert_grep "A2A_TEMP_TOP_KS" "$out" "repl temp sweep help names top-k grid"
 a2a_assert_grep "A2A_TEMP_FORMATS" "$out" "repl temp sweep help names format grid"
 a2a_assert_grep "A2A_TEMP_USER_KVS" "$out" "repl temp sweep help names user KV grid"
+a2a_assert_grep "A2A_USER_ANSWER_TOKENS" "$out" "repl temp sweep help names direct answer token knob"
 a2a_assert_grep "A2A_TEMP_REPL_FORMATS" "$out" "repl temp sweep help names outer REPL format grid"
 
 summary_tsv="$(mktemp)"

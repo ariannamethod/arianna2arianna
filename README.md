@@ -110,7 +110,7 @@ ignored `runs/`. The normal REPL direct-user bridge defaults are
 `A2A_USER_QTEMP_BASE=0.70`, `A2A_USER_QTEMP_SPAN=0.00`, `A2A_USER_TOP_K=40`,
 `A2A_USER_TOP_P=1.00`,
 `A2A_USER_REP=1.30`, `A2A_USER_KV_WEIGHT=0.05`,
-`A2A_USER_CTX_FORMAT=qa`, and
+`A2A_USER_ANSWER_TOKENS=16`, `A2A_USER_CTX_FORMAT=qa`, and
 `A2A_REPL_PROMPT_FORMAT=user_arianna`. `A2A_USER_CTX_FORMAT` controls the
 direct user-answer bridge; `A2A_REPL_PROMPT_FORMAT` controls the outer turn
 context that every cell sees.

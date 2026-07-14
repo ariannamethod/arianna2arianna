@@ -941,6 +941,7 @@ static int   g_user_qtop_k = 40;
 static float g_user_qtop_p = 1.00f;
 static float g_user_qrep = 1.30f;
 static float g_user_kv_weight = 0.05f;
+static int   g_user_answer_tokens = 16;
 static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw */
 static int   g_repl_prompt_format = 0; /* 0=user_arianna, 1=qa */
 static float g_qloop_min = 0.42f;
@@ -963,6 +964,7 @@ static void load_user_bridge_sampling_env(void) {
     g_user_qtop_p = env_float_clamped("A2A_USER_TOP_P", 1.00f, 0.05f, 1.00f);
     g_user_qrep = env_float_clamped("A2A_USER_REP", 1.30f, 1.00f, 5.00f);
     g_user_kv_weight = env_float_clamped("A2A_USER_KV_WEIGHT", 0.05f, 0.00f, 2.00f);
+    g_user_answer_tokens = env_int_clamped("A2A_USER_ANSWER_TOKENS", 16, 4, 64);
     const char *fmt = getenv("A2A_USER_CTX_FORMAT");
     g_user_ctx_format = 2;
     if (fmt && *fmt) {
@@ -1478,7 +1480,10 @@ static int answer_bad_morph_core(const char *start, size_t len) {
            ascii_eq_ci(buf, "shardharchitecturegeomet") ||
            ascii_eq_ci(buf, "harchitecturegeomet") ||
            ascii_eq_ci(buf, "sharden") || ascii_eq_ci(buf, "oulha") ||
-           ascii_eq_ci(buf, "noator") || ascii_eq_ci(buf, "pers") ||
+           ascii_eq_ci(buf, "noator") || ascii_eq_ci(buf, "aardi") ||
+           ascii_eq_ci(buf, "shallards") || ascii_eq_ci(buf, "qopoeleakha") ||
+           ascii_eq_ci(buf, "qlooppressing") || ascii_eq_ci(buf, "qoopops") ||
+           ascii_eq_ci(buf, "didleads") || ascii_eq_ci(buf, "pers") ||
            ascii_eq_ci(buf, "geomet");
 }
 
@@ -2098,7 +2103,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             build_user_answer_prompt(qctx, sizeof(qctx), this_chorus, g_user_q);
             int qnp = bpe_encode_prompt(tok, qctx, qctx_ids, max_seq - 8);
             float qtemp = user_bridge_temp_for_cell(tcell, n_cells);
-            int qfrag_n = nfrag * 2; if (qfrag_n < 12) qfrag_n = 12; if (qfrag_n > 24) qfrag_n = 24;
+            int qfrag_n = g_user_answer_tokens;
             unsigned qseed = seed_base ^ 0xc0ffeeu ^ (unsigned)(tcell * 7919 + r * 65537);
             int save_clean_start = g_clean_answer_start;
             float save_sampler_top_p = g_sampler_top_p;
@@ -2296,9 +2301,9 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     char line[2048], trajectory[4096], prompt[8192], chorus[4096];
     trajectory[0] = 0;
 
-    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userP=%.2f, userRep=%.2f, userKV=%.2f, userFmt=%s, replFmt=%s) ===\n",
+    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userP=%.2f, userRep=%.2f, userKV=%.2f, userTok=%d, userFmt=%s, replFmt=%s) ===\n",
            n_cells, n_rounds, g_user_qtemp_base, g_user_qtemp_span, g_user_qtop_k, g_user_qtop_p, g_user_qrep,
-           g_user_kv_weight, user_ctx_format_name(), repl_prompt_format_name());
+           g_user_kv_weight, g_user_answer_tokens, user_ctx_format_name(), repl_prompt_format_name());
     printf("type :q, :quit, exit, or quit to stop\n");
 
     for (unsigned turn = 1; ; turn++) {

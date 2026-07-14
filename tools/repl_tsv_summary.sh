@@ -115,7 +115,9 @@ summarize() {
                    w == "qopoeleakyname" || w == "shardharchitecturegeomet" ||
                    w == "harchitecturegeomet" || w == "pers" ||
                    w == "geomet" || w == "sharden" || w == "oulha" ||
-                   w == "noator"
+                   w == "noator" || w == "aardi" || w == "shallards" ||
+                   w == "qopoeleakha" || w == "qlooppressing" ||
+                   w == "qoopops" || w == "didleads"
         }
         function has_bad_ascii_apostrophe(s,     apos, rest, pos, tail) {
             apos = sprintf("%c", 39)

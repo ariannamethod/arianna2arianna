@@ -56,6 +56,7 @@ repl_out="$(printf "Why does the field remember?\n:q\n" | "$A2A_BIN" "$A2A_MODEL
 a2a_assert_grep "repl: δ-field live" "$repl_out" "repl starts"
 a2a_assert_grep "userRep=1.30" "$repl_out" "repl reports default direct-user repetition penalty"
 a2a_assert_grep "userKV=0.05" "$repl_out" "repl reports default direct-user KV weight"
+a2a_assert_grep "userTok=16" "$repl_out" "repl reports default direct-user answer length"
 a2a_assert_grep "replFmt=user_arianna" "$repl_out" "repl reports default outer prompt format"
 a2a_assert_grep "repl turn 1" "$repl_out" "repl runs one scripted turn"
 a2a_assert_grep "I_N\\^kv\\[sem\\]" "$repl_out" "repl reports semantic neighbour influence"

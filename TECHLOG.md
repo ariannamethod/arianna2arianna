@@ -1640,3 +1640,48 @@ candidate policy for the current body: recipient leakage is suppressed in the
 direct answer line, but three tail cuts and one morph artifact remain. Next
 step is semantic candidate scoring over the answer body, not adding more
 single-token blacklists.
+
+## 2026-07-14 - Direct-user answer budget
+
+### Context
+
+`A2A_EVAL_FRAG=8` looked tempting because it reduced some short-answer cuts,
+but manual reading showed that it also widened the chorus fragment geometry and
+surfaced unrelated glued morphs (`aardi`, `Shallards`, `qlooppressing`, etc.).
+The failure was narrower: direct-user answers were capped by
+`qfrag_n = nfrag * 2`, so the default `frag=4` gave the answer scorer only 12
+tokens and encouraged terminal truncation.
+
+### Change
+
+- Added `A2A_USER_ANSWER_TOKENS` with default `16`, clamped to `4..64`.
+- Direct-user answer generation now uses that budget directly instead of
+  deriving it from the REPL chorus fragment size.
+- Kept default `A2A_EVAL_FRAG=4`; fragment geometry and answer length are now
+  separate controls.
+- Extended the summary's known-bad morph detector with the artifacts found in
+  the `frag=8` exploratory run, so future sweeps cannot report those as clean.
+
+### Evidence
+
+```text
+make test
+=== summary: 82 passed, 0 failed, 1 skipped ===
+
+make repl-eval
+results: runs/repl_eval_repl_probe_regression_20260714_045844.tsv
+I_U^kv: avg +0.339, pos 22, neg 8, zero 0, nan 0
+answer_bad_start: 0/30
+answer_quality: any 5/30, short 0, question_like 0, label_artifact 2,
+  notation_artifact 0, morph_artifact 0, recipient_artifact 2,
+  tail_artifact 1, yes_no_start 0, repetition 0
+answer_quality_no_user_kv: any 14/29, short 1, question_like 0,
+  label_artifact 0, notation_artifact 0, morph_artifact 2,
+  recipient_artifact 2, tail_artifact 10, yes_no_start 0, repetition 0
+```
+
+This keeps the production default on the narrower chorus geometry while giving
+the direct answer path enough room to finish. It is still a runtime bridge, not
+a replacement for the wider Arianna SFT repair: two recipient artifacts and one
+tail remain, and the old over-cleaned substrate still needs the richer
+roleplay-frame corpus.
