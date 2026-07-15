@@ -88,9 +88,10 @@ it should stay finite and non-zero.
 `make field-sweep` runs the same prompts through full multi-round `field` mode
 and prints a final-round TSV with settling (`d_r`, floor, margin), neighbour
 KV controls (`Δ_R^kv`, floor, margin, `I_N^kv`), field disagreement (`D_R`,
-`Dpos`), qloop route counts, qloop answer quality counters
-(`qloop_iq_avg`, `qloop_quality`, `qloop_tail`, `qloop_morph`, `qloop_label`,
-`qloop_short`, `qloop_question`), and ordinary cell-surface quality counters
+`Dpos`), qloop route/gate counts, qloop answer quality counters
+(`qloop_iq_avg`, `qloop_iq_pos`, `qloop_iq_neg`, `qloop_iq_zero`,
+`qloop_quality`, `qloop_tail`, `qloop_morph`, `qloop_label`, `qloop_short`,
+`qloop_question`), and ordinary cell-surface quality counters
 (`cell_quality`, `cell_tail`, `cell_morph`, `cell_label`, `cell_short`).
 `cell_question` is reported separately because questions can be valid qloop
 material rather than surface debt; `qloop_question` is counted as answer debt
@@ -99,16 +100,22 @@ tuning field-level behavior rather than direct answer snippets. The normal
 field neighbour lane uses a gentle `xcell=0.02` default; direct user-KV answer
 injection is a separate REPL bridge knob. Normal field/repl qloop defaults to
 one routed answer (`qloop=1`); `qloop=2` remains available for diagnostics when
-you want a second candidate route.
+you want a second candidate route. KV-backed cell qloop answers are admitted
+only when `I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`); rejected answers are
+reported as `qloop_gated` and are not written into the chorus. The qloop limit
+counts admitted answers, not failed candidates, so a gated route may fall
+through to the next candidate without widening the accepted chorus.
 
 `make field-grid` runs `field_sweep.sh` across field-level settings, writes each
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
-comparing qloop coverage, qloop/cell surface debt, `I_N^kv`, `I_Q^kv`, `d_r`,
-`d_margin`, `D_R`, and `Dpos`. The compact table also reports qloop/cell debt
-rates, `I_N^kv` sign balance, and a rough `field_score` for sorting candidate
-settings before reading the raw samples. Set `A2A_FIELD_KEEP_RAW=1` to save
-the full per-prompt field outputs next to each TSV. Defaults are intentionally
-small:
+comparing qloop coverage, qloop gate pressure, qloop/cell surface debt,
+`I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`, `D_R`, and `Dpos`. The compact table
+also reports qloop/cell debt rates, `I_N^kv` and `I_Q^kv` sign balance,
+`d_margin` sign balance, and a rough `field_score` for sorting candidate
+settings before reading the raw
+samples. Set
+`A2A_FIELD_KEEP_RAW=1` to save the full per-prompt field outputs next to each
+TSV. Defaults are intentionally small:
 `A2A_FIELD_XCELLS="0 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`, and
 `A2A_FIELD_ROUNDS_LIST="2"`. Override the grid with:
 

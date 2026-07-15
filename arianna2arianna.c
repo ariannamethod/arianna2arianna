@@ -946,6 +946,7 @@ static int   g_user_answer_tokens = 16;
 static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw */
 static int   g_repl_prompt_format = 0; /* 0=user_arianna, 1=qa */
 static float g_qloop_min = 0.42f;
+static float g_qloop_min_iq = 0.0f; /* reject KV-backed qloop answers whose asker KV lowers confidence */
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -2474,11 +2475,13 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         }
     }
     if (g_qloop && verbose && out_disso && cent) {
-        int qcell[2] = {0, 0}, tcell[2] = {0, 0};
-        float qscore[2] = {-1.0f, -1.0f};
+        int qcell[4] = {0, 0, 0, 0}, tcell[4] = {0, 0, 0, 0};
+        float qscore[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
         int max_routes = g_qloop > 2 ? 2 : g_qloop;
-        int routes = pick_question_routes(cur_frag, cent, n_cells, m->embed, qcell, tcell, qscore, max_routes);
-        for (int route = 0; route < routes; route++) {
+        int candidate_routes = max_routes + 2; if (candidate_routes > 4) candidate_routes = 4;
+        int routes = pick_question_routes(cur_frag, cent, n_cells, m->embed, qcell, tcell, qscore, candidate_routes);
+        int accepted_routes = 0;
+        for (int route = 0; route < routes && accepted_routes < max_routes; route++) {
             char qctx[4096], qfrag[1024]; int qctx_ids[512], qids[128], qn = 0;
             snprintf(qctx, sizeof(qctx), "%s\ncell %d asked: %s\ncell %d answers the question to itself:",
                      prompt, qcell[route], cur_frag[qcell[route]], tcell[route]);
@@ -2551,11 +2554,19 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             }
             g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_xcell = save_xcell;
             g_round_tokn = qtok_before;
-            for (int qi = 0; qi < qn && qi < 128 && g_round_tokn < 1024; qi++) g_round_tok[g_round_tokn++] = qids[qi];
+            float qinfl = qkv_on ? qent_off - qent : 0.0f;
+            int qgate = qkv_on && qinfl < g_qloop_min_iq;
             g_clean_answer_start = save_clean_start;
             g_answer_form_guard = save_form_guard;
             g_answer_sentence_stop = save_sentence_stop;
-            float qinfl = qkv_on ? qent_off - qent : 0.0f;
+            if (qgate) {
+                printf("\n  ↳ qloop gate c%d→c%d [kv] score %.3f: rejected %s   [entropy=%.2f I_Q^kv=%+.3f min=%+.3f]",
+                       qcell[route], tcell[route], qscore[route], qfrag, qent, qinfl, g_qloop_min_iq);
+                if (flog) fprintf(flog, "- qloop-gate c%d->c%d [kv] (score=%.3f, entropy=%.2f, I_Q^kv=%+.3f, min=%+.3f):%s\n",
+                                  qcell[route], tcell[route], qscore[route], qent, qinfl, g_qloop_min_iq, qfrag);
+                continue;
+            }
+            for (int qi = 0; qi < qn && qi < 128 && g_round_tokn < 1024; qi++) g_round_tok[g_round_tokn++] = qids[qi];
             for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
             int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);
             if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
@@ -2568,6 +2579,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                 else fprintf(flog, "- qloop c%d->c%d (score=%.3f, entropy=%.2f):%s\n",
                              qcell[route], tcell[route], qscore[route], qent, qfrag);
             }
+            accepted_routes++;
 
             if (frag_question_count(qfrag) > 0 && qn > 0) {
                 float *qcent = (float*)calloc(m->embed, sizeof(float));
@@ -2836,6 +2848,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_kvshuf = 1;
     g_kvpos = 0;
     g_qloop = 1;
+    g_qloop_min_iq = env_float_clamped("A2A_QLOOP_MIN_IQ", g_qloop_min_iq, -2.0f, 2.0f);
     load_user_bridge_sampling_env();
     load_repl_prompt_env();
 
@@ -3021,6 +3034,7 @@ int main(int argc, char **argv) {
         g_qloop      = argc > 14 ? atoi(argv[14]) : (g_chorus ? 1 : 0);  /* 0=off; 1..2 resonant question routes */
         if (g_qloop < 0) g_qloop = 0;
         if (g_qloop > 2) g_qloop = 2;
+        g_qloop_min_iq = env_float_clamped("A2A_QLOOP_MIN_IQ", g_qloop_min_iq, -2.0f, 2.0f);
         g_kvpos      = argc > 15 ? atoi(argv[15]) : 0;           /* 0=semantic/bag lane; 1=positional order-probe lane */
         g_kvpos      = g_kvpos ? 1 : 0;
         if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */

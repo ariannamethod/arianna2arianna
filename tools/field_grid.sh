@@ -18,9 +18,10 @@ Knobs:
   A2A_FIELD_CELLS=4                field cells
   A2A_FIELD_FRAG=12                tokens per cell fragment
   A2A_FIELD_KEEP_RAW=0             save raw per-prompt field outputs next to TSVs
+  A2A_QLOOP_MIN_IQ=0.0             reject KV-backed qloop answers below this I_Q^kv
 
 These map to field_sweep.sh / runtime knobs:
-  A2A_XCELL, A2A_QLOOP, A2A_ROUNDS, A2A_CELLS, A2A_FRAG
+  A2A_XCELL, A2A_QLOOP, A2A_ROUNDS, A2A_CELLS, A2A_FRAG, A2A_QLOOP_MIN_IQ
 EOF
 }
 
@@ -73,8 +74,12 @@ compact_line() {
             qroutes_sum += qroutes
             qkv_sum += qkv
             qtrig_sum += $(col("qloop_triggers")) + 0
+            qgate_sum += $(col("qloop_gated")) + 0
             if (qroutes > 0) qprompt_rows++
             qquality_sum += $(col("qloop_quality")) + 0
+            iq_pos += $(col("qloop_iq_pos")) + 0
+            iq_neg += $(col("qloop_iq_neg")) + 0
+            iq_zero += $(col("qloop_iq_zero")) + 0
             cfrag_sum += $(col("cell_fragments")) + 0
             cquality_sum += $(col("cell_quality")) + 0
 
@@ -91,7 +96,13 @@ compact_line() {
             v = $(col("d_r"))
             if (numeric(v)) { dr_sum += v + 0; dr_n++ }
             v = $(col("d_margin"))
-            if (numeric(v)) { dm_sum += v + 0; dm_n++ }
+            if (numeric(v)) {
+                dm_sum += v + 0
+                dm_n++
+                if (v + 0 > 0.0005) dm_pos++
+                else if (v + 0 < -0.0005) dm_neg++
+                else dm_zero++
+            }
             v = $(col("disso"))
             if (numeric(v)) { dsum += v + 0; d_n++ }
             v = $(col("dpos"))
@@ -101,6 +112,7 @@ compact_line() {
             qprompt_rate = rows ? qprompt_rows / rows : 0
             qkv_rate = qroutes_sum ? qkv_sum / qroutes_sum : 0
             qdebt_rate = qroutes_sum ? qquality_sum / qroutes_sum : 0
+            qgate_rate = (qroutes_sum + qgate_sum) ? qgate_sum / (qroutes_sum + qgate_sum) : 0
             cdebt_rate = cfrag_sum ? cquality_sum / cfrag_sum : 0
             in_avg = in_n ? in_sum / in_n : 0
             iq_avg = iq_n ? iq_sum / iq_n : 0
@@ -108,18 +120,23 @@ compact_line() {
             d_avg = d_n ? dsum / d_n : 0
             dpos_avg = dpos_n ? dpos_sum / dpos_n : 0
             in_neg_rate = in_n ? in_neg / in_n : 0
+            iq_neg_rate = iq_n ? iq_neg / iq_n : 0
+            dm_pos_rate = dm_n ? dm_pos / dm_n : 0
             field_score = 2.0 * qprompt_rate + 0.5 * qkv_rate + 0.5 * clamp(iq_avg, -1, 1) + 0.2 * clamp(in_avg, -1, 1) \
                         - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * d_avg - 0.25 * pospart(dm_avg) \
-                        - 0.2 * in_neg_rate
+                        - 0.2 * in_neg_rate - 0.4 * iq_neg_rate - 0.2 * dm_pos_rate - 0.15 * qgate_rate
 
-            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%s\t%s\t%s\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
+            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
                 xcell, qloop, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
+                qgate_sum,
                 qprompt_rows, rows, qquality_sum, qroutes_sum, cquality_sum, cfrag_sum,
                 qprompt_rate, qdebt_rate, cdebt_rate, in_pos, in_neg, in_zero,
                 in_n ? sprintf("%+.3f", in_sum / in_n) : "nan",
+                iq_pos, iq_neg, iq_zero,
                 iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan",
                 dr_n ? sprintf("%.3f", dr_sum / dr_n) : "nan",
                 dm_n ? sprintf("%+.3f", dm_sum / dm_n) : "nan",
+                dm_pos, dm_neg, dm_zero,
                 d_n ? sprintf("%.3f", dsum / d_n) : "nan",
                 dpos_n ? sprintf("%.2f", dpos_sum / dpos_n) : "nan",
                 field_score, raw, tsv, summary
@@ -127,7 +144,7 @@ compact_line() {
     ' "$tsv_file"
 }
 
-printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\tavg_i_q_kv\tavg_d_r\tavg_d_margin\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
+printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
 
 for xcell in $XCELLS; do
     for qloop in $QLOOPS; do

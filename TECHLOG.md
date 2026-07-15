@@ -2274,3 +2274,108 @@ second candidates.
 
 `δ-life` still enables `g_qloop=2`; it is a population mode, not the normal
 field/repl routed-answer path.
+
+## 2026-07-15 - Qloop influence sign counters
+
+### Context
+
+The qloop retune used raw logs to see a pattern that the previous compact grid
+could only hint at: `qloop=2` often added a second routed answer with weak or
+negative `I_Q^kv`. Averaging `I_Q^kv` over all qloop routes made that risk look
+smaller than it was, especially when one strong route masked one bad route.
+
+### Change
+
+- `tools/field_sweep.sh` now emits `qloop_iq_pos`, `qloop_iq_neg`, and
+  `qloop_iq_zero` next to `qloop_iq_avg`.
+- `tools/field_tsv_summary.sh` reports `I_Q^kv` sign balance and folds negative
+  qloop influence into `field_score`.
+- `tools/field_grid.sh` prints `i_q_signs` in the compact table, next to the
+  existing `i_n_signs`.
+
+This keeps the route-limit decision visible in the instrument itself: a setting
+can have good average qloop influence and still carry too many negative routed
+answers.
+
+### First Read
+
+Canonical five-prompt corpus, `xcell=0.02`, `rounds=3`, raw capture enabled:
+
+```text
+qloop  routes  prompts  i_q_signs  avg_I_Q^kv  field_score
+1      11      5/5      10/1/0     +0.831      +2.191
+2      21      5/5      14/7/0     +0.635      +1.993
+```
+
+The two-route mode adds ten extra qloop answers, but six of those extra routes
+land in the negative-influence bucket. This supports keeping normal field/repl
+at `qloop=1` while preserving `qloop=2` as a diagnostic control.
+
+## 2026-07-15 - Field settling sign counters
+
+### Context
+
+The same averaging problem applies to field settling. `avg_d_margin` can hide
+whether a setting consistently settles toward the sampling floor or only wins
+because positive and negative prompt-level margins cancel each other out. This
+matters for `rounds=2` versus `rounds=3`: more rounds can improve qloop coverage
+while making more prompts drift above their floor.
+
+### Change
+
+- `tools/field_tsv_summary.sh` now reports `settling: d_margin pos/neg/zero`.
+- `tools/field_grid.sh` now prints `d_margin_signs` in the compact table.
+- `field_score` now applies a small penalty for positive prompt-level
+  `d_margin` rate, separate from the existing positive average-margin penalty.
+
+This does not decide the round count by itself; it keeps the next round-count
+choice grounded in per-prompt settling risk instead of one averaged margin.
+
+## 2026-07-15 - Qloop negative-influence gate
+
+### Context
+
+Once `I_Q^kv` sign counts were visible, negative qloop influence stopped being
+just an offline tuning smell. The runtime already computes the qloop answer
+with and without the asking cell's KV before committing that answer into the
+chorus. That means a bad route can be rejected at the last responsible moment:
+after measurement, before it enters field memory.
+
+### Change
+
+- Added `A2A_QLOOP_MIN_IQ` (default `0.0`) as the minimum admitted
+  KV-backed cell-qloop influence.
+- A KV-backed cell qloop answer with `I_Q^kv < A2A_QLOOP_MIN_IQ` is printed and
+  logged as `qloop gate`, but is not added to `this_chorus`, `hist`, or the
+  qloop word-memory.
+- The qloop route limit now counts accepted answers. The runtime may inspect a
+  small fallback candidate pool after a gate rejection, but it still commits at
+  most `qloop` routed answers.
+- `field_sweep.sh` now reports `qloop_gated`.
+- `field_tsv_summary.sh` and `field_grid.sh` fold gated routes into
+  `field_score` as a small route-geometry penalty while keeping accepted route
+  counts clean.
+
+This keeps the field protective without hiding evidence: the accepted qloop
+routes show what actually entered the chorus, and `qloop_gated` shows how often
+the geometry tried to admit a negative-influence answer.
+
+### First Read
+
+Canonical five-prompt corpus, `xcell=0.02`, `rounds=3`, `A2A_QLOOP_MIN_IQ=0.0`:
+
+```text
+qloop  accepted  gated  prompts  i_q_signs  avg_I_Q^kv  gate_rate  field_score
+1      11        1      5/5      11/0/0     +1.009      0.083      +2.140
+2      19        9      5/5      19/0/0     +0.840      0.321      +2.029
+```
+
+The gate removes the negative `I_Q^kv` answers from the accepted route set. The
+two-route mode still attempts too many bad routes, so it remains a diagnostic
+control rather than the normal field default.
+
+Threshold check: raising `A2A_QLOOP_MIN_IQ` to `0.05` or `0.10` on the same
+`qloop=1` grid still preserves prompt coverage after candidate fallback
+(`5/5`, `11` accepted), but gates `4` candidates and scores slightly lower
+(`+2.116`). Default `0.0` is therefore the conservative line: reject negative
+asker-KV influence, keep weak-but-positive routes alive.

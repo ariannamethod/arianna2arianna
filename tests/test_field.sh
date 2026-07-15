@@ -53,10 +53,10 @@ field_sweep_raw_dir="$(mktemp -d)"
 printf "Let the cells remember each other.\n" > "$field_sweep_prompts"
 field_sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=2 A2A_FIELD_RAW_DIR="$field_sweep_raw_dir" bash "$A2A_ROOT/tools/field_sweep.sh" "$field_sweep_prompts" 2>&1)"
 a2a_assert_grep "^prompt[[:space:]]+mode[[:space:]]+cells[[:space:]]+frag[[:space:]]+rounds[[:space:]]+avg_entropy[[:space:]]+d_r[[:space:]]+d_floor" "$field_sweep_out" "field sweep reports final-round TSV header"
-a2a_assert_grep "qloop_iq_avg[[:space:]]+qloop_quality[[:space:]]+qloop_tail[[:space:]]+qloop_morph" "$field_sweep_out" "field sweep reports qloop answer quality columns"
+a2a_assert_grep "qloop_triggers[[:space:]]+qloop_gated[[:space:]]+qloop_iq_avg[[:space:]]+qloop_iq_pos[[:space:]]+qloop_iq_neg[[:space:]]+qloop_iq_zero[[:space:]]+qloop_quality" "$field_sweep_out" "field sweep reports qloop influence sign columns"
 a2a_assert_grep "cell_fragments[[:space:]]+cell_quality[[:space:]]+cell_tail[[:space:]]+cell_morph" "$field_sweep_out" "field sweep reports cell surface quality columns"
 a2a_assert_grep "Let the cells remember each other\\.[[:space:]]+sem[[:space:]]+3[[:space:]]+4[[:space:]]+2" "$field_sweep_out" "field sweep reports semantic final-round row"
-if printf "%s\n" "$field_sweep_out" | awk -F '\t' '$1 == "Let the cells remember each other." && $16 ~ /^[0-9]+$/ && $17 ~ /^[0-9]+$/ && $18 ~ /^[0-9]+$/ && ($19 == "nan" || $19 ~ /^[+-]?[0-9]+[.][0-9]+$/) && $20 ~ /^[0-9]+$/ && $26 == 6 && $27 ~ /^[0-9]+$/ { ok = 1 } END { exit ok ? 0 : 1 }'; then
+if printf "%s\n" "$field_sweep_out" | awk -F '\t' '$1 == "Let the cells remember each other." && $16 ~ /^[0-9]+$/ && $17 ~ /^[0-9]+$/ && $18 ~ /^[0-9]+$/ && $19 ~ /^[0-9]+$/ && ($20 == "nan" || $20 ~ /^[+-]?[0-9]+[.][0-9]+$/) && $21 ~ /^[0-9]+$/ && $22 ~ /^[0-9]+$/ && $23 ~ /^[0-9]+$/ && $24 ~ /^[0-9]+$/ && $30 == 6 && $31 ~ /^[0-9]+$/ { ok = 1 } END { exit ok ? 0 : 1 }'; then
     a2a_ok "field sweep reports qloop answer and cell surface counters"
 else
     a2a_fail "field sweep did not report qloop answer and cell surface counters"
@@ -78,8 +78,13 @@ printf "Let the cells remember each other.\n" > "$field_grid_prompts"
 field_grid_out="$(A2A_RUN_DIR="$field_grid_dir" A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS=0 A2A_FIELD_QLOOPS=0 A2A_FIELD_ROUNDS_LIST=1 A2A_FIELD_CELLS=2 A2A_FIELD_FRAG=3 bash "$A2A_ROOT/tools/field_grid.sh" "$field_grid_prompts" 2>&1)"
 rm -f "$field_grid_prompts"
 a2a_assert_grep "^xcell[[:space:]]+qloop[[:space:]]+rounds[[:space:]]+cells[[:space:]]+frag" "$field_grid_out" "field grid reports compact TSV header"
-a2a_assert_grep "i_n_signs[[:space:]]+avg_i_n_kv.*field_score[[:space:]]+raw_dir" "$field_grid_out" "field grid reports risk, score, and raw columns"
+a2a_assert_grep "qloop_gated.*i_n_signs[[:space:]]+avg_i_n_kv[[:space:]]+i_q_signs[[:space:]]+avg_i_q_kv.*d_margin_signs.*field_score[[:space:]]+raw_dir" "$field_grid_out" "field grid reports influence and settling risks, score, and raw columns"
 a2a_assert_grep "^0[[:space:]]+0[[:space:]]+1[[:space:]]+2[[:space:]]+3[[:space:]]+1[[:space:]]+0[[:space:]]+0" "$field_grid_out" "field grid reports one no-qloop setting"
+if printf "%s\n" "$field_grid_out" | awk -F '\t' 'NR == 1 && $1 == "xcell" { header = NF } NR > 1 && $1 == "0" { row = NF } END { exit (header == 28 && row == 28) ? 0 : 1 }'; then
+    a2a_ok "field grid compact rows keep expected column count"
+else
+    a2a_fail "field grid compact rows changed column count"
+fi
 if find "$field_grid_dir" -path '*.raw/*.txt' -type f | grep -q .; then
     a2a_ok "field grid raw capture writes per-setting raw outputs"
 else
@@ -92,6 +97,8 @@ a2a_assert_grep "r1 cell 0 .*What does the field remember\\?" "$qloop_out" "fiel
 a2a_assert_not_grep "What do you see when|perspause" "$qloop_out" "field cell surface removes open tails and morph junk"
 a2a_assert_grep "qloop c[0-9]+.*\\[kv\\]" "$qloop_out" "qloop answers use asker KV"
 a2a_assert_grep "I_Q\\^kv=" "$qloop_out" "qloop reports asker KV influence"
+qloop_gate_out="$(A2A_QLOOP_MIN_IQ=2.0 "$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does the field remember?" field 5 12 1 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
+a2a_assert_grep "qloop gate c[0-9]+.*\\[kv\\].*I_Q\\^kv=" "$qloop_gate_out" "qloop gates negative or below-threshold asker KV influence"
 
 repl_out="$(printf "Why does the field remember?\n:q\n" | "$A2A_BIN" "$A2A_MODEL_F16" repl 3 4 1 2>&1)"
 a2a_assert_grep "repl: δ-field live" "$repl_out" "repl starts"
