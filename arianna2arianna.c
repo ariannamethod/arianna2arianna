@@ -948,6 +948,8 @@ static int   g_repl_prompt_format = 0; /* 0=user_arianna, 1=qa */
 static float g_qloop_min = 0.42f;
 static float g_qloop_min_iq = 0.0f; /* reject KV-backed qloop answers whose asker KV lowers confidence */
 static float g_qloop_tconf_weight = 0.20f; /* route prior: target confidence contribution */
+static int   g_qloop_tconf_adapt = 0;      /* 1 = use adaptive target-confidence prior for widened qloop */
+static float g_qloop_tconf_adapt_weight = -0.10f;
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -992,6 +994,8 @@ static void load_repl_prompt_env(void) {
 static void load_qloop_route_env(void) {
     g_qloop_min_iq = env_float_clamped("A2A_QLOOP_MIN_IQ", 0.0f, -2.0f, 2.0f);
     g_qloop_tconf_weight = env_float_clamped("A2A_QLOOP_TCONF_WEIGHT", 0.20f, -1.00f, 1.00f);
+    g_qloop_tconf_adapt = env_int_clamped("A2A_QLOOP_TCONF_ADAPT", 0, 0, 1);
+    g_qloop_tconf_adapt_weight = env_float_clamped("A2A_QLOOP_TCONF_ADAPT_WEIGHT", -0.10f, -1.00f, 1.00f);
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -2239,7 +2243,8 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
         for (int t = 0; t < lim; t++) if (t != q) {
             float dist = 1.0f - vec_cosine(cent + (size_t)q * embed, cent + (size_t)t * embed, embed);
             float confidence = 1.0f / (1.0f + g_cell_ent[t]);
-            float score = dist + 0.15f * qopen + g_qloop_tconf_weight * confidence + 0.05f * (float)(qmarks - 1);
+            float tconf_weight = (g_qloop_tconf_adapt && g_qloop > 1) ? g_qloop_tconf_adapt_weight : g_qloop_tconf_weight;
+            float score = dist + 0.15f * qopen + tconf_weight * confidence + 0.05f * (float)(qmarks - 1);
             if (score < g_qloop_min) continue;
             int dup = 0;
             for (int i = 0; i < n; i++) if (out_t[i] == t || (out_q[i] == q && out_t[i] == t)) dup = 1;

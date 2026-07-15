@@ -2581,3 +2581,54 @@ lowers efficiency/score. For diagnostic `qloop=2`, the same negative tconf
 weight clearly reduces gate pressure and improves `I_Q^kv`. The next runtime
 policy should therefore be conditional or adaptive, not simply changing the
 global default away from `0.20`.
+
+## 2026-07-16 - Conditional qloop target-confidence policy lane
+
+### Context
+
+The first sweep separated two regimes:
+
+- normal `qloop=1` should keep the existing `A2A_QLOOP_TCONF_WEIGHT=0.20`
+  default because the negative prior did not clearly win there;
+- widened `qloop=2` benefited from the negative target-confidence prior by
+  reducing gate pressure and raising average `I_Q^kv`.
+
+That argues for a conditional lane, not a global default change.
+
+### Change
+
+- Added `A2A_QLOOP_TCONF_ADAPT` (default `0`).
+- Added `A2A_QLOOP_TCONF_ADAPT_WEIGHT` (default `-0.10`).
+- When adaptation is enabled, `pick_question_routes()` uses the adaptive weight
+  only when `qloop>1`; `qloop=1` still uses `A2A_QLOOP_TCONF_WEIGHT`.
+- `tools/field_grid.sh` now supports `A2A_FIELD_QLOOP_TCONF_ADAPTS`, includes
+  `qloop_tconf_adapt` in the compact TSV, and can compare fixed/adaptive
+  routing side by side.
+
+Focused verification command:
+
+```sh
+A2A_FIELD_XCELLS="0.02" \
+A2A_FIELD_QLOOPS="2" \
+A2A_FIELD_QLOOP_TCONFS="0.20" \
+A2A_FIELD_QLOOP_TCONF_ADAPTS="0 1" \
+A2A_FIELD_ROUNDS_LIST=3 make field-grid
+```
+
+Decision rule: keep `A2A_QLOOP_TCONF_ADAPT=0` as production default until the
+adaptive lane wins on route efficiency and `I_Q^kv` across more than the small
+canonical prompt set.
+
+### Focused Check
+
+`xcell=0.02`, `qloop=2`, `tconf=0.20`, `rounds=3`, canonical five-prompt
+corpus:
+
+```text
+adapt  routes/gated  eff    prompts  qloop_quality  avg_I_Q^kv  field_score
+0      19/9          0.679  5/5      0/19           +0.840      +2.029
+1      14/6          0.700  5/5      0/14           +0.963      +2.090
+```
+
+The adaptive lane reproduces the earlier `qloop=2` negative-tconf win while
+keeping the fixed `0.20` policy as the explicit default.
