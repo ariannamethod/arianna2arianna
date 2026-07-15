@@ -109,6 +109,9 @@ sweep-influence: $(BIN) $(MODEL)
 field-sweep: $(BIN) $(MODEL)
 	A2A_MODEL="$(MODEL)" bash tools/field_sweep.sh "$(FIELD_SWEEP_PROMPTS)"
 
+field-grid: $(BIN) $(MODEL)
+	A2A_MODEL="$(MODEL)" bash tools/field_grid.sh "$(FIELD_SWEEP_PROMPTS)"
+
 repl-sweep: $(BIN) $(MODEL)
 	A2A_MODEL="$(MODEL)" bash tools/repl_question_sweep.sh "$(REPL_PROMPTS)"
 
@@ -130,7 +133,7 @@ openai-repl-probe: $(BIN) $(MODEL)
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 run-q4 repl field restest life sweep-influence field-sweep repl-sweep repl-eval repl-temp-sweep repl-substrate-compare recipient-lock openai-repl-probe clean weights weights-q8 weights-q4 test portable fast-x86 bench
+.PHONY: run run-q8 run-q4 repl field restest life sweep-influence field-sweep field-grid repl-sweep repl-eval repl-temp-sweep repl-substrate-compare recipient-lock openai-repl-probe clean weights weights-q8 weights-q4 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh

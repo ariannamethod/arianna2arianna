@@ -2159,3 +2159,42 @@ Interpretation: `0.02` keeps routed qloop answers clean, increases coverage,
 and reduces field disagreement/positional dissonance versus `0.05`. The next
 tuning step should use `0.02` as the field default and keep temperature/user-KV
 work on the separate REPL bridge axis.
+
+## 2026-07-15 - Field grid harness
+
+### Context
+
+The `xcell=0.02` decision came from an ad-hoc shell grid. That was enough to
+pick the immediate default, but not enough for future field-level tuning: the
+next changes need a repeatable harness that stores the raw TSV, stores the
+aggregate summary, and keeps stdout compact enough to compare settings.
+
+### Change
+
+- Added `tools/field_tsv_summary.sh`, a summary pass over `field_sweep.sh` TSV
+  files. It reports:
+  - qloop route/KV/trigger totals and prompt coverage
+  - qloop answer debt
+  - ordinary cell surface debt
+  - average `I_N^kv`, weighted average `I_Q^kv`, `d_r`, `d_margin`, `D_R`, and
+    `Dpos`
+- Added `tools/field_grid.sh`, a grid runner over:
+  - `A2A_FIELD_XCELLS`
+  - `A2A_FIELD_QLOOPS`
+  - `A2A_FIELD_ROUNDS_LIST`
+  - `A2A_FIELD_CELLS`
+  - `A2A_FIELD_FRAG`
+- Added `make field-grid`; per-setting TSV and summary files go under ignored
+  `runs/`, while stdout prints one compact comparison row per setting.
+
+### Default Grid
+
+```text
+A2A_FIELD_XCELLS="0 0.02 0.05"
+A2A_FIELD_QLOOPS="2"
+A2A_FIELD_ROUNDS_LIST="2"
+```
+
+This keeps the default run small enough for routine use while still comparing
+no-KV, current default, and the previous `0.05` lane. Broader sweeps should
+expand one axis at a time.

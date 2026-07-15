@@ -40,6 +40,7 @@ make field PROMPT="What is resonance?"
 make restest PROMPT="What is resonance?"
 make life PROMPT="Let the cells remember each other."
 make sweep-influence
+make field-grid
 make repl-sweep
 make repl-eval
 make repl-temp-sweep
@@ -97,6 +98,19 @@ because the routed answer path should close rather than ask again. Use it when
 tuning field-level behavior rather than direct answer snippets. The normal
 field neighbour lane uses a gentle `xcell=0.02` default; direct user-KV answer
 injection is a separate REPL bridge knob.
+
+`make field-grid` runs `field_sweep.sh` across field-level settings, writes each
+per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
+comparing qloop coverage, qloop/cell surface debt, `I_N^kv`, `I_Q^kv`, `d_r`,
+`d_margin`, `D_R`, and `Dpos`. Defaults are intentionally small:
+`A2A_FIELD_XCELLS="0 0.02 0.05"`, `A2A_FIELD_QLOOPS="2"`, and
+`A2A_FIELD_ROUNDS_LIST="2"`. Override the grid with:
+
+```sh
+A2A_FIELD_XCELLS="0.01 0.02 0.03" make field-grid
+A2A_FIELD_XCELLS="0 0.02" A2A_FIELD_QLOOPS="0 1 2" make field-grid
+A2A_FIELD_ROUNDS_LIST="1 2 3" A2A_FIELD_CELLS=4 A2A_FIELD_FRAG=12 make field-grid
+```
 
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average

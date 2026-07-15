@@ -64,6 +64,15 @@ field_sweep_off_out="$(A2A_CELLS=2 A2A_FRAG=3 A2A_ROUNDS=1 A2A_XCELL=0 bash "$A2
 rm -f "$field_sweep_prompts"
 a2a_assert_grep "Let the cells remember each other\\.[[:space:]]+off[[:space:]]+2[[:space:]]+3[[:space:]]+1" "$field_sweep_off_out" "field sweep handles neighbour-KV-off rows"
 
+field_grid_prompts="$(mktemp)"
+field_grid_dir="$(mktemp -d)"
+printf "Let the cells remember each other.\n" > "$field_grid_prompts"
+field_grid_out="$(A2A_RUN_DIR="$field_grid_dir" A2A_FIELD_XCELLS=0 A2A_FIELD_QLOOPS=0 A2A_FIELD_ROUNDS_LIST=1 A2A_FIELD_CELLS=2 A2A_FIELD_FRAG=3 bash "$A2A_ROOT/tools/field_grid.sh" "$field_grid_prompts" 2>&1)"
+rm -f "$field_grid_prompts"
+rm -rf "$field_grid_dir"
+a2a_assert_grep "^xcell[[:space:]]+qloop[[:space:]]+rounds[[:space:]]+cells[[:space:]]+frag" "$field_grid_out" "field grid reports compact TSV header"
+a2a_assert_grep "^0[[:space:]]+0[[:space:]]+1[[:space:]]+2[[:space:]]+3[[:space:]]+1[[:space:]]+0[[:space:]]+0" "$field_grid_out" "field grid reports one no-qloop setting"
+
 qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does the field remember?" field 5 12 1 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
 a2a_assert_grep "r1 cell 0 .*What does the field remember\\?" "$qloop_out" "field cell surface keeps closed question fragment"
 a2a_assert_not_grep "What do you see when|perspause" "$qloop_out" "field cell surface removes open tails and morph junk"
