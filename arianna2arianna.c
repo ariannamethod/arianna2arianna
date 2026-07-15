@@ -1626,6 +1626,50 @@ static int answer_has_terminal_tail_artifact(const char *s) {
            answer_is_terminal_stem_artifact(p, (size_t)(word_end - p));
 }
 
+static void trim_open_answer_after_closed_sentence(char *s) {
+    if (!s || !*s) return;
+    for (char *p = s; *p; p++) {
+        if (*p != '.' && *p != '!') continue;
+        char *tail = p + 1;
+        while (*tail == '"' || *tail == '\'' || *tail == ')' || *tail == ']' || *tail == '}') tail++;
+        int gap = 0;
+        while (*tail == ' ' || *tail == '\t' || *tail == '\r' || *tail == '\n') { tail++; gap = 1; }
+        while (*tail == '"' || *tail == '\'' || *tail == '(' || *tail == '[' || *tail == '{') tail++;
+        if (!gap) continue;
+        if (!*tail) return;
+        if (answer_word_count(tail) <= 3 || answer_has_terminal_tail_artifact(tail)) {
+            p[1] = 0;
+            trim_answer_right(s);
+            return;
+        }
+    }
+}
+
+static void close_short_answer_sentence(char *s, size_t cap) {
+    if (!s || !*s || cap < 2) return;
+    trim_answer_right(s);
+    size_t n = strlen(s);
+    if (!n || n + 2 > cap || answer_has_sentence_boundary_end(s)) return;
+    char *end = s + n;
+    while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
+    while (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) end--;
+    if (end <= s) return;
+    unsigned char last = (unsigned char)end[-1];
+    if (last == '(' || last == '[' || last == '{' || last == ',' || last == ':' ||
+        last == ';' || last == '-' || last == '/' || last == '?' || last == '=')
+        return;
+    const char *p = end;
+    while (p > s && !ascii_alpha((unsigned char)p[-1])) p--;
+    const char *word_end = p;
+    while (p > s && ascii_alpha((unsigned char)p[-1])) p--;
+    if (p == word_end) return;
+    if (answer_is_terminal_function_word(p, (size_t)(word_end - p)) ||
+        answer_is_terminal_stem_artifact(p, (size_t)(word_end - p)))
+        return;
+    s[n] = '.';
+    s[n + 1] = 0;
+}
+
 static int answer_has_shape_artifact(const char *s) {
     if (answer_contains_phrase_ci(s, "shall you ")) return 1;
     for (const char *p = s; *p;) {
@@ -2174,6 +2218,12 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             int qkv_on = (qcell[route] < 8 && cell_kv[qcell[route]] && cell_klen[qcell[route]] > 0 && answer_xcell > 0);
             unsigned qseed = seed_base ^ 0xa2a51u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + r * 265443576 + route * 65537);
             int qtok_before = g_round_tokn, save_field_on = g_field_on;
+            int save_clean_start = g_clean_answer_start;
+            int save_form_guard = g_answer_form_guard;
+            int save_sentence_stop = g_answer_sentence_stop;
+            g_clean_answer_start = 1;
+            g_answer_form_guard = 1;
+            g_answer_sentence_stop = 1;
             g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_field_on = 0;
             float qent_off = qkv_on ? cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
                                                  qseed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL) : 0.0f;
@@ -2183,7 +2233,50 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_nbr_shuf = 0;
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
+            clean_answer_fragment(qfrag);
+            trim_open_answer_after_closed_sentence(qfrag);
+            close_short_answer_sentence(qfrag, sizeof(qfrag));
+            int answer_score = answer_candidate_score_semantic(m, tok, cent + (size_t)qcell[route] * m->embed,
+                                                                cur_frag[qcell[route]], qfrag);
+            if (answer_score > 0 || answer_fragment_bad(qfrag)) {
+                static const float retry_temp_mul[] = { 0.85f, 0.70f, 0.95f, 0.60f };
+                static const unsigned retry_salt[] = { 0x7f4a7c15u, 0x9e3779b9u, 0x85ebca6bu, 0xc2b2ae35u };
+                for (int attempt = 0; attempt < 4 && answer_score > 0; attempt++) {
+                    char qfrag_retry[1024]; int qids_retry[128], qn_retry = 0;
+                    g_round_tokn = qtok_before;
+                    if (qkv_on) { g_nbr = cell_kv[qcell[route]]; g_nbr_len = cell_klen[qcell[route]]; g_xcell = answer_xcell; }
+                    else { g_nbr = NULL; g_nbr_len = 0; }
+                    g_nbr_shuf = 0; g_field_on = save_field_on;
+                    qfrag_retry[0] = 0;
+                    float retry_temp = qtemp * retry_temp_mul[attempt];
+                    if (retry_temp < 0.40f) retry_temp = 0.40f;
+                    int retry_top_k = 40;
+                    if (attempt == 2) retry_top_k = 24;
+                    if (attempt == 3) retry_top_k = 16;
+                    unsigned retry_seed = qseed ^ retry_salt[attempt];
+                    float qent_retry = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, retry_temp, retry_top_k, 1.4f,
+                                                  retry_seed, eos, max_seq, qfrag_retry, sizeof(qfrag_retry), 0,
+                                                  qids_retry, &qn_retry, NULL, NULL, NULL);
+                    clean_answer_fragment(qfrag_retry);
+                    trim_open_answer_after_closed_sentence(qfrag_retry);
+                    close_short_answer_sentence(qfrag_retry, sizeof(qfrag_retry));
+                    int retry_score = answer_candidate_score_semantic(m, tok, cent + (size_t)qcell[route] * m->embed,
+                                                                       cur_frag[qcell[route]], qfrag_retry);
+                    if (retry_score < answer_score) {
+                        copy_cstr(qfrag, sizeof(qfrag), qfrag_retry);
+                        qn = qn_retry;
+                        for (int qi = 0; qi < qn_retry && qi < 128; qi++) qids[qi] = qids_retry[qi];
+                        qent = qent_retry;
+                        answer_score = retry_score;
+                    }
+                }
+            }
             g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_xcell = save_xcell;
+            g_round_tokn = qtok_before;
+            for (int qi = 0; qi < qn && qi < 128 && g_round_tokn < 1024; qi++) g_round_tok[g_round_tokn++] = qids[qi];
+            g_clean_answer_start = save_clean_start;
+            g_answer_form_guard = save_form_guard;
+            g_answer_sentence_stop = save_sentence_stop;
             float qinfl = qkv_on ? qent_off - qent : 0.0f;
             for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
             int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);

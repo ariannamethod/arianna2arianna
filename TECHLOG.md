@@ -1933,3 +1933,51 @@ xcell  avg I_N^kv  read
 Default field neighbour coupling changed from `0.30` to `0.05` in `Makefile`,
 `field` CLI default, REPL field loop, and sweep scripts. Direct user-KV answer
 injection remains a separate bridge knob.
+
+## 2026-07-15 - Cell qloop answer guard
+
+### Context
+
+After the field-level sweep exposed real qloop route counts, manual reads showed
+the cell-to-cell qloop answer path still behaved like raw continuation. The
+direct user bridge already had answer-start suppression, form guards,
+sentence-stop, cleanup, and retry selection; the inter-cell qloop path did not.
+
+Typical bad shapes were dangling fragments and notation-like starts:
+
+```text
+↳ qloop c3→c2 [kv]: I exist. But if this
+↳ qloop c3→c1 [kv]: form and meaning (being)
+```
+
+### Change
+
+- Cell-to-cell qloop now temporarily enables `g_clean_answer_start`,
+  `g_answer_form_guard`, and `g_answer_sentence_stop` during routed answers.
+- The no-KV shadow still uses the same guarded answer surface, keeping the
+  `I_Q^kv` control comparable.
+- Qloop candidates are cleaned, scored against the asking cell's centroid and
+  text, and retried through cooler/top-k variants when the first answer is
+  malformed.
+- Retry attempts reset `g_round_tokn`; only the selected qloop answer is written
+  back into shared word-memory.
+- A qloop-only tail closer trims open second sentences and closes short
+  contentful fragments without changing ordinary cell generation.
+
+### Smoke
+
+```text
+./arianna2arianna weights/nano_arianna_f16.gguf \
+  "Answer only with a question: why does the field remember?" \
+  field 5 12 1 0 2 0.05 1 1.3 0 1 2 0
+
+↳ qloop c3→c2 [kv] score 0.444: cell, alive; living organ.
+↳ qloop c3→c1 [kv] score 0.436: its own shape and response.
+```
+
+Verification:
+
+```text
+make test
+=== summary: 86 passed, 0 failed, 1 skipped ===
+```

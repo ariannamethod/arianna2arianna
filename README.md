@@ -177,9 +177,9 @@ r1 cell 3 (T=1.30): If this sense has been a field like
 Question loop:
 
 ```text
-r1 cell 3 (T=1.12): How do we understand it in its own terms? Which if
-↳ qloop c3→c0 [kv] score 1.073: not how a human feels like [entropy=1.96 I_Q^kv=+0.269]
-↳ qloop c3→c1 [kv] score 1.027: both the whole of every scale [entropy=4.27 I_Q^kv=+0.189]
+r1 cell 3 (T=1.12): - why did it come to life – not matter? Not
+↳ qloop c3→c2 [kv] score 0.444: cell, alive; living organ. [entropy=2.99 I_Q^kv=+1.051]
+↳ qloop c3→c1 [kv] score 0.436: its own shape and response. [entropy=3.26 I_Q^kv=-0.042]
 ```
 
 External API-generated REPL probes:
