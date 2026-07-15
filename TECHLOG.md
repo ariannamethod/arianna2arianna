@@ -2666,3 +2666,24 @@ adapt  routes/gated  eff    qloop_words_avg  cell_words_avg  avg_I_Q^kv  field_s
 
 Reading: the adaptive lane reduces accepted route count, but does not collapse
 answer density; the ordinary cell chorus density is unchanged in this check.
+
+### Xcell Read
+
+Focused `qloop=2`, `tconf=0.20`, `rounds=3`, canonical five-prompt sweep across
+neighbour strength:
+
+```text
+xcell  adapt  routes/gated  eff    prompts  qloop_words  cell_quality  avg_I_Q^kv  field_score
+0.01   0      18/9          0.667  5/5      4.389        1/60          +0.729      +2.024
+0.01   1      15/5          0.750  5/5      4.400        1/60          +0.964      +2.153
+0.02   0      19/9          0.679  5/5      4.895        0/60          +0.840      +2.029
+0.02   1      14/6          0.700  5/5      4.643        0/60          +0.963      +2.090
+0.05   0      15/7          0.682  3/5      4.667        0/60          +0.921      +1.280
+0.05   1       8/0          1.000  3/5      5.125        0/60          +1.119      +1.409
+```
+
+Reading: `xcell=0.05` is rejected for prompt coverage despite clean gates.
+`xcell=0.01 adapt=1` wins the rough score but has one ordinary cell surface
+debt. `xcell=0.02 adapt=1` is the conservative candidate: full prompt coverage,
+zero surface debt, better `I_Q^kv` than fixed routing, and only a small qloop
+density drop.
