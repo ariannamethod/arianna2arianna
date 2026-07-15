@@ -13,10 +13,11 @@ summary files under runs/.
 
 Knobs:
   A2A_FIELD_XCELLS="0 0.02 0.05"   field neighbour KV weights
-  A2A_FIELD_QLOOPS="2"             qloop route limits
+  A2A_FIELD_QLOOPS="1 2"           qloop route limits
   A2A_FIELD_ROUNDS_LIST="2"        round counts to compare
   A2A_FIELD_CELLS=4                field cells
   A2A_FIELD_FRAG=12                tokens per cell fragment
+  A2A_FIELD_KEEP_RAW=0             save raw per-prompt field outputs next to TSVs
 
 These map to field_sweep.sh / runtime knobs:
   A2A_XCELL, A2A_QLOOP, A2A_ROUNDS, A2A_CELLS, A2A_FRAG
@@ -35,8 +36,9 @@ PROMPTS="${1:-${A2A_FIELD_PROMPTS:-$ROOT/prompts/kv_influence.txt}}"
 CELLS="${A2A_FIELD_CELLS:-${A2A_CELLS:-4}}"
 FRAG="${A2A_FIELD_FRAG:-${A2A_FRAG:-12}}"
 XCELLS="${A2A_FIELD_XCELLS:-0 0.02 0.05}"
-QLOOPS="${A2A_FIELD_QLOOPS:-2}"
+QLOOPS="${A2A_FIELD_QLOOPS:-1 2}"
 ROUNDS_LIST="${A2A_FIELD_ROUNDS_LIST:-${A2A_ROUNDS:-2}}"
+KEEP_RAW="${A2A_FIELD_KEEP_RAW:-0}"
 
 if [[ ! -f "$PROMPTS" ]]; then
     echo "missing prompts file: $PROMPTS" >&2
@@ -53,10 +55,12 @@ safe_num() {
 }
 
 compact_line() {
-    local xcell="$1" qloop="$2" rounds="$3" cells="$4" frag="$5" tsv_file="$6" summary_file="$7"
+    local xcell="$1" qloop="$2" rounds="$3" cells="$4" frag="$5" tsv_file="$6" summary_file="$7" raw_dir="$8"
     awk -F '\t' -v xcell="$xcell" -v qloop="$qloop" -v rounds="$rounds" -v cells="$cells" -v frag="$frag" \
-        -v tsv="$tsv_file" -v summary="$summary_file" '
+        -v tsv="$tsv_file" -v summary="$summary_file" -v raw="$raw_dir" '
         function numeric(x) { return x ~ /^[-+]?[0-9]+([.][0-9]+)?$/ }
+        function clamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x) }
+        function pospart(x) { return x > 0 ? x : 0 }
         function col(name) { return idx[name] }
         NR == 1 {
             for (i = 1; i <= NF; i++) idx[$i] = i
@@ -75,7 +79,13 @@ compact_line() {
             cquality_sum += $(col("cell_quality")) + 0
 
             v = $(col("kv_influence"))
-            if (numeric(v)) { in_sum += v + 0; in_n++ }
+            if (numeric(v)) {
+                in_sum += v + 0
+                in_n++
+                if (v + 0 > 0.0005) in_pos++
+                else if (v + 0 < -0.0005) in_neg++
+                else in_zero++
+            }
             v = $(col("qloop_iq_avg"))
             if (numeric(v) && qkv > 0) { iq_sum += (v + 0) * qkv; iq_n += qkv }
             v = $(col("d_r"))
@@ -88,21 +98,36 @@ compact_line() {
             if (numeric(v)) { dpos_sum += v + 0; dpos_n++ }
         }
         END {
-            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d/%d\t%d/%d\t%d/%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+            qprompt_rate = rows ? qprompt_rows / rows : 0
+            qkv_rate = qroutes_sum ? qkv_sum / qroutes_sum : 0
+            qdebt_rate = qroutes_sum ? qquality_sum / qroutes_sum : 0
+            cdebt_rate = cfrag_sum ? cquality_sum / cfrag_sum : 0
+            in_avg = in_n ? in_sum / in_n : 0
+            iq_avg = iq_n ? iq_sum / iq_n : 0
+            dm_avg = dm_n ? dm_sum / dm_n : 0
+            d_avg = d_n ? dsum / d_n : 0
+            dpos_avg = dpos_n ? dpos_sum / dpos_n : 0
+            in_neg_rate = in_n ? in_neg / in_n : 0
+            field_score = 2.0 * qprompt_rate + 0.5 * qkv_rate + 0.5 * clamp(iq_avg, -1, 1) + 0.2 * clamp(in_avg, -1, 1) \
+                        - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * d_avg - 0.25 * pospart(dm_avg) \
+                        - 0.2 * in_neg_rate
+
+            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%s\t%s\t%s\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
                 xcell, qloop, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
                 qprompt_rows, rows, qquality_sum, qroutes_sum, cquality_sum, cfrag_sum,
+                qprompt_rate, qdebt_rate, cdebt_rate, in_pos, in_neg, in_zero,
                 in_n ? sprintf("%+.3f", in_sum / in_n) : "nan",
                 iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan",
                 dr_n ? sprintf("%.3f", dr_sum / dr_n) : "nan",
                 dm_n ? sprintf("%+.3f", dm_sum / dm_n) : "nan",
                 d_n ? sprintf("%.3f", dsum / d_n) : "nan",
                 dpos_n ? sprintf("%.2f", dpos_sum / dpos_n) : "nan",
-                tsv, summary
+                field_score, raw, tsv, summary
         }
     ' "$tsv_file"
 }
 
-printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_prompts\tqloop_quality\tcell_quality\tavg_i_n_kv\tavg_i_q_kv\tavg_d_r\tavg_d_margin\tavg_disso\tavg_dpos\ttsv\tsummary\n"
+printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\tavg_i_q_kv\tavg_d_r\tavg_d_margin\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
 
 for xcell in $XCELLS; do
     for qloop in $QLOOPS; do
@@ -110,14 +135,21 @@ for xcell in $XCELLS; do
             tag="x$(safe_num "$xcell")_qloop$(safe_num "$qloop")_rounds$(safe_num "$rounds")_cells$(safe_num "$CELLS")_frag$(safe_num "$FRAG")"
             tsv_file="$OUTDIR/field_grid_${prompt_stem}_${tag}_${stamp}.tsv"
             summary_file="${tsv_file%.tsv}.summary.txt"
+            raw_dir="-"
+            if [[ "$KEEP_RAW" != "0" ]]; then
+                raw_dir="${tsv_file%.tsv}.raw"
+            fi
+            raw_env="$raw_dir"
+            [[ "$raw_env" == "-" ]] && raw_env=""
 
             echo "sweeping xcell=$xcell qloop=$qloop rounds=$rounds cells=$CELLS frag=$FRAG -> $tsv_file" >&2
             A2A_CELLS="$CELLS" A2A_FRAG="$FRAG" A2A_ROUNDS="$rounds" \
             A2A_XCELL="$xcell" A2A_QLOOP="$qloop" \
+            A2A_FIELD_RAW_DIR="$raw_env" \
                 bash "$ROOT/tools/field_sweep.sh" "$PROMPTS" > "$tsv_file"
 
             bash "$ROOT/tools/field_tsv_summary.sh" "$tsv_file" > "$summary_file"
-            compact_line "$xcell" "$qloop" "$rounds" "$CELLS" "$FRAG" "$tsv_file" "$summary_file"
+            compact_line "$xcell" "$qloop" "$rounds" "$CELLS" "$FRAG" "$tsv_file" "$summary_file" "$raw_dir"
         done
     done
 done

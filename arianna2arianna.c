@@ -2835,7 +2835,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_xrep = 1.3f;
     g_kvshuf = 1;
     g_kvpos = 0;
-    g_qloop = 2;
+    g_qloop = 1;
     load_user_bridge_sampling_env();
     load_repl_prompt_env();
 
@@ -2844,8 +2844,8 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     char line[2048], trajectory[4096], prompt[8192], chorus[4096];
     trajectory[0] = 0;
 
-    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=2, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userP=%.2f, userRep=%.2f, userKV=%.2f, userTok=%d, userFmt=%s, replFmt=%s) ===\n",
-           n_cells, n_rounds, g_user_qtemp_base, g_user_qtemp_span, g_user_qtop_k, g_user_qtop_p, g_user_qrep,
+    printf("\n=== repl: δ-field live over ONE nanoArianna (%d cells × %d rounds, qloop=%d, kv=sem, userT=%.2f%+.2f*cell, userK=%d, userP=%.2f, userRep=%.2f, userKV=%.2f, userTok=%d, userFmt=%s, replFmt=%s) ===\n",
+           n_cells, n_rounds, g_qloop, g_user_qtemp_base, g_user_qtemp_span, g_user_qtop_k, g_user_qtop_p, g_user_qrep,
            g_user_kv_weight, g_user_answer_tokens, user_ctx_format_name(), repl_prompt_format_name());
     printf("type :q, :quit, exit, or quit to stop\n");
 
@@ -3018,7 +3018,7 @@ int main(int argc, char **argv) {
         g_xrep       = argc > 11 ? (float)atof(argv[11]) : 1.3f; /* cross-cell rep-penalty: don't echo neighbours' words (1=off) */
         g_life_on    = argc > 12 ? atoi(argv[12]) : 0;           /* δ-life: 1 = measure/run Game of Life (incr.0 = log fitness inputs) */
         g_kvshuf     = argc > 13 ? atoi(argv[13]) : (g_chorus && g_xcell > 0 ? 1 : 0);  /* default chorus diagnostics: Δ_R^kv + I_N^kv */
-        g_qloop      = argc > 14 ? atoi(argv[14]) : (g_chorus ? 2 : 0);  /* 0=off; 1..2 resonant question routes */
+        g_qloop      = argc > 14 ? atoi(argv[14]) : (g_chorus ? 1 : 0);  /* 0=off; 1..2 resonant question routes */
         if (g_qloop < 0) g_qloop = 0;
         if (g_qloop > 2) g_qloop = 2;
         g_kvpos      = argc > 15 ? atoi(argv[15]) : 0;           /* 0=semantic/bag lane; 1=positional order-probe lane */

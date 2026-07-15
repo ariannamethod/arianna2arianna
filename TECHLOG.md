@@ -2191,10 +2191,86 @@ aggregate summary, and keeps stdout compact enough to compare settings.
 
 ```text
 A2A_FIELD_XCELLS="0 0.02 0.05"
-A2A_FIELD_QLOOPS="2"
+A2A_FIELD_QLOOPS="1 2"
 A2A_FIELD_ROUNDS_LIST="2"
 ```
 
 This keeps the default run small enough for routine use while still comparing
-no-KV, current default, and the previous `0.05` lane. Broader sweeps should
-expand one axis at a time.
+no-KV, current default, the previous `0.05` lane, and one-vs-two qloop route
+limits. Broader sweeps should expand one axis at a time.
+
+## 2026-07-15 - Field grid risk counters
+
+### Context
+
+The first grid made field settings comparable, but it still hid profile risk
+behind averages. A setting with a good mean `I_Q^kv` could still route only a
+few prompts, or carry high answer debt on the routed subset. The next tuning
+step needs a compact way to spot those failures before opening raw TSV samples.
+
+### Change
+
+- `tools/field_tsv_summary.sh` now reports:
+  - qloop prompt coverage rate
+  - qloop KV route rate
+  - qloop answer-debt rate
+  - ordinary cell surface-debt rate
+  - a rough `field_score`
+- `tools/field_grid.sh` now carries those rates into the compact comparison
+  table, adds `I_N^kv` sign balance (`pos/neg/zero`), and prints the same rough
+  `field_score` per candidate setting.
+- `tools/field_sweep.sh` can save full raw per-prompt field outputs when
+  `A2A_FIELD_RAW_DIR=/path` is set.
+- `tools/field_grid.sh` exposes that through `A2A_FIELD_KEEP_RAW=1`, creating a
+  `.raw/` directory next to each per-setting TSV and printing it in the compact
+  table.
+
+The score is intentionally only a sorting aid:
+
+```text
+coverage + KV route rate + I_Q/I_N influence
+- qloop debt - cell debt - D_R/Dpos - positive d_margin - negative I_N risk
+```
+
+It is not a replacement for reading generated samples. It exists to keep
+field-level sweeps honest before changing runtime defaults.
+
+### First Read
+
+Canonical five-prompt corpus, `xcell=0.02`, `rounds=2`:
+
+```text
+qloop  routes  prompts  qloop_quality  avg_I_Q^kv  avg_Dpos  field_score
+0      0       0/5      0/0            nan         0.46      -0.643
+1      7       4/5      0/7            +0.676      0.46      +1.796
+2      14      4/5      0/14           +0.654      0.46      +1.784
+```
+
+Interpretation: `qloop=1` is a live field-level candidate. It matches `qloop=2`
+coverage and debt on this corpus while using half the routes and slightly
+stronger `I_Q^kv`. The raw pass should use `A2A_FIELD_KEEP_RAW=1` for
+`qloop=1` versus `qloop=2`, then compare `rounds=2` against `rounds=3`.
+
+## 2026-07-15 - Field qloop route limit retuned to one
+
+### Context
+
+Raw grid capture over `xcell=0.02`, `qloop=1/2`, `rounds=2/3` showed that the
+second route does not improve prompt coverage on the canonical five-prompt
+field corpus. At `rounds=3`, both `qloop=1` and `qloop=2` cover 5/5 prompts
+with zero counted qloop debt, but `qloop=2` emits 21 routed answers versus 11
+for `qloop=1`, lowers average `I_Q^kv` (`+0.635` vs `+0.831`), and adds weaker
+second candidates.
+
+### Change
+
+- Normal `field` mode now defaults to `qloop=1` when chorus is on.
+- Interactive `repl` now starts with `qloop=1` and prints the actual route limit
+  in its banner.
+- `field_sweep.sh` and `kv_influence_sweep.sh` now default `A2A_QLOOP` to `1`,
+  matching runtime.
+- `field_grid.sh` still compares `A2A_FIELD_QLOOPS="1 2"` by default, so the
+  old two-route mode remains continuously checked.
+
+`δ-life` still enables `g_qloop=2`; it is a population mode, not the normal
+field/repl routed-answer path.

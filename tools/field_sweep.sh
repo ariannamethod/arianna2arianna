@@ -19,8 +19,9 @@ CHORUS="${A2A_CHORUS:-1}"
 XREP="${A2A_XREP:-1.3}"
 LIFE="${A2A_LIFE:-0}"
 KVSHUF="${A2A_KVSHUF:-1}"
-QLOOP="${A2A_QLOOP:-2}"
+QLOOP="${A2A_QLOOP:-1}"
 KVPOS="${A2A_KVPOS:-0}"
+RAW_DIR="${A2A_FIELD_RAW_DIR:-}"
 
 if [[ ! -x "$BIN" ]]; then
     make -C "$ROOT" >/dev/null
@@ -36,12 +37,28 @@ if [[ ! -f "$PROMPTS" ]]; then
     exit 1
 fi
 
+if [[ -n "$RAW_DIR" ]]; then
+    mkdir -p "$RAW_DIR"
+fi
+
+raw_name() {
+    local seq="$1" prompt="$2" slug
+    slug="$(printf "%s" "$prompt" | tr -cs 'A-Za-z0-9._-' '_' | cut -c1-64)"
+    [[ -n "$slug" ]] || slug="prompt"
+    printf "%03d_%s.txt" "$seq" "$slug"
+}
+
 printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_iq_avg\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\n"
 
+raw_seq=0
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     [[ -z "$prompt" || "${prompt:0:1}" == "#" ]] && continue
 
     out="$("$BIN" "$MODEL" "$prompt" field "$CELLS" "$FRAG" "$ROUNDS" "$ALPHA" "$LEAP" "$XCELL" "$CHORUS" "$XREP" "$LIFE" "$KVSHUF" "$QLOOP" "$KVPOS" 2>&1)"
+    if [[ -n "$RAW_DIR" ]]; then
+        raw_seq=$((raw_seq + 1))
+        printf "%s\n" "$out" > "$RAW_DIR/$(raw_name "$raw_seq" "$prompt")"
+    fi
     line="$(printf "%s\n" "$out" | grep "→ round" | tail -n 1 || true)"
     if [[ -z "$line" ]]; then
         safe_prompt="${prompt//$'\t'/ }"

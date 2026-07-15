@@ -49,8 +49,9 @@ else
 fi
 
 field_sweep_prompts="$(mktemp)"
+field_sweep_raw_dir="$(mktemp -d)"
 printf "Let the cells remember each other.\n" > "$field_sweep_prompts"
-field_sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=2 bash "$A2A_ROOT/tools/field_sweep.sh" "$field_sweep_prompts" 2>&1)"
+field_sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=2 A2A_FIELD_RAW_DIR="$field_sweep_raw_dir" bash "$A2A_ROOT/tools/field_sweep.sh" "$field_sweep_prompts" 2>&1)"
 a2a_assert_grep "^prompt[[:space:]]+mode[[:space:]]+cells[[:space:]]+frag[[:space:]]+rounds[[:space:]]+avg_entropy[[:space:]]+d_r[[:space:]]+d_floor" "$field_sweep_out" "field sweep reports final-round TSV header"
 a2a_assert_grep "qloop_iq_avg[[:space:]]+qloop_quality[[:space:]]+qloop_tail[[:space:]]+qloop_morph" "$field_sweep_out" "field sweep reports qloop answer quality columns"
 a2a_assert_grep "cell_fragments[[:space:]]+cell_quality[[:space:]]+cell_tail[[:space:]]+cell_morph" "$field_sweep_out" "field sweep reports cell surface quality columns"
@@ -60,6 +61,13 @@ if printf "%s\n" "$field_sweep_out" | awk -F '\t' '$1 == "Let the cells remember
 else
     a2a_fail "field sweep did not report qloop answer and cell surface counters"
 fi
+raw_file="$(find "$field_sweep_raw_dir" -type f -name '*.txt' | head -n 1 || true)"
+if [[ -n "$raw_file" ]] && grep -q "δ-field" "$raw_file"; then
+    a2a_ok "field sweep raw capture writes full output"
+else
+    a2a_fail "field sweep raw capture missing full output"
+fi
+rm -rf "$field_sweep_raw_dir"
 field_sweep_off_out="$(A2A_CELLS=2 A2A_FRAG=3 A2A_ROUNDS=1 A2A_XCELL=0 bash "$A2A_ROOT/tools/field_sweep.sh" "$field_sweep_prompts" 2>&1)"
 rm -f "$field_sweep_prompts"
 a2a_assert_grep "Let the cells remember each other\\.[[:space:]]+off[[:space:]]+2[[:space:]]+3[[:space:]]+1" "$field_sweep_off_out" "field sweep handles neighbour-KV-off rows"
@@ -67,11 +75,17 @@ a2a_assert_grep "Let the cells remember each other\\.[[:space:]]+off[[:space:]]+
 field_grid_prompts="$(mktemp)"
 field_grid_dir="$(mktemp -d)"
 printf "Let the cells remember each other.\n" > "$field_grid_prompts"
-field_grid_out="$(A2A_RUN_DIR="$field_grid_dir" A2A_FIELD_XCELLS=0 A2A_FIELD_QLOOPS=0 A2A_FIELD_ROUNDS_LIST=1 A2A_FIELD_CELLS=2 A2A_FIELD_FRAG=3 bash "$A2A_ROOT/tools/field_grid.sh" "$field_grid_prompts" 2>&1)"
+field_grid_out="$(A2A_RUN_DIR="$field_grid_dir" A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS=0 A2A_FIELD_QLOOPS=0 A2A_FIELD_ROUNDS_LIST=1 A2A_FIELD_CELLS=2 A2A_FIELD_FRAG=3 bash "$A2A_ROOT/tools/field_grid.sh" "$field_grid_prompts" 2>&1)"
 rm -f "$field_grid_prompts"
-rm -rf "$field_grid_dir"
 a2a_assert_grep "^xcell[[:space:]]+qloop[[:space:]]+rounds[[:space:]]+cells[[:space:]]+frag" "$field_grid_out" "field grid reports compact TSV header"
+a2a_assert_grep "i_n_signs[[:space:]]+avg_i_n_kv.*field_score[[:space:]]+raw_dir" "$field_grid_out" "field grid reports risk, score, and raw columns"
 a2a_assert_grep "^0[[:space:]]+0[[:space:]]+1[[:space:]]+2[[:space:]]+3[[:space:]]+1[[:space:]]+0[[:space:]]+0" "$field_grid_out" "field grid reports one no-qloop setting"
+if find "$field_grid_dir" -path '*.raw/*.txt' -type f | grep -q .; then
+    a2a_ok "field grid raw capture writes per-setting raw outputs"
+else
+    a2a_fail "field grid raw capture missing per-setting raw outputs"
+fi
+rm -rf "$field_grid_dir"
 
 qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does the field remember?" field 5 12 1 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
 a2a_assert_grep "r1 cell 0 .*What does the field remember\\?" "$qloop_out" "field cell surface keeps closed question fragment"
@@ -81,6 +95,7 @@ a2a_assert_grep "I_Q\\^kv=" "$qloop_out" "qloop reports asker KV influence"
 
 repl_out="$(printf "Why does the field remember?\n:q\n" | "$A2A_BIN" "$A2A_MODEL_F16" repl 3 4 1 2>&1)"
 a2a_assert_grep "repl: δ-field live" "$repl_out" "repl starts"
+a2a_assert_grep "qloop=1" "$repl_out" "repl reports default qloop route limit"
 a2a_assert_grep "userRep=1.30" "$repl_out" "repl reports default direct-user repetition penalty"
 a2a_assert_grep "userKV=0.05" "$repl_out" "repl reports default direct-user KV weight"
 a2a_assert_grep "userTok=16" "$repl_out" "repl reports default direct-user answer length"

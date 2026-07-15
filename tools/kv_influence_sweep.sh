@@ -18,7 +18,7 @@ CHORUS="${A2A_CHORUS:-1}"
 XREP="${A2A_XREP:-1.3}"
 LIFE="${A2A_LIFE:-0}"
 KVSHUF="${A2A_KVSHUF:-1}"
-QLOOP="${A2A_QLOOP:-2}"
+QLOOP="${A2A_QLOOP:-1}"
 KVPOS="${A2A_KVPOS:-0}"
 
 if [[ ! -x "$BIN" ]]; then
