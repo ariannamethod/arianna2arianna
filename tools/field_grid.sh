@@ -63,6 +63,13 @@ compact_line() {
         function clamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x) }
         function pospart(x) { return x > 0 ? x : 0 }
         function col(name) { return idx[name] }
+        function add_weighted(name, weight, key,     v) {
+            v = $(col(name))
+            if (!numeric(v) || weight <= 0) return
+            wsum[key] += (v + 0) * weight
+            wn[key] += weight
+        }
+        function avg_text(key) { return wn[key] ? sprintf("%.3f", wsum[key] / wn[key]) : "nan" }
         NR == 1 {
             for (i = 1; i <= NF; i++) idx[$i] = i
             next
@@ -84,6 +91,14 @@ compact_line() {
                 qgate_score_sum += (v + 0) * qgate
                 qgate_score_n += qgate
             }
+            add_weighted("qloop_dist_avg", qroutes, "dist")
+            add_weighted("qloop_qopen_avg", qroutes, "qopen")
+            add_weighted("qloop_tconf_avg", qroutes, "tconf")
+            add_weighted("qloop_qmarks_avg", qroutes, "qmarks")
+            add_weighted("qloop_gate_dist_avg", qgate, "gate_dist")
+            add_weighted("qloop_gate_qopen_avg", qgate, "gate_qopen")
+            add_weighted("qloop_gate_tconf_avg", qgate, "gate_tconf")
+            add_weighted("qloop_gate_qmarks_avg", qgate, "gate_qmarks")
             qquality_sum += $(col("qloop_quality")) + 0
             iq_pos += $(col("qloop_iq_pos")) + 0
             iq_neg += $(col("qloop_iq_neg")) + 0
@@ -124,6 +139,8 @@ compact_line() {
             qeff_rate = (qroutes_sum + qgate_sum) ? qroutes_sum / (qroutes_sum + qgate_sum) : 0
             qscore_avg = qscore_n ? sprintf("%.3f", qscore_sum / qscore_n) : "nan"
             qgate_score_avg = qgate_score_n ? sprintf("%.3f", qgate_score_sum / qgate_score_n) : "nan"
+            qprofile = sprintf("%s/%s/%s/%s", avg_text("dist"), avg_text("qopen"), avg_text("tconf"), avg_text("qmarks"))
+            qgate_profile = sprintf("%s/%s/%s/%s", avg_text("gate_dist"), avg_text("gate_qopen"), avg_text("gate_tconf"), avg_text("gate_qmarks"))
             cdebt_rate = cfrag_sum ? cquality_sum / cfrag_sum : 0
             in_avg = in_n ? in_sum / in_n : 0
             iq_avg = iq_n ? iq_sum / iq_n : 0
@@ -137,9 +154,9 @@ compact_line() {
                         - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * d_avg - 0.25 * pospart(dm_avg) \
                         - 0.2 * in_neg_rate - 0.4 * iq_neg_rate - 0.2 * dm_pos_rate - 0.15 * qgate_rate
 
-            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
+            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
                 xcell, qloop, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
-                qgate_sum, qeff_rate, qscore_avg, qgate_score_avg,
+                qgate_sum, qeff_rate, qscore_avg, qgate_score_avg, qprofile, qgate_profile,
                 qprompt_rows, rows, qquality_sum, qroutes_sum, cquality_sum, cfrag_sum,
                 qprompt_rate, qdebt_rate, cdebt_rate, in_pos, in_neg, in_zero,
                 in_n ? sprintf("%+.3f", in_sum / in_n) : "nan",
@@ -155,7 +172,7 @@ compact_line() {
     ' "$tsv_file"
 }
 
-printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
+printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
 
 for xcell in $XCELLS; do
     for qloop in $QLOOPS; do

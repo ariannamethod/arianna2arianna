@@ -2220,7 +2220,9 @@ static int frag_question_count(const char *s) {
 }
 
 static int pick_question_routes(const char frag[8][1024], const float *cent, int n_cells, int embed,
-                                int *out_q, int *out_t, float *out_score, int max_routes) {
+                                int *out_q, int *out_t, float *out_score, float *out_dist,
+                                float *out_qopen, float *out_tconf, int *out_qmarks,
+                                int max_routes) {
     int lim = n_cells < 8 ? n_cells : 8;
     int n = 0;
     if (!cent || lim < 2) return 0;
@@ -2239,8 +2241,16 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
             int pos = n < max_routes ? n++ : max_routes - 1;
             if (n == max_routes && score <= out_score[pos]) continue;
             out_q[pos] = q; out_t[pos] = t; out_score[pos] = score;
+            if (out_dist) out_dist[pos] = dist;
+            if (out_qopen) out_qopen[pos] = qopen;
+            if (out_tconf) out_tconf[pos] = confidence;
+            if (out_qmarks) out_qmarks[pos] = qmarks;
             for (int i = pos; i > 0 && out_score[i] > out_score[i - 1]; i--) {
                 float fs = out_score[i]; out_score[i] = out_score[i - 1]; out_score[i - 1] = fs;
+                if (out_dist) { float fd = out_dist[i]; out_dist[i] = out_dist[i - 1]; out_dist[i - 1] = fd; }
+                if (out_qopen) { float fo = out_qopen[i]; out_qopen[i] = out_qopen[i - 1]; out_qopen[i - 1] = fo; }
+                if (out_tconf) { float fc = out_tconf[i]; out_tconf[i] = out_tconf[i - 1]; out_tconf[i - 1] = fc; }
+                if (out_qmarks) { int qm = out_qmarks[i]; out_qmarks[i] = out_qmarks[i - 1]; out_qmarks[i - 1] = qm; }
                 int iq = out_q[i]; out_q[i] = out_q[i - 1]; out_q[i - 1] = iq;
                 int it = out_t[i]; out_t[i] = out_t[i - 1]; out_t[i - 1] = it;
             }
@@ -2477,9 +2487,14 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     if (g_qloop && verbose && out_disso && cent) {
         int qcell[4] = {0, 0, 0, 0}, tcell[4] = {0, 0, 0, 0};
         float qscore[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
+        float qdist[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        float qopen[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        float qtconf[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        int qmarks[4] = {0, 0, 0, 0};
         int max_routes = g_qloop > 2 ? 2 : g_qloop;
         int candidate_routes = max_routes + 2; if (candidate_routes > 4) candidate_routes = 4;
-        int routes = pick_question_routes(cur_frag, cent, n_cells, m->embed, qcell, tcell, qscore, candidate_routes);
+        int routes = pick_question_routes(cur_frag, cent, n_cells, m->embed, qcell, tcell, qscore,
+                                          qdist, qopen, qtconf, qmarks, candidate_routes);
         int accepted_routes = 0;
         for (int route = 0; route < routes && accepted_routes < max_routes; route++) {
             char qctx[4096], qfrag[1024]; int qctx_ids[512], qids[128], qn = 0;
@@ -2560,10 +2575,12 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_answer_form_guard = save_form_guard;
             g_answer_sentence_stop = save_sentence_stop;
             if (qgate) {
-                printf("\n  ↳ qloop gate c%d→c%d [kv] score %.3f: rejected %s   [entropy=%.2f I_Q^kv=%+.3f min=%+.3f]",
-                       qcell[route], tcell[route], qscore[route], qfrag, qent, qinfl, g_qloop_min_iq);
-                if (flog) fprintf(flog, "- qloop-gate c%d->c%d [kv] (score=%.3f, entropy=%.2f, I_Q^kv=%+.3f, min=%+.3f):%s\n",
-                                  qcell[route], tcell[route], qscore[route], qent, qinfl, g_qloop_min_iq, qfrag);
+                printf("\n  ↳ qloop gate c%d→c%d [kv] score %.3f: rejected %s   [entropy=%.2f I_Q^kv=%+.3f min=%+.3f route_d=%.3f qopen=%.3f tconf=%.3f qmarks=%d]",
+                       qcell[route], tcell[route], qscore[route], qfrag, qent, qinfl, g_qloop_min_iq,
+                       qdist[route], qopen[route], qtconf[route], qmarks[route]);
+                if (flog) fprintf(flog, "- qloop-gate c%d->c%d [kv] (score=%.3f, entropy=%.2f, I_Q^kv=%+.3f, min=%+.3f, route_d=%.3f, qopen=%.3f, tconf=%.3f, qmarks=%d):%s\n",
+                                  qcell[route], tcell[route], qscore[route], qent, qinfl, g_qloop_min_iq,
+                                  qdist[route], qopen[route], qtconf[route], qmarks[route], qfrag);
                 continue;
             }
             for (int qi = 0; qi < qn && qi < 128 && g_round_tokn < 1024; qi++) g_round_tok[g_round_tokn++] = qids[qi];
@@ -2572,12 +2589,14 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             if (add > 0 && tc + add < (int)sizeof(this_chorus)) tc += add;
             printf("\n  ↳ qloop c%d→c%d%s score %.3f: %s   [entropy=%.2f", qcell[route], tcell[route], qkv_on ? " [kv]" : "", qscore[route], qfrag, qent);
             if (qkv_on) printf(" I_Q^kv=%+.3f", qinfl);
-            printf("]");
+            printf(" route_d=%.3f qopen=%.3f tconf=%.3f qmarks=%d]", qdist[route], qopen[route], qtconf[route], qmarks[route]);
             if (flog) {
-                if (qkv_on) fprintf(flog, "- qloop c%d->c%d [kv] (score=%.3f, entropy=%.2f, I_Q^kv=%+.3f):%s\n",
-                                    qcell[route], tcell[route], qscore[route], qent, qinfl, qfrag);
-                else fprintf(flog, "- qloop c%d->c%d (score=%.3f, entropy=%.2f):%s\n",
-                             qcell[route], tcell[route], qscore[route], qent, qfrag);
+                if (qkv_on) fprintf(flog, "- qloop c%d->c%d [kv] (score=%.3f, entropy=%.2f, I_Q^kv=%+.3f, route_d=%.3f, qopen=%.3f, tconf=%.3f, qmarks=%d):%s\n",
+                                    qcell[route], tcell[route], qscore[route], qent, qinfl,
+                                    qdist[route], qopen[route], qtconf[route], qmarks[route], qfrag);
+                else fprintf(flog, "- qloop c%d->c%d (score=%.3f, entropy=%.2f, route_d=%.3f, qopen=%.3f, tconf=%.3f, qmarks=%d):%s\n",
+                             qcell[route], tcell[route], qscore[route], qent,
+                             qdist[route], qopen[route], qtconf[route], qmarks[route], qfrag);
             }
             accepted_routes++;
 

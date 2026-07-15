@@ -89,7 +89,9 @@ it should stay finite and non-zero.
 and prints a final-round TSV with settling (`d_r`, floor, margin), neighbour
 KV controls (`Δ_R^kv`, floor, margin, `I_N^kv`), field disagreement (`D_R`,
 `Dpos`), qloop route/gate counts, qloop route-score averages
-(`qloop_score_avg`, `qloop_gate_score_avg`), qloop answer quality counters
+(`qloop_score_avg`, `qloop_gate_score_avg`), qloop route-score component
+averages (`qloop_dist_avg`, `qloop_qopen_avg`, `qloop_tconf_avg`,
+`qloop_qmarks_avg`, plus gated counterparts), qloop answer quality counters
 (`qloop_iq_avg`, `qloop_iq_pos`, `qloop_iq_neg`, `qloop_iq_zero`,
 `qloop_quality`, `qloop_tail`, `qloop_morph`, `qloop_label`, `qloop_short`,
 `qloop_question`), and ordinary cell-surface quality counters
@@ -110,8 +112,8 @@ through to the next candidate without widening the accepted chorus.
 `make field-grid` runs `field_sweep.sh` across field-level settings, writes each
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
 comparing qloop coverage, qloop gate pressure, qloop route efficiency,
-accepted/gated qloop route scores, qloop/cell surface debt, `I_N^kv`,
-`I_Q^kv`, `d_r`, `d_margin`, `D_R`, and `Dpos`. The compact table also reports
+accepted/gated qloop route scores and component profiles, qloop/cell surface
+debt, `I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`, `D_R`, and `Dpos`. The compact table also reports
 qloop/cell debt rates, `I_N^kv` and `I_Q^kv` sign balance, `d_margin` sign
 balance, and a rough `field_score` for sorting candidate settings before
 reading the raw samples. Set

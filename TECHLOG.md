@@ -2492,3 +2492,38 @@ changing qloop selection.
 This keeps the adaptive-router path factual: the next scorer can compare route
 score, gate pressure, `I_Q^kv`, and answer debt before any C-side prior starts
 reshaping candidate selection.
+
+## 2026-07-16 - Field qloop route-score component profile
+
+### Context
+
+The accepted/gated route-score averages showed that higher route score alone
+does not predict survival through the `I_Q^kv` gate. The score is a blend of
+fragment distance, asking-cell openness, target confidence, and question count,
+so the next diagnostic step is to expose those components separately.
+
+### Change
+
+- `pick_question_routes()` now keeps the component breakdown for each selected
+  candidate: `route_d`, `qopen`, `tconf`, and `qmarks`.
+- Cell-to-cell qloop and qloop-gate runtime lines print the component profile
+  inside the diagnostic bracket.
+- `tools/field_sweep.sh` emits accepted/gated averages for each component.
+- `tools/field_tsv_summary.sh` prints a weighted route-profile line.
+- `tools/field_grid.sh` carries compact accepted/gated profiles in the grid as
+  `d/qopen/tconf/qmarks`.
+
+Baseline check, `xcell=0.02`, `rounds=3`:
+
+```text
+qloop  eff    score acc/gate  profile acc d/qopen/tconf/qmarks  profile gate d/qopen/tconf/qmarks
+1      0.917  0.569/0.617     0.479/0.311/0.219/1.000          0.493/0.358/0.352/1.000
+2      0.679  0.538/0.547     0.445/0.316/0.228/1.000          0.435/0.330/0.312/1.000
+```
+
+Reading: gated candidates have higher target-confidence contribution than the
+accepted candidates in both controls. That makes the current `+0.20 *
+confidence` term suspect as a future prior input; it should not be strengthened
+blindly. The next C-side change should test a gate-aware route prior that
+penalizes overconfident targets or reduces the confidence coefficient, then
+compare efficiency, `I_Q^kv`, and answer debt against this profile.

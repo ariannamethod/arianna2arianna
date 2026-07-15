@@ -48,7 +48,7 @@ raw_name() {
     printf "%03d_%s.txt" "$seq" "$slug"
 }
 
-printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\n"
+printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\n"
 
 raw_seq=0
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
@@ -62,7 +62,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     line="$(printf "%s\n" "$out" | grep "→ round" | tail -n 1 || true)"
     if [[ -z "$line" ]]; then
         safe_prompt="${prompt//$'\t'/ }"
-        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS"
+        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS"
         continue
     fi
 
@@ -136,6 +136,29 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             if (match(line, / score [-+]?[0-9][0-9.]*:/)) return substr(line, RSTART + 7, RLENGTH - 8) + 0
             return "nan"
         }
+        function route_feature(line, name,     pattern) {
+            pattern = name "=[-+]?[0-9]+([.][0-9]+)?"
+            if (match(line, pattern)) return substr(line, RSTART + length(name) + 1, RLENGTH - length(name) - 1) + 0
+            return "nan"
+        }
+        function add_route_profile(line, gated,     d, o, c, q) {
+            d = route_feature(line, "route_d")
+            o = route_feature(line, "qopen")
+            c = route_feature(line, "tconf")
+            q = route_feature(line, "qmarks")
+            if (gated) {
+                if (d != "nan") { gate_dist_sum += d; gate_dist_n++ }
+                if (o != "nan") { gate_qopen_sum += o; gate_qopen_n++ }
+                if (c != "nan") { gate_tconf_sum += c; gate_tconf_n++ }
+                if (q != "nan") { gate_qmarks_sum += q; gate_qmarks_n++ }
+            } else {
+                if (d != "nan") { dist_sum += d; dist_n++ }
+                if (o != "nan") { qopen_sum += o; qopen_n++ }
+                if (c != "nan") { tconf_sum += c; tconf_n++ }
+                if (q != "nan") { qmarks_sum += q; qmarks_n++ }
+            }
+        }
+        function avg_or_nan(sum, n) { return n ? sprintf("%.3f", sum / n) : "nan" }
         function add_answer(s,     ans, flagged, shortf, tailf, morphf, labelf, questionf) {
             ans = trim(s)
             if (ans == "") return
@@ -158,6 +181,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             if (line ~ /qloop trigger/) next
             score = route_score(line)
             if (score != "nan") { score_sum += score; score_n++ }
+            add_route_profile(line, 0)
             ans = line
             if (!sub(/^.* score [-+]?[0-9][0-9.]*:[ \t]*/, "", ans)) next
             sub(/[ \t]+\[entropy=.*/, "", ans)
@@ -174,12 +198,19 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
         /qloop gate c[0-9]/ {
             score = route_score($0)
             if (score != "nan") { gate_score_sum += score; gate_score_n++ }
+            add_route_profile($0, 1)
         }
         END {
             score_avg = score_n ? sprintf("%.3f", score_sum / score_n) : "nan"
             gate_score_avg = gate_score_n ? sprintf("%.3f", gate_score_sum / gate_score_n) : "nan"
             avg = iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan"
-            printf "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d", score_avg, gate_score_avg, avg, iq_pos, iq_neg, iq_zero, quality_n, tail_n, morph_n, label_n, short_n, question_n
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
+                score_avg, gate_score_avg,
+                avg_or_nan(dist_sum, dist_n), avg_or_nan(gate_dist_sum, gate_dist_n),
+                avg_or_nan(qopen_sum, qopen_n), avg_or_nan(gate_qopen_sum, gate_qopen_n),
+                avg_or_nan(tconf_sum, tconf_n), avg_or_nan(gate_tconf_sum, gate_tconf_n),
+                avg_or_nan(qmarks_sum, qmarks_n), avg_or_nan(gate_qmarks_sum, gate_qmarks_n),
+                avg, iq_pos, iq_neg, iq_zero, quality_n, tail_n, morph_n, label_n, short_n, question_n
         }
     ')"
     surface_metrics="$(printf "%s\n" "$out" | awk '

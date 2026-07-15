@@ -46,12 +46,23 @@ awk -F '\t' '
         arr_sum[name] += v + 0
         arr_n[name]++
     }
+    function add_weighted(name, weight, key,     v) {
+        v = $(col(name))
+        if (!numeric(v) || weight <= 0) return
+        wsum[key] += (v + 0) * weight
+        wn[key] += weight
+    }
+    function avg_text(key) { return wn[key] ? sprintf("%.3f", wsum[key] / wn[key]) : "nan" }
     NR == 1 {
         for (i = 1; i <= NF; i++) idx[$i] = i
         col("prompt"); col("kv_influence"); col("d_r"); col("d_margin")
         col("disso"); col("dpos"); col("qloop_routes"); col("qloop_kv_routes")
         col("qloop_triggers"); col("qloop_gated"); col("qloop_iq_avg"); col("qloop_quality")
         col("qloop_score_avg"); col("qloop_gate_score_avg")
+        col("qloop_dist_avg"); col("qloop_gate_dist_avg")
+        col("qloop_qopen_avg"); col("qloop_gate_qopen_avg")
+        col("qloop_tconf_avg"); col("qloop_gate_tconf_avg")
+        col("qloop_qmarks_avg"); col("qloop_gate_qmarks_avg")
         col("qloop_iq_pos"); col("qloop_iq_neg"); col("qloop_iq_zero")
         col("qloop_tail"); col("qloop_morph"); col("qloop_label")
         col("qloop_short"); col("qloop_question"); col("cell_fragments")
@@ -80,6 +91,14 @@ awk -F '\t' '
             qgate_score_sum += (v + 0) * qgate
             qgate_score_n += qgate
         }
+        add_weighted("qloop_dist_avg", qroutes, "dist")
+        add_weighted("qloop_qopen_avg", qroutes, "qopen")
+        add_weighted("qloop_tconf_avg", qroutes, "tconf")
+        add_weighted("qloop_qmarks_avg", qroutes, "qmarks")
+        add_weighted("qloop_gate_dist_avg", qgate, "gate_dist")
+        add_weighted("qloop_gate_qopen_avg", qgate, "gate_qopen")
+        add_weighted("qloop_gate_tconf_avg", qgate, "gate_tconf")
+        add_weighted("qloop_gate_qmarks_avg", qgate, "gate_qmarks")
 
         qloop_quality += $(col("qloop_quality")) + 0
         qloop_iq_pos += $(col("qloop_iq_pos")) + 0
@@ -151,6 +170,9 @@ awk -F '\t' '
         printf "qloop_score: accepted avg %s, gated avg %s\n",
             qscore_n ? sprintf("%.3f", qscore_sum / qscore_n) : "nan",
             qgate_score_n ? sprintf("%.3f", qgate_score_sum / qgate_score_n) : "nan"
+        printf "qloop_route_profile: accepted d %s, qopen %s, tconf %s, qmarks %s; gated d %s, qopen %s, tconf %s, qmarks %s\n",
+            avg_text("dist"), avg_text("qopen"), avg_text("tconf"), avg_text("qmarks"),
+            avg_text("gate_dist"), avg_text("gate_qopen"), avg_text("gate_tconf"), avg_text("gate_qmarks")
         printf "qloop_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d\n",
             qloop_quality, qloop_routes, qloop_tail, qloop_morph, qloop_label, qloop_short, qloop_question
         printf "cell_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d\n",
