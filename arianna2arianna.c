@@ -1609,12 +1609,14 @@ static int answer_has_terminal_tail_artifact(const char *s) {
     if (!s) return 1;
     const char *end = s + strlen(s);
     while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
+    while (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) end--;
     if (end <= s) return 1;
     unsigned char last = (unsigned char)end[-1];
     if (last == '(' || last == '[' || last == '{' || last == '"' ||
         last == '\'' || last == '`' || last == ',' || last == ':' ||
         last == ';' || last == '-' || last == '/')
         return 1;
+    if (last != '.' && last != '!' && last != '?') return 1;
     const char *p = end;
     while (p > s && !ascii_alpha((unsigned char)p[-1])) p--;
     const char *word_end = p;
@@ -1876,7 +1878,7 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
         }
         if (frag && g_answer_sentence_stop && fl < frag_cap) {
             frag[fl] = 0;
-            if (s >= 5 && answer_word_count(frag) >= 5 && answer_has_sentence_boundary_end(frag)) break;
+            if (answer_word_count(frag) >= 4 && answer_has_sentence_boundary_end(frag)) break;
         }
         int pos = np + s; if (pos >= max_seq - 1) break;
         forward(m, kv, next, pos, logits); klen = pos + 1;

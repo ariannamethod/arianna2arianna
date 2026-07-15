@@ -96,7 +96,7 @@ summarize() {
             prev = ""; run = 0
             for (i = 1; i <= n; i++) {
                 w = a[i]
-                if (length(w) < 2) continue
+                if (length(w) < 2) { prev = ""; run = 0; continue }
                 if (w == prev) run++
                 else { prev = w; run = 1 }
                 if (run >= 2) return 1
@@ -192,6 +192,14 @@ summarize() {
                    low ~ /before you said/ ||
                    low ~ /said to me/
         }
+        function has_label_artifact(s,     low) {
+            low = tolower(s)
+            if (low ~ /(^|[[:space:][:punct:]])(answer|reply|prompt|question)([[:space:][:punct:]]|$)/) return 1
+            if (low ~ /(^|[[:space:][:punct:]])(cell|thread)[[:space:]]*[0-9]+([[:space:][:punct:]]|$)/) return 1
+            if (low ~ /(^|[[:space:][:punct:]])(cell|thread)[[:space:]]*[0-9]*[[:space:]]*[:=]/) return 1
+            if (low ~ /(^|[[:space:][:punct:]])qloop[[:space:]]*(c[0-9]+|user|[0-9]+|[-=]*>|→)/) return 1
+            return 0
+        }
         function terminal_function_word(w) {
             w = tolower(w)
             return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|isn|doesn|wasn|weren|didn|don|won)$/
@@ -199,9 +207,16 @@ summarize() {
         function has_tail_artifact(s,     t, last, apos, a, n, i, w) {
             t = trim(s)
             if (t == "") return 1
-            last = substr(t, length(t), 1)
             apos = sprintf("%c", 39)
+            while (length(t) > 0) {
+                last = substr(t, length(t), 1)
+                if (last == "\"" || last == apos || last == ")" || last == "]" || last == "}") {
+                    t = substr(t, 1, length(t) - 1)
+                } else break
+            }
+            last = substr(t, length(t), 1)
             if (last ~ /[([{,"`:;\/-]/ || last == apos) return 1
+            if (last !~ /[.!?]/) return 1
             n = split(t, a, /[^A-Za-z]+/)
             w = ""
             for (i = 1; i <= n; i++) if (a[i] != "") w = a[i]
@@ -215,7 +230,7 @@ summarize() {
             flagged = 0
             if (length(ans) < 12 || words < 3) { if (quality_off) answer_off_short_n++; else answer_short_n++; flagged = 1 }
             if (index(ans, "?") > 0) { if (quality_off) answer_off_question_n++; else answer_question_n++; flagged = 1 }
-            if (low ~ /(^|[[:space:][:punct:]])(answer|reply|prompt|cell|thread|qloop|question)([[:space:][:punct:]]|$)/) {
+            if (has_label_artifact(ans)) {
                 if (quality_off) answer_off_label_n++; else answer_label_n++; flagged = 1
             }
             if (low ~ /^(yes|no)([[:space:][:punct:]]|$)/) { if (quality_off) answer_off_yesno_n++; else answer_yesno_n++; flagged = 1 }

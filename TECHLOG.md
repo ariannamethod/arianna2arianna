@@ -1798,9 +1798,8 @@ runtime fix is to stop direct-user answers once a real sentence has closed.
 ### Change
 
 - Added a direct-answer-only `g_answer_sentence_stop` mode inside `cell_speak`.
-- When a direct-user answer has at least five words and ends on sentence
-  punctuation, generation stops before spending the remaining fixed token
-  budget.
+- When a direct-user answer has enough words and ends on sentence punctuation,
+  generation stops before spending the remaining fixed token budget.
 - Kept the closure mode off for normal chorus/field/life generation.
 - Expanded false-recipient detection for the new short-answer forms exposed by
   closure (`you ask me`, `if you want to know`, `behind you`,
@@ -1831,3 +1830,50 @@ The remaining flagged answer is a label/form artifact, not a tail. The direct
 bridge now prefers short closed answers over longer unfinished fragments. Next
 work should inspect the one residual label artifact and then move back up to
 field-level behavior instead of continuing to tune lexical cleanup.
+
+## 2026-07-15 - Direct-answer closure contract
+
+### Context
+
+Manual reading of the sentence-boundary run showed that the old tail detector
+was still too forgiving: snippets without final punctuation (`it answers`,
+`but it makes`, `becomes more`) were not counted as tails if the last word was
+not a function word. That made the metric optimistic even though the runtime
+candidate set had enough alternatives to choose closed answers.
+
+### Change
+
+- Direct-answer scoring now treats missing final punctuation as a terminal tail
+  artifact, after trimming closing quotes/brackets.
+- The direct-answer sentence stop now accepts a closed four-word sentence, so
+  compact answers like `shard, not a tool.` do not drag a second fragment.
+- `tools/repl_tsv_summary.sh` mirrors the stricter tail contract.
+- The summary repetition detector resets on one-character contraction residue,
+  so `Let's let it be.` is not misread as an adjacent repeated-word loop.
+- The summary label detector no longer treats domain words like `cell` and
+  `qloop` as defects unless they appear in harness-label form.
+
+### Evidence
+
+```text
+make test
+=== summary: 82 passed, 0 failed, 1 skipped ===
+
+A2A_BASELINE_TSV=runs/repl_eval_repl_probe_regression_20260715_041505.tsv make repl-eval
+results: runs/repl_eval_repl_probe_regression_20260715_042705.tsv
+I_U^kv: avg +0.628, pos 28, neg 2, zero 0, nan 0
+answer_bad_start: 0/30
+answer_quality: any 0/30, short 0, question_like 0, label_artifact 0,
+  notation_artifact 0, morph_artifact 0, recipient_artifact 0,
+  tail_artifact 0, yes_no_start 0, repetition 0
+
+baseline under the stricter detector:
+I_U^kv: avg +0.648, pos 27, neg 3, zero 0, nan 0
+answer_quality: any 7/30, short 0, question_like 0, label_artifact 0,
+  notation_artifact 0, morph_artifact 0, recipient_artifact 0,
+  tail_artifact 7, yes_no_start 0, repetition 0
+```
+
+The current direct user bridge now clears the tracked 30-prompt answer-quality
+surface under the stricter detector. Remaining work should move upward to field
+behavior instead of adding more lexical cleanup.
