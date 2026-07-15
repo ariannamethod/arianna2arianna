@@ -113,6 +113,7 @@ compact_line() {
             qkv_rate = qroutes_sum ? qkv_sum / qroutes_sum : 0
             qdebt_rate = qroutes_sum ? qquality_sum / qroutes_sum : 0
             qgate_rate = (qroutes_sum + qgate_sum) ? qgate_sum / (qroutes_sum + qgate_sum) : 0
+            qeff_rate = (qroutes_sum + qgate_sum) ? qroutes_sum / (qroutes_sum + qgate_sum) : 0
             cdebt_rate = cfrag_sum ? cquality_sum / cfrag_sum : 0
             in_avg = in_n ? in_sum / in_n : 0
             iq_avg = iq_n ? iq_sum / iq_n : 0
@@ -126,9 +127,9 @@ compact_line() {
                         - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * d_avg - 0.25 * pospart(dm_avg) \
                         - 0.2 * in_neg_rate - 0.4 * iq_neg_rate - 0.2 * dm_pos_rate - 0.15 * qgate_rate
 
-            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
+            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
                 xcell, qloop, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
-                qgate_sum,
+                qgate_sum, qeff_rate,
                 qprompt_rows, rows, qquality_sum, qroutes_sum, cquality_sum, cfrag_sum,
                 qprompt_rate, qdebt_rate, cdebt_rate, in_pos, in_neg, in_zero,
                 in_n ? sprintf("%+.3f", in_sum / in_n) : "nan",
@@ -144,7 +145,7 @@ compact_line() {
     ' "$tsv_file"
 }
 
-printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
+printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_efficiency\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
 
 for xcell in $XCELLS; do
     for qloop in $QLOOPS; do

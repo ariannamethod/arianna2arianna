@@ -108,9 +108,10 @@ through to the next candidate without widening the accepted chorus.
 
 `make field-grid` runs `field_sweep.sh` across field-level settings, writes each
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
-comparing qloop coverage, qloop gate pressure, qloop/cell surface debt,
-`I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`, `D_R`, and `Dpos`. The compact table
-also reports qloop/cell debt rates, `I_N^kv` and `I_Q^kv` sign balance,
+comparing qloop coverage, qloop gate pressure, qloop route efficiency,
+qloop/cell surface debt, `I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`, `D_R`, and
+`Dpos`. The compact table also reports qloop/cell debt rates, `I_N^kv` and
+`I_Q^kv` sign balance,
 `d_margin` sign balance, and a rough `field_score` for sorting candidate
 settings before reading the raw
 samples. Set

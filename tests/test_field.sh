@@ -78,9 +78,9 @@ printf "Let the cells remember each other.\n" > "$field_grid_prompts"
 field_grid_out="$(A2A_RUN_DIR="$field_grid_dir" A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS=0 A2A_FIELD_QLOOPS=0 A2A_FIELD_ROUNDS_LIST=1 A2A_FIELD_CELLS=2 A2A_FIELD_FRAG=3 bash "$A2A_ROOT/tools/field_grid.sh" "$field_grid_prompts" 2>&1)"
 rm -f "$field_grid_prompts"
 a2a_assert_grep "^xcell[[:space:]]+qloop[[:space:]]+rounds[[:space:]]+cells[[:space:]]+frag" "$field_grid_out" "field grid reports compact TSV header"
-a2a_assert_grep "qloop_gated.*i_n_signs[[:space:]]+avg_i_n_kv[[:space:]]+i_q_signs[[:space:]]+avg_i_q_kv.*d_margin_signs.*field_score[[:space:]]+raw_dir" "$field_grid_out" "field grid reports influence and settling risks, score, and raw columns"
+a2a_assert_grep "qloop_gated.*qloop_efficiency.*i_n_signs[[:space:]]+avg_i_n_kv[[:space:]]+i_q_signs[[:space:]]+avg_i_q_kv.*d_margin_signs.*field_score[[:space:]]+raw_dir" "$field_grid_out" "field grid reports influence and settling risks, score, and raw columns"
 a2a_assert_grep "^0[[:space:]]+0[[:space:]]+1[[:space:]]+2[[:space:]]+3[[:space:]]+1[[:space:]]+0[[:space:]]+0" "$field_grid_out" "field grid reports one no-qloop setting"
-if printf "%s\n" "$field_grid_out" | awk -F '\t' 'NR == 1 && $1 == "xcell" { header = NF } NR > 1 && $1 == "0" { row = NF } END { exit (header == 28 && row == 28) ? 0 : 1 }'; then
+if printf "%s\n" "$field_grid_out" | awk -F '\t' 'NR == 1 && $1 == "xcell" { header = NF } NR > 1 && $1 == "0" { row = NF } END { exit (header == 29 && row == 29) ? 0 : 1 }'; then
     a2a_ok "field grid compact rows keep expected column count"
 else
     a2a_fail "field grid compact rows changed column count"

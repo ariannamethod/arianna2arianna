@@ -74,7 +74,7 @@ a2a_assert_grep "qloop_quality: any 0/2" "$field_summary_out" "field TSV summary
 a2a_assert_grep "cell_quality: any 1/4, tail 1" "$field_summary_out" "field TSV summary reports cell debt"
 a2a_assert_grep "I_N\\^kv: avg \\+0\\.050" "$field_summary_out" "field TSV summary reports neighbour influence average"
 a2a_assert_grep "I_Q\\^kv: avg \\+0\\.500, pos 2, neg 0, zero 0" "$field_summary_out" "field TSV summary reports qloop influence signs"
-a2a_assert_grep "rates: qloop_prompt_rate 0\\.500, qloop_kv_rate 1\\.000, qloop_debt_rate 0\\.000, qloop_gate_rate 0\\.000, cell_debt_rate 0\\.250" "$field_summary_out" "field TSV summary reports risk rates"
+a2a_assert_grep "rates: qloop_prompt_rate 0\\.500, qloop_kv_rate 1\\.000, qloop_debt_rate 0\\.000, qloop_gate_rate 0\\.000, qloop_efficiency 1\\.000, cell_debt_rate 0\\.250" "$field_summary_out" "field TSV summary reports risk rates"
 a2a_assert_grep "field: avg_d_r 0\\.550" "$field_summary_out" "field TSV summary reports field averages"
 a2a_assert_grep "settling: d_margin pos 2, neg 0, zero 0" "$field_summary_out" "field TSV summary reports settling signs"
 a2a_assert_grep "field_score: \\+0\\.735" "$field_summary_out" "field TSV summary reports rough field score"

@@ -2445,3 +2445,28 @@ Manual raw inspection agrees with the compact score:
 
 README examples were refreshed from this raw audit so the public sample no
 longer shows a negative `I_Q^kv` route as an admitted qloop answer.
+
+## 2026-07-16 - Field route efficiency metric
+
+### Context
+
+`qloop_gated` made rejected candidates visible, but comparing route settings
+still required mental division. A setting with strong accepted `I_Q^kv` can be
+too wasteful if it burns many rejected candidates before it finds a useful
+route. The next adaptive qloop layer needs that pressure as a first-class
+number.
+
+### Change
+
+- `tools/field_tsv_summary.sh` now reports `qloop_efficiency`, computed as
+  accepted qloop routes divided by accepted plus gated qloop candidates.
+- `tools/field_grid.sh` prints the same metric in the compact table, next to
+  `qloop_gated`.
+- `field_score` is unchanged for now; the existing gate-rate penalty keeps old
+  rankings stable while the new column exposes route efficiency directly.
+
+On the current baseline sweep, `xcell=0.02/qloop=1/rounds=3` is `11/(11+1)` =
+`0.917`, while the diagnostic `qloop=2` control is `19/(19+9)` = `0.679`. That
+supports keeping `qloop=1` as the normal field route limit and gives the future
+adaptive router a clean target: prefer candidates that enter the chorus without
+burning the fallback pool.

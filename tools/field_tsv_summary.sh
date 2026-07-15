@@ -118,6 +118,7 @@ awk -F '\t' '
         qkv_rate = qloop_routes ? qloop_kv_routes / qloop_routes : 0
         qdebt_rate = qloop_routes ? qloop_quality / qloop_routes : 0
         qgate_rate = (qloop_routes + qloop_gated) ? qloop_gated / (qloop_routes + qloop_gated) : 0
+        qeff_rate = (qloop_routes + qloop_gated) ? qloop_routes / (qloop_routes + qloop_gated) : 0
         cdebt_rate = cell_fragments ? cell_quality / cell_fragments : 0
         iq_avg = iq_n ? iq_sum / iq_n : 0
         iq_neg_rate = iq_n ? qloop_iq_neg / iq_n : 0
@@ -142,8 +143,8 @@ awk -F '\t' '
             in_n ? sprintf("%+.3f", in_sum / in_n) : "nan", in_pos, in_neg, in_zero
         printf "I_Q^kv: avg %s, pos %d, neg %d, zero %d, rows %d\n",
             iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan", qloop_iq_pos, qloop_iq_neg, qloop_iq_zero, iq_rows
-        printf "rates: qloop_prompt_rate %.3f, qloop_kv_rate %.3f, qloop_debt_rate %.3f, qloop_gate_rate %.3f, cell_debt_rate %.3f\n",
-            qprompt_rate, qkv_rate, qdebt_rate, qgate_rate, cdebt_rate
+        printf "rates: qloop_prompt_rate %.3f, qloop_kv_rate %.3f, qloop_debt_rate %.3f, qloop_gate_rate %.3f, qloop_efficiency %.3f, cell_debt_rate %.3f\n",
+            qprompt_rate, qkv_rate, qdebt_rate, qgate_rate, qeff_rate, cdebt_rate
         printf "field: avg_d_r %s, avg_d_margin %s, avg_D_R %s, avg_Dpos %s\n",
             num_n["d_r"] ? sprintf("%.3f", num_sum["d_r"] / num_n["d_r"]) : "nan",
             num_n["d_margin"] ? sprintf("%+.3f", num_sum["d_margin"] / num_n["d_margin"]) : "nan",
