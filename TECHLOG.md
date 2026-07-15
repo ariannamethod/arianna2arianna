@@ -2118,3 +2118,44 @@ Answer only with a question: why does the field remember? 2             +0.566  
 Interpretation: qloop now has a measurable answer surface. The next tuning pass
 can compare `qloop_iq_avg` and `qloop_quality` against `I_N^kv`, `D_R`, `Dpos`,
 and ordinary `cell_quality` instead of using route count alone.
+
+## 2026-07-15 - Field neighbour lane retuned to xcell 0.02
+
+### Context
+
+With qloop answer metrics visible, the first field-level grid showed a parser
+bug and a classifier false positive before it showed a runtime default change:
+
+- BSD awk could abort on generated invalid UTF-8 bytes while parsing field
+  output.
+- The tail metric treated closed copula clauses such as `what you are.` as
+  terminal function-word debt.
+
+Both had to be fixed before reading the field grid.
+
+### Change
+
+- `tools/field_sweep.sh` now runs with `LC_ALL=C`, matching the REPL sweep tools
+  and making the parser byte-stable against malformed generated fragments.
+- Runtime answer scoring and field-sweep scoring now allow closed copula tails
+  (`what you are.`, `who she is.`, `where we were.`, etc.) instead of treating
+  the final copula as an open tail.
+- The normal field neighbour lane default changed from `xcell=0.05` to
+  `xcell=0.02` in the CLI default, `Makefile`, `field_sweep.sh`, and
+  `kv_influence_sweep.sh`.
+- Direct user-KV remains separate at `A2A_USER_KV_WEIGHT=0.05`.
+
+### Grid Read
+
+Tracked prompts at `qloop=2`, `rounds=2`, after the classifier fix:
+
+```text
+xcell  qloop/qkv  qloop_quality  cell_quality  avg_I_N^kv  avg_I_Q^kv  avg_d_r  avg_Dpos
+0.02   14/14      0              0/40          -0.065      +0.649      0.488    0.46
+0.05   12/12      0              0/40          -0.178      +0.664      0.511    0.54
+```
+
+Interpretation: `0.02` keeps routed qloop answers clean, increases coverage,
+and reduces field disagreement/positional dissonance versus `0.05`. The next
+tuning step should use `0.02` as the field default and keep temperature/user-KV
+work on the separate REPL bridge axis.

@@ -2,6 +2,7 @@
 # Sweep prompts through full field mode and summarize final-round field metrics.
 
 set -euo pipefail
+export LC_ALL=C
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${A2A_BIN:-$ROOT/arianna2arianna}"
@@ -13,7 +14,7 @@ FRAG="${A2A_FRAG:-12}"
 ROUNDS="${A2A_ROUNDS:-3}"
 ALPHA="${A2A_ALPHA:-0}"
 LEAP="${A2A_LEAP:-2}"
-XCELL="${A2A_XCELL:-0.05}"
+XCELL="${A2A_XCELL:-0.02}"
 CHORUS="${A2A_CHORUS:-1}"
 XREP="${A2A_XREP:-1.3}"
 LIFE="${A2A_LIFE:-0}"
@@ -63,7 +64,31 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             w = tolower(w)
             return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|is|are|was|were|be|been|am|do|does|did|have|has|had|will|shall|than|about|after|before|around|between|within|without|against|toward|towards|over|under|on|off|up|down|out|my|your|our|their|his|her|its|this|these|those|some|any|each|every|all|only|yet|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|reson|isn|doesn|wasn|weren|didn|don|won)$/
         }
-        function has_tail_artifact(s,     t, last, a, n, i, w) {
+        function is_copula_word(w) {
+            w = tolower(w)
+            return w ~ /^(is|are|am|was|were|be|been)$/
+        }
+        function is_clause_anchor_word(w) {
+            w = tolower(w)
+            return w ~ /^(i|you|we|they|he|she|it|this|that|these|those|what|who|which|where|there)$/
+        }
+        function is_wh_word(w) {
+            w = tolower(w)
+            return w ~ /^(what|who|which|where|why|how)$/
+        }
+        function prev_word_idx(a, idx,     i) {
+            for (i = idx - 1; i >= 1; i--) if (a[i] != "") return i
+            return 0
+        }
+        function closed_copula_tail(a, idx, w,     p1, p2) {
+            if (!is_copula_word(w)) return 0
+            p1 = prev_word_idx(a, idx)
+            if (!p1) return 0
+            if (is_clause_anchor_word(a[p1])) return 1
+            p2 = prev_word_idx(a, p1)
+            return p2 && is_wh_word(a[p2])
+        }
+        function has_tail_artifact(s,     t, last, a, n, i, w, wi) {
             t = trim(s)
             if (t == "") return 1
             while (length(t) > 0) {
@@ -76,7 +101,9 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             if (last !~ /[.!?]/) return 1
             n = split(t, a, /[^A-Za-z]+/)
             w = ""
-            for (i = 1; i <= n; i++) if (a[i] != "") w = a[i]
+            wi = 0
+            for (i = 1; i <= n; i++) if (a[i] != "") { w = a[i]; wi = i }
+            if (wi && terminal_function_word(w) && closed_copula_tail(a, wi, w)) return 0
             return terminal_function_word(w)
         }
         function has_morph_artifact(s,     low) {
@@ -134,7 +161,31 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             w = tolower(w)
             return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|is|are|was|were|be|been|am|do|does|did|have|has|had|will|shall|than|about|after|before|around|between|within|without|against|toward|towards|over|under|on|off|up|down|out|my|your|our|their|his|her|its|this|these|those|some|any|each|every|all|only|yet|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|reson|isn|doesn|wasn|weren|didn|don|won)$/
         }
-        function has_tail_artifact(s,     t, last, a, n, i, w) {
+        function is_copula_word(w) {
+            w = tolower(w)
+            return w ~ /^(is|are|am|was|were|be|been)$/
+        }
+        function is_clause_anchor_word(w) {
+            w = tolower(w)
+            return w ~ /^(i|you|we|they|he|she|it|this|that|these|those|what|who|which|where|there)$/
+        }
+        function is_wh_word(w) {
+            w = tolower(w)
+            return w ~ /^(what|who|which|where|why|how)$/
+        }
+        function prev_word_idx(a, idx,     i) {
+            for (i = idx - 1; i >= 1; i--) if (a[i] != "") return i
+            return 0
+        }
+        function closed_copula_tail(a, idx, w,     p1, p2) {
+            if (!is_copula_word(w)) return 0
+            p1 = prev_word_idx(a, idx)
+            if (!p1) return 0
+            if (is_clause_anchor_word(a[p1])) return 1
+            p2 = prev_word_idx(a, p1)
+            return p2 && is_wh_word(a[p2])
+        }
+        function has_tail_artifact(s,     t, last, a, n, i, w, wi) {
             t = trim(s)
             if (t == "") return 1
             while (length(t) > 0) {
@@ -147,7 +198,9 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             if (last !~ /[.!?]/) return 1
             n = split(t, a, /[^A-Za-z]+/)
             w = ""
-            for (i = 1; i <= n; i++) if (a[i] != "") w = a[i]
+            wi = 0
+            for (i = 1; i <= n; i++) if (a[i] != "") { w = a[i]; wi = i }
+            if (wi && terminal_function_word(w) && closed_copula_tail(a, wi, w)) return 0
             return terminal_function_word(w)
         }
         function has_morph_artifact(s,     low) {

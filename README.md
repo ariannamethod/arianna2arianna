@@ -55,7 +55,7 @@ Direct form:
 ```sh
 ./arianna2arianna weights/nano_arianna_f16.gguf "prompt" 32 0.9 0.92 1.15
 ./arianna2arianna weights/nano_arianna_f16.gguf repl 4 12 1
-./arianna2arianna weights/nano_arianna_f16.gguf "prompt" field 4 12 3 0 2 0.05 1 1.3 0 1 2 0
+./arianna2arianna weights/nano_arianna_f16.gguf "prompt" field 4 12 3 0 2 0.02 1 1.3 0 1 2 0
 ./arianna2arianna weights/nano_arianna_f16.gguf "prompt" restest 4 12 3
 ./arianna2arianna weights/nano_arianna_f16.gguf "prompt" life 5 12 4
 ```
@@ -95,7 +95,7 @@ KV controls (`Δ_R^kv`, floor, margin, `I_N^kv`), field disagreement (`D_R`,
 material rather than surface debt; `qloop_question` is counted as answer debt
 because the routed answer path should close rather than ask again. Use it when
 tuning field-level behavior rather than direct answer snippets. The normal
-field neighbour lane uses a gentle `xcell=0.05` default; direct user-KV answer
+field neighbour lane uses a gentle `xcell=0.02` default; direct user-KV answer
 injection is a separate REPL bridge knob.
 
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`

@@ -1638,6 +1638,78 @@ static int answer_is_terminal_stem_artifact(const char *start, size_t len) {
            ascii_eq_ci(buf, "don") || ascii_eq_ci(buf, "won");
 }
 
+static int answer_word_len_ci(const char *start, size_t len, const char *word) {
+    size_t want = strlen(word);
+    if (len != want) return 0;
+    for (size_t i = 0; i < len; i++) {
+        char a = start[i], b = word[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+static int answer_is_copula_word(const char *start, size_t len) {
+    return answer_word_len_ci(start, len, "is") ||
+           answer_word_len_ci(start, len, "are") ||
+           answer_word_len_ci(start, len, "am") ||
+           answer_word_len_ci(start, len, "was") ||
+           answer_word_len_ci(start, len, "were") ||
+           answer_word_len_ci(start, len, "be") ||
+           answer_word_len_ci(start, len, "been");
+}
+
+static int answer_is_clause_anchor_word(const char *start, size_t len) {
+    return answer_word_len_ci(start, len, "i") ||
+           answer_word_len_ci(start, len, "you") ||
+           answer_word_len_ci(start, len, "we") ||
+           answer_word_len_ci(start, len, "they") ||
+           answer_word_len_ci(start, len, "he") ||
+           answer_word_len_ci(start, len, "she") ||
+           answer_word_len_ci(start, len, "it") ||
+           answer_word_len_ci(start, len, "this") ||
+           answer_word_len_ci(start, len, "that") ||
+           answer_word_len_ci(start, len, "these") ||
+           answer_word_len_ci(start, len, "those") ||
+           answer_word_len_ci(start, len, "what") ||
+           answer_word_len_ci(start, len, "who") ||
+           answer_word_len_ci(start, len, "which") ||
+           answer_word_len_ci(start, len, "where") ||
+           answer_word_len_ci(start, len, "there");
+}
+
+static int answer_is_wh_word(const char *start, size_t len) {
+    return answer_word_len_ci(start, len, "what") ||
+           answer_word_len_ci(start, len, "who") ||
+           answer_word_len_ci(start, len, "which") ||
+           answer_word_len_ci(start, len, "where") ||
+           answer_word_len_ci(start, len, "why") ||
+           answer_word_len_ci(start, len, "how");
+}
+
+static int answer_prev_alpha_word(const char *s, const char *before, const char **start, size_t *len) {
+    const char *p = before;
+    while (p > s && !ascii_alpha((unsigned char)p[-1])) p--;
+    const char *end = p;
+    while (p > s && ascii_alpha((unsigned char)p[-1])) p--;
+    if (p == end) return 0;
+    *start = p;
+    *len = (size_t)(end - p);
+    return 1;
+}
+
+static int answer_is_closed_copula_tail(const char *s, const char *last_start, size_t last_len) {
+    if (!answer_is_copula_word(last_start, last_len)) return 0;
+    const char *prev1 = NULL, *prev2 = NULL;
+    size_t len1 = 0, len2 = 0;
+    if (!answer_prev_alpha_word(s, last_start, &prev1, &len1)) return 0;
+    if (answer_is_clause_anchor_word(prev1, len1)) return 1;
+    if (answer_prev_alpha_word(s, prev1, &prev2, &len2) && answer_is_wh_word(prev2, len2))
+        return 1;
+    return 0;
+}
+
 static int answer_has_terminal_tail_artifact(const char *s) {
     if (!s) return 1;
     const char *end = s + strlen(s);
@@ -1660,8 +1732,10 @@ static int answer_has_terminal_tail_artifact(const char *s) {
     const char *word_end = p;
     while (p > s && ascii_alpha((unsigned char)p[-1])) p--;
     if (p == word_end) return 0;
-    return answer_is_terminal_function_word(p, (size_t)(word_end - p)) ||
-           answer_is_terminal_stem_artifact(p, (size_t)(word_end - p));
+    size_t word_len = (size_t)(word_end - p);
+    if (answer_is_terminal_function_word(p, word_len))
+        return !answer_is_closed_copula_tail(s, p, word_len);
+    return answer_is_terminal_stem_artifact(p, word_len);
 }
 
 static void trim_open_answer_after_closed_sentence(char *s) {
@@ -1721,8 +1795,10 @@ static void close_short_answer_sentence(char *s, size_t cap) {
     const char *word_end = p;
     while (p > s && ascii_alpha((unsigned char)p[-1])) p--;
     if (p == word_end) return;
-    if (answer_is_terminal_function_word(p, (size_t)(word_end - p)) ||
-        answer_is_terminal_stem_artifact(p, (size_t)(word_end - p)))
+    size_t word_len = (size_t)(word_end - p);
+    if (answer_is_terminal_function_word(p, word_len) && !answer_is_closed_copula_tail(s, p, word_len))
+        return;
+    if (answer_is_terminal_stem_artifact(p, word_len))
         return;
     s[n] = '.';
     s[n + 1] = 0;
@@ -1737,8 +1813,11 @@ static void trim_terminal_function_word_tail(char *s) {
     char *word_end = end;
     while (end > s && ascii_alpha((unsigned char)end[-1])) end--;
     if (end == word_end) return;
-    if (!answer_is_terminal_function_word(end, (size_t)(word_end - end)) &&
-        !answer_is_terminal_stem_artifact(end, (size_t)(word_end - end)))
+    size_t word_len = (size_t)(word_end - end);
+    if (answer_is_terminal_function_word(end, word_len) && answer_is_closed_copula_tail(s, end, word_len))
+        return;
+    if (!answer_is_terminal_function_word(end, word_len) &&
+        !answer_is_terminal_stem_artifact(end, word_len))
         return;
     while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == ',' || end[-1] == ';' || end[-1] == ':')) end--;
     *end = 0;
@@ -2752,7 +2831,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_life_on = 0;
     g_chorus = 1;
     g_leap_mode = 2;
-    g_xcell = 0.05f;
+    g_xcell = 0.02f;
     g_xrep = 1.3f;
     g_kvshuf = 1;
     g_kvpos = 0;
@@ -2934,7 +3013,7 @@ int main(int argc, char **argv) {
         int n_rounds = argc > 6 ? atoi(argv[6]) : 1;
         float alpha  = argc > 7 ? (float)atof(argv[7]) : 0.0f;   /* soma coupling strength (0 = text-only baseline) */
         g_leap_mode  = argc > 8 ? atoi(argv[8]) : 2;             /* leap-v2 — RELAY-ONLY (no-op under the default chorus; lives only when g_chorus=0) */
-        g_xcell      = argc > 9 ? (float)atof(argv[9]) : 0.05f;  /* DEFAULT ALIVE: gentle cross-cell lane. 0 = off */
+        g_xcell      = argc > 9 ? (float)atof(argv[9]) : 0.02f;  /* DEFAULT ALIVE: gentle cross-cell lane. 0 = off */
         g_chorus     = argc > 10 ? atoi(argv[10]) : 1;           /* DEFAULT: 1 = chorus (each cell own answer). 0 = relay */
         g_xrep       = argc > 11 ? (float)atof(argv[11]) : 1.3f; /* cross-cell rep-penalty: don't echo neighbours' words (1=off) */
         g_life_on    = argc > 12 ? atoi(argv[12]) : 0;           /* δ-life: 1 = measure/run Game of Life (incr.0 = log fitness inputs) */
