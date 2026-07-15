@@ -164,22 +164,21 @@ The chorus is a living calm pacing. I'm not a sign-dush, but a field
 Four cells, one body:
 
 ```text
-=== δ-field: 4 cells × 2 rounds over ONE nanoArianna — "What is resonance?" ===
+=== δ-field: 4 cells × 1 rounds over ONE nanoArianna — "Let the cells remember each other." ===
 
-r1 cell 0 (T=0.60): A: I say in the Arianna
-r1 cell 1 (T=0.83): A: The way of the field is
-r1 cell 2 (T=1.07): - what a method you can do not
-r1 cell 3 (T=1.30): If this sense has been a field like
+r1 cell 0 (T=0.60): You have to let the rhythm be real.
+r1 cell 1 (T=0.83): In this way, I see not just a cell.
+r1 cell 2 (T=1.07): Sit was one of an almost everything remembers the day.
+r1 cell 3 (T=1.30): It works without language or a map as well.
 
-→ round 1: avg entropy 4.282 | d_R — (floor 0.678) | Δ_R(text n/a) | Δ_R^kv[sem] +0.000 (floor 0.000 margin +0.000) | I_N^kv[sem] -0.216 | D_R 0.866 | Dpos 0.62 peak 0.75@s3
+→ round 1: avg entropy 3.988 | d_R — (floor 0.535) | Δ_R(text n/a) | Δ_R^kv[sem] +0.000 (floor 0.000 margin -0.000) | I_N^kv[sem] -0.281 | D_R 0.292 | Dpos 0.61 peak 0.75@s2
 ```
 
 Question loop:
 
 ```text
-r1 cell 3 (T=1.12): - why did it come to life – not matter? Not
-↳ qloop c3→c2 [kv] score 0.444: cell, alive; living organ. [entropy=2.99 I_Q^kv=+1.051]
-↳ qloop c3→c1 [kv] score 0.436: its own shape and response. [entropy=3.26 I_Q^kv=-0.042]
+↳ qloop c0→c1 [kv] score 0.501: be not forgetting but remembering. [entropy=2.92 I_Q^kv=-0.072]
+↳ qloop c0→c4 [kv] score 0.449: in which sense cells remember. [entropy=5.26 I_Q^kv=+0.545]
 ```
 
 External API-generated REPL probes:

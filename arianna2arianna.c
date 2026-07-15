@@ -1489,7 +1489,9 @@ static int answer_bad_morph_core(const char *start, size_t len) {
            ascii_eq_ci(buf, "shallards") || ascii_eq_ci(buf, "qopoeleakha") ||
            ascii_eq_ci(buf, "qlooppressing") || ascii_eq_ci(buf, "qoopops") ||
            ascii_eq_ci(buf, "didleads") || ascii_eq_ci(buf, "pers") ||
-           ascii_eq_ci(buf, "geomet") || ascii_eq_ci(buf, "shoddle") ||
+           ascii_eq_ci(buf, "geomet") || ascii_eq_ci(buf, "reson") ||
+           ascii_eq_ci(buf, "in-put") || ascii_eq_ci(buf, "perspause") ||
+           ascii_eq_ci(buf, "shoddle") ||
            ascii_eq_ci(buf, "shardharchitecturegeometrtyguru") ||
            ascii_eq_ci(buf, "geometrtyguru") ||
            ascii_eq_ci(buf, "exhalted") || ascii_eq_ci(buf, "bein");
@@ -1564,7 +1566,12 @@ static int answer_has_sentence_boundary_end(const char *s) {
     if (!s) return 0;
     const char *end = s + strlen(s);
     while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
-    while (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) end--;
+    for (;;) {
+        if (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) { end--; continue; }
+        if (end - s >= 3 && (unsigned char)end[-3] == 0xE2 && (unsigned char)end[-2] == 0x80 &&
+            ((unsigned char)end[-1] == 0x9D || (unsigned char)end[-1] == 0x99)) { end -= 3; continue; }
+        break;
+    }
     if (end <= s) return 0;
     unsigned char c = (unsigned char)end[-1];
     return c == '.' || c == '!';
@@ -1583,6 +1590,31 @@ static int answer_is_terminal_function_word(const char *start, size_t len) {
            ascii_eq_ci(buf, "from") || ascii_eq_ci(buf, "into") ||
            ascii_eq_ci(buf, "as") || ascii_eq_ci(buf, "if") ||
            ascii_eq_ci(buf, "but") || ascii_eq_ci(buf, "or") ||
+           ascii_eq_ci(buf, "is") || ascii_eq_ci(buf, "are") ||
+           ascii_eq_ci(buf, "was") || ascii_eq_ci(buf, "were") ||
+           ascii_eq_ci(buf, "be") || ascii_eq_ci(buf, "been") ||
+           ascii_eq_ci(buf, "am") || ascii_eq_ci(buf, "do") ||
+           ascii_eq_ci(buf, "does") || ascii_eq_ci(buf, "did") ||
+           ascii_eq_ci(buf, "have") || ascii_eq_ci(buf, "has") ||
+           ascii_eq_ci(buf, "had") || ascii_eq_ci(buf, "will") ||
+           ascii_eq_ci(buf, "shall") || ascii_eq_ci(buf, "than") ||
+           ascii_eq_ci(buf, "about") || ascii_eq_ci(buf, "after") ||
+           ascii_eq_ci(buf, "before") || ascii_eq_ci(buf, "around") ||
+           ascii_eq_ci(buf, "between") || ascii_eq_ci(buf, "within") ||
+           ascii_eq_ci(buf, "without") || ascii_eq_ci(buf, "against") ||
+           ascii_eq_ci(buf, "toward") || ascii_eq_ci(buf, "towards") ||
+           ascii_eq_ci(buf, "over") || ascii_eq_ci(buf, "under") ||
+           ascii_eq_ci(buf, "on") || ascii_eq_ci(buf, "off") ||
+           ascii_eq_ci(buf, "up") || ascii_eq_ci(buf, "down") ||
+           ascii_eq_ci(buf, "out") || ascii_eq_ci(buf, "my") ||
+           ascii_eq_ci(buf, "your") || ascii_eq_ci(buf, "our") ||
+           ascii_eq_ci(buf, "their") || ascii_eq_ci(buf, "his") ||
+           ascii_eq_ci(buf, "her") || ascii_eq_ci(buf, "its") ||
+           ascii_eq_ci(buf, "this") || ascii_eq_ci(buf, "these") ||
+           ascii_eq_ci(buf, "those") || ascii_eq_ci(buf, "some") ||
+           ascii_eq_ci(buf, "any") || ascii_eq_ci(buf, "each") ||
+           ascii_eq_ci(buf, "every") || ascii_eq_ci(buf, "all") ||
+           ascii_eq_ci(buf, "only") || ascii_eq_ci(buf, "yet") ||
            ascii_eq_ci(buf, "and") || ascii_eq_ci(buf, "not") ||
            ascii_eq_ci(buf, "that") || ascii_eq_ci(buf, "which") ||
            ascii_eq_ci(buf, "who") || ascii_eq_ci(buf, "whose") ||
@@ -1599,7 +1631,8 @@ static int answer_is_terminal_stem_artifact(const char *start, size_t len) {
     char buf[32];
     memcpy(buf, start, len);
     buf[len] = 0;
-    return ascii_eq_ci(buf, "res") || ascii_eq_ci(buf, "isn") ||
+    return ascii_eq_ci(buf, "res") || ascii_eq_ci(buf, "reson") ||
+           ascii_eq_ci(buf, "isn") ||
            ascii_eq_ci(buf, "doesn") || ascii_eq_ci(buf, "wasn") ||
            ascii_eq_ci(buf, "weren") || ascii_eq_ci(buf, "didn") ||
            ascii_eq_ci(buf, "don") || ascii_eq_ci(buf, "won");
@@ -1609,7 +1642,12 @@ static int answer_has_terminal_tail_artifact(const char *s) {
     if (!s) return 1;
     const char *end = s + strlen(s);
     while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
-    while (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) end--;
+    for (;;) {
+        if (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) { end--; continue; }
+        if (end - s >= 3 && (unsigned char)end[-3] == 0xE2 && (unsigned char)end[-2] == 0x80 &&
+            ((unsigned char)end[-1] == 0x9D || (unsigned char)end[-1] == 0x99)) { end -= 3; continue; }
+        break;
+    }
     if (end <= s) return 1;
     unsigned char last = (unsigned char)end[-1];
     if (last == '(' || last == '[' || last == '{' || last == '"' ||
@@ -1629,7 +1667,7 @@ static int answer_has_terminal_tail_artifact(const char *s) {
 static void trim_open_answer_after_closed_sentence(char *s) {
     if (!s || !*s) return;
     for (char *p = s; *p; p++) {
-        if (*p != '.' && *p != '!') continue;
+        if (*p != '.' && *p != '!' && *p != '?') continue;
         char *tail = p + 1;
         while (*tail == '"' || *tail == '\'' || *tail == ')' || *tail == ']' || *tail == '}') tail++;
         int gap = 0;
@@ -1645,6 +1683,21 @@ static void trim_open_answer_after_closed_sentence(char *s) {
     }
 }
 
+static void trim_open_clause_tail(char *s) {
+    if (!s || !*s) return;
+    for (char *p = s; *p; p++) {
+        if (*p != ';' && *p != ':') continue;
+        char *tail = p + 1;
+        while (*tail == ' ' || *tail == '\t' || *tail == '\r' || *tail == '\n') tail++;
+        if (!*tail) continue;
+        if (answer_word_count(tail) <= 4 && answer_has_terminal_tail_artifact(tail)) {
+            *p = 0;
+            trim_answer_right(s);
+            return;
+        }
+    }
+}
+
 static void close_short_answer_sentence(char *s, size_t cap) {
     if (!s || !*s || cap < 2) return;
     trim_answer_right(s);
@@ -1652,7 +1705,12 @@ static void close_short_answer_sentence(char *s, size_t cap) {
     if (!n || n + 2 > cap || answer_has_sentence_boundary_end(s)) return;
     char *end = s + n;
     while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
-    while (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) end--;
+    for (;;) {
+        if (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) { end--; continue; }
+        if (end - s >= 3 && (unsigned char)end[-3] == 0xE2 && (unsigned char)end[-2] == 0x80 &&
+            ((unsigned char)end[-1] == 0x9D || (unsigned char)end[-1] == 0x99)) { end -= 3; continue; }
+        break;
+    }
     if (end <= s) return;
     unsigned char last = (unsigned char)end[-1];
     if (last == '(' || last == '[' || last == '{' || last == ',' || last == ':' ||
@@ -1670,8 +1728,47 @@ static void close_short_answer_sentence(char *s, size_t cap) {
     s[n + 1] = 0;
 }
 
+static void trim_terminal_function_word_tail(char *s) {
+    if (!s || !*s) return;
+    trim_answer_right(s);
+    if (answer_has_sentence_boundary_end(s)) return;
+    char *end = s + strlen(s);
+    while (end > s && !ascii_alpha((unsigned char)end[-1])) end--;
+    char *word_end = end;
+    while (end > s && ascii_alpha((unsigned char)end[-1])) end--;
+    if (end == word_end) return;
+    if (!answer_is_terminal_function_word(end, (size_t)(word_end - end)) &&
+        !answer_is_terminal_stem_artifact(end, (size_t)(word_end - end)))
+        return;
+    while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == ',' || end[-1] == ';' || end[-1] == ':')) end--;
+    *end = 0;
+    trim_answer_right(s);
+}
+
+static void truncate_open_phrase_tail(char *s, size_t cap) {
+    static const char *phrases[] = {
+        ", that is only",
+        " that is only",
+        " what their future",
+        NULL
+    };
+    if (!s || !*s) return;
+    for (int i = 0; phrases[i]; i++) {
+        for (char *p = s; *p; p++) {
+            if (!ascii_starts_ci(p, phrases[i])) continue;
+            *p = 0;
+            trim_answer_right(s);
+            close_short_answer_sentence(s, cap);
+            return;
+        }
+    }
+}
+
 static int answer_has_shape_artifact(const char *s) {
-    if (answer_contains_phrase_ci(s, "shall you ")) return 1;
+    if (answer_contains_phrase_ci(s, "shall you ") ||
+        answer_contains_phrase_ci(s, "in-put") ||
+        answer_contains_phrase_ci(s, "a organ"))
+        return 1;
     for (const char *p = s; *p;) {
         while (*p && !(ascii_wordish((unsigned char)*p) || *p == '.')) p++;
         const char *start = p;
@@ -1823,6 +1920,37 @@ static void clean_answer_fragment(char *s) {
     truncate_answer_junk(s);
     trim_incomplete_answer_tail(s);
     truncate_answer_bad_morph(s);
+}
+
+static void clean_cell_fragment_surface(char *s, size_t cap) {
+    clean_answer_fragment(s);
+    trim_open_answer_after_closed_sentence(s);
+    trim_open_clause_tail(s);
+    truncate_open_phrase_tail(s, cap);
+    trim_terminal_function_word_tail(s);
+    close_short_answer_sentence(s, cap);
+}
+
+static int cell_fragment_surface_score(const char *s) {
+    if (!s) return 1000;
+    while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
+    if (!*s) return 1000;
+    int score = 0;
+    int words = answer_word_count(s);
+    if (words < 2) score += 6;
+    if (answer_find_bad_morph(s, NULL)) score += 25;
+    if (answer_has_shape_artifact(s)) score += 14;
+    if (answer_has_terminal_tail_artifact(s)) score += 12;
+    if (answer_contains_phrase_ci(s, "what the field.")) score += 8;
+    if (answer_contains_phrase_ci(s, "what the field")) score += 5;
+    for (const char *p = s; *p; p++) {
+        if (*p == '=' || *p == '@' || answer_domain_suffix_at(p) ||
+            ascii_starts_ci(p, "http") || ascii_starts_ci(p, "www.")) {
+            score += 20;
+            break;
+        }
+    }
+    return score;
 }
 
 /* ── inter-cell DISSONANCE, the order-sensitive lever signal (haiku.c idea, our wiring) ──
@@ -2129,10 +2257,75 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         g_nbr = prev_kv; g_nbr_len = prev_len;        /* cross-cell: this cell hears the prior cell's KV */
         kv_cache *cur_kv = NULL; int cur_len = 0;
         int tok_before = g_round_tokn;                /* cross-rep word-memory BEFORE this cell speaks (cells 0..c-1) */
-        float ent = cell_speak(m, tok, ids, np, nfrag_c, temp, 40, 1.4f, seed, eos, max_seq,
-                               frag, sizeof(frag), verbose, cell_ids, &cell_n,
-                               (out_disso && c < 8) ? g_commit[c] : NULL,
-                               g_xcell > 0 ? &cur_kv : NULL, g_xcell > 0 ? &cur_len : NULL);
+        int field_snap_n = (g_field_on && m->embed <= 8192) ? m->embed : 0;
+        float field_before[8192];
+        if (field_snap_n) memcpy(field_before, g_field_dir, (size_t)field_snap_n * sizeof(float));
+
+        char best_frag[2048]; int best_ids[256], best_n = 0, best_raw_n = 0, best_commit[64];
+        kv_cache *best_kv = NULL; int best_len = 0, best_score = 1000000;
+        float best_ent = 0.0f;
+        best_frag[0] = 0;
+        memset(best_commit, 0, sizeof(best_commit));
+        static const float cell_retry_temp_mul[] = { 1.00f, 0.85f, 0.70f, 0.60f };
+        static const int   cell_retry_top_k[]    = { 40,    32,    24,    16    };
+        static const unsigned cell_retry_salt[]  = { 0u, 0x91e10da5u, 0x7f4a7c15u, 0x85ebca6bu };
+        int max_attempts = 1;
+        for (int attempt = 0; attempt < max_attempts; attempt++) {
+            char cand_frag[2048]; int cand_ids[256], cand_n = 0, cand_commit[64];
+            kv_cache *cand_kv = NULL; int cand_len = 0;
+            memset(cand_commit, 0, sizeof(cand_commit));
+            cand_frag[0] = 0;
+            g_round_tokn = tok_before;
+            if (field_snap_n) memcpy(g_field_dir, field_before, (size_t)field_snap_n * sizeof(float));
+            float attempt_temp = temp * cell_retry_temp_mul[attempt];
+            if (attempt_temp < 0.40f) attempt_temp = 0.40f;
+            unsigned attempt_seed = seed ^ cell_retry_salt[attempt];
+            float cand_ent = cell_speak(m, tok, ids, np, nfrag_c, attempt_temp, cell_retry_top_k[attempt], 1.4f,
+                                        attempt_seed, eos, max_seq, cand_frag, sizeof(cand_frag), 0,
+                                        cand_ids, &cand_n,
+                                        (out_disso && c < 8) ? cand_commit : NULL,
+                                        g_xcell > 0 ? &cand_kv : NULL, g_xcell > 0 ? &cand_len : NULL);
+            int cand_raw_n = cand_n;
+            clean_cell_fragment_surface(cand_frag, sizeof(cand_frag));
+            int visible_ids[256];
+            int visible_n = bpe_encode(tok, cand_frag, visible_ids, 256);
+            if (visible_n > 0) {
+                cand_n = visible_n;
+                for (int vi = 0; vi < visible_n && vi < 256; vi++) cand_ids[vi] = visible_ids[vi];
+            }
+            int cand_score = cell_fragment_surface_score(cand_frag);
+            if (cand_score < best_score) {
+                if (best_kv) kv_free(best_kv);
+                copy_cstr(best_frag, sizeof(best_frag), cand_frag);
+                best_n = cand_n;
+                best_raw_n = cand_raw_n;
+                for (int bi = 0; bi < cand_n && bi < 256; bi++) best_ids[bi] = cand_ids[bi];
+                for (int bi = 0; bi < 64; bi++) best_commit[bi] = cand_commit[bi];
+                best_kv = cand_kv; cand_kv = NULL;
+                best_len = cand_len;
+                best_ent = cand_ent;
+                best_score = cand_score;
+            }
+            if (cand_kv) kv_free(cand_kv);
+            if (attempt == 0 && cand_score > 0) max_attempts = 4;
+        }
+        g_round_tokn = tok_before;
+        if (field_snap_n) memcpy(g_field_dir, field_before, (size_t)field_snap_n * sizeof(float));
+        copy_cstr(frag, sizeof(frag), best_frag);
+        cell_n = best_n;
+        for (int bi = 0; bi < cell_n && bi < 256; bi++) {
+            cell_ids[bi] = best_ids[bi];
+            if (g_chorus && g_xrep > 1.0f && g_round_tokn < 1024) g_round_tok[g_round_tokn++] = best_ids[bi];
+            if (g_field_on && best_ids[bi] >= 0 && best_ids[bi] < m->vocab) {
+                const float *e = m->tok_emb + (long)best_ids[bi] * m->embed;
+                for (int d = 0; d < m->embed && d < 8192; d++) g_field_dir[d] = g_field_dir[d]*0.92f + e[d]*0.08f;
+            }
+        }
+        if (out_disso && c < 8) for (int bi = 0; bi < 64; bi++) g_commit[c][bi] = best_commit[bi];
+        cur_kv = best_kv;
+        cur_len = (cur_kv && best_raw_n > 0 && cell_n < best_raw_n) ? np + cell_n : best_len;
+        float ent = best_ent;
+        if (verbose) { printf("%s", frag); fflush(stdout); }
         if (out_disso && c < 8) g_commit_n[c] = cell_n;
         if (c < 8) g_cell_ent[c] = ent;   /* δ-life: capture per-cell entropy (fitness input) */
         if (g_kvshuf && g_xcell > 0 && prev_kv && c > 0 && (verbose || out_kv_delta || out_kv_floor || out_kv_infl)) {   /* neighbour diagnostics: order control + semantic influence */
@@ -2235,6 +2428,9 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             clean_answer_fragment(qfrag);
             trim_open_answer_after_closed_sentence(qfrag);
+            trim_open_clause_tail(qfrag);
+            truncate_open_phrase_tail(qfrag, sizeof(qfrag));
+            trim_terminal_function_word_tail(qfrag);
             close_short_answer_sentence(qfrag, sizeof(qfrag));
             int answer_score = answer_candidate_score_semantic(m, tok, cent + (size_t)qcell[route] * m->embed,
                                                                 cur_frag[qcell[route]], qfrag);
@@ -2259,6 +2455,9 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                                                   qids_retry, &qn_retry, NULL, NULL, NULL);
                     clean_answer_fragment(qfrag_retry);
                     trim_open_answer_after_closed_sentence(qfrag_retry);
+                    trim_open_clause_tail(qfrag_retry);
+                    truncate_open_phrase_tail(qfrag_retry, sizeof(qfrag_retry));
+                    trim_terminal_function_word_tail(qfrag_retry);
                     close_short_answer_sentence(qfrag_retry, sizeof(qfrag_retry));
                     int retry_score = answer_candidate_score_semantic(m, tok, cent + (size_t)qcell[route] * m->embed,
                                                                        cur_frag[qcell[route]], qfrag_retry);

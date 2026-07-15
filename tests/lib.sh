@@ -67,6 +67,15 @@ a2a_assert_grep() {
     fi
 }
 
+a2a_assert_not_grep() {
+    local pattern="$1" hay="$2" msg="$3"
+    if echo "$hay" | grep -qE "$pattern"; then
+        a2a_fail "$msg (unexpected pattern /$pattern/ found)"
+    else
+        a2a_ok "$msg"
+    fi
+}
+
 a2a_summary() {
     echo ""
     echo "=== summary: $A2A_PASS passed, $A2A_FAIL failed, $A2A_SKIP skipped ==="

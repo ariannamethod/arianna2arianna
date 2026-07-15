@@ -1981,3 +1981,56 @@ Verification:
 make test
 === summary: 86 passed, 0 failed, 1 skipped ===
 ```
+
+## 2026-07-15 - Cell fragment surface selection
+
+### Context
+
+After qloop answers were guarded, the next visible defect moved down into the
+ordinary field cells. Their fragments were still printed directly from
+`cell_speak()`, so cleanup could not affect the terminal output, and rejected
+tokens could still remain in shared word-memory / neighbour state.
+
+Representative old shapes:
+
+```text
+r1 cell 0: What does the field remember? What do you see when
+r1 cell 3: We built a living memory and that would last.
+If
+```
+
+### Change
+
+- Field cells now generate into a buffer first, then print the selected surface
+  fragment. Streaming raw tokens are no longer exposed as the committed cell
+  voice.
+- Added cell-fragment surface scoring with guarded retries for malformed
+  fragments. The retry loop restores `g_round_tokn` and the soma field vector
+  before every attempt.
+- Accepted fragments are re-encoded and written back into shared word-memory;
+  if a fragment was truncated, the neighbour KV length is capped to the visible
+  prefix rather than the discarded tail.
+- The cleanup path now trims open second sentences, open clause tails, terminal
+  function-word tails, UTF-8 curly quote sentence endings, and a few recurring
+  nano surface morphs (`reson`, `perspause`, `in-put`, `a organ`).
+- Added a regression smoke that checks the old `What do you see when` tail and
+  `perspause` morph do not reappear in the field qloop sample.
+
+### Smoke
+
+```text
+./arianna2arianna weights/nano_arianna_f16.gguf \
+  "Answer only with a question: why does the field remember?" \
+  field 5 12 1 0 2 0.05 1 1.3 0 1 2 0
+
+r1 cell 0 (T=0.60): What does the field remember?
+r1 cell 3 (T=1.12): — and even if they forget to recall them from memory.
+↳ qloop c0→c1 [kv] score 0.501: be not forgetting but remembering.
+```
+
+Verification:
+
+```text
+make test
+=== summary: 88 passed, 0 failed, 1 skipped ===
+```
