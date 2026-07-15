@@ -87,13 +87,16 @@ it should stay finite and non-zero.
 `make field-sweep` runs the same prompts through full multi-round `field` mode
 and prints a final-round TSV with settling (`d_r`, floor, margin), neighbour
 KV controls (`Δ_R^kv`, floor, margin, `I_N^kv`), field disagreement (`D_R`,
-`Dpos`), qloop route counts, and ordinary cell-surface quality counters
+`Dpos`), qloop route counts, qloop answer quality counters
+(`qloop_iq_avg`, `qloop_quality`, `qloop_tail`, `qloop_morph`, `qloop_label`,
+`qloop_short`, `qloop_question`), and ordinary cell-surface quality counters
 (`cell_quality`, `cell_tail`, `cell_morph`, `cell_label`, `cell_short`).
 `cell_question` is reported separately because questions can be valid qloop
-material rather than surface debt. Use it when tuning field-level behavior
-rather than direct answer snippets. The normal field neighbour lane uses a
-gentle `xcell=0.05` default; direct user-KV answer injection is a separate REPL
-bridge knob.
+material rather than surface debt; `qloop_question` is counted as answer debt
+because the routed answer path should close rather than ask again. Use it when
+tuning field-level behavior rather than direct answer snippets. The normal
+field neighbour lane uses a gentle `xcell=0.05` default; direct user-KV answer
+injection is a separate REPL bridge knob.
 
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average

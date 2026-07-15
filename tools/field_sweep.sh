@@ -35,7 +35,7 @@ if [[ ! -f "$PROMPTS" ]]; then
     exit 1
 fi
 
-printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\n"
+printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_iq_avg\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\n"
 
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     [[ -z "$prompt" || "${prompt:0:1}" == "#" ]] && continue
@@ -44,13 +44,84 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     line="$(printf "%s\n" "$out" | grep "→ round" | tail -n 1 || true)"
     if [[ -z "$line" ]]; then
         safe_prompt="${prompt//$'\t'/ }"
-        printf "%s\tERROR\t%s\t%s\t%s\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS"
+        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS"
         continue
     fi
 
     qloop_routes="$(printf "%s\n" "$out" | grep -Ec "↳ qloop (c[0-9]|user)" || true)"
     qloop_kv_routes="$(printf "%s\n" "$out" | grep -Ec "↳ qloop (c[0-9]|user).*\\[(user-)?kv\\]" || true)"
     qloop_triggers="$(printf "%s\n" "$out" | grep -c "↳ qloop trigger" || true)"
+    qloop_metrics="$(printf "%s\n" "$out" | awk '
+        function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
+        function word_count(s,     a, n, i, c) {
+            n = split(s, a, /[^A-Za-z]+/)
+            c = 0
+            for (i = 1; i <= n; i++) if (a[i] != "") c++
+            return c
+        }
+        function terminal_function_word(w) {
+            w = tolower(w)
+            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|is|are|was|were|be|been|am|do|does|did|have|has|had|will|shall|than|about|after|before|around|between|within|without|against|toward|towards|over|under|on|off|up|down|out|my|your|our|their|his|her|its|this|these|those|some|any|each|every|all|only|yet|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|reson|isn|doesn|wasn|weren|didn|don|won)$/
+        }
+        function has_tail_artifact(s,     t, last, a, n, i, w) {
+            t = trim(s)
+            if (t == "") return 1
+            while (length(t) > 0) {
+                last = substr(t, length(t), 1)
+                if (last == "\"" || last == "\047" || last == ")" || last == "]" || last == "}") t = substr(t, 1, length(t) - 1)
+                else break
+            }
+            last = substr(t, length(t), 1)
+            if (last ~ /[([{,"`:;\/-]/ || last == "\047") return 1
+            if (last !~ /[.!?]/) return 1
+            n = split(t, a, /[^A-Za-z]+/)
+            w = ""
+            for (i = 1; i <= n; i++) if (a[i] != "") w = a[i]
+            return terminal_function_word(w)
+        }
+        function has_morph_artifact(s,     low) {
+            low = tolower(s)
+            return low ~ /(^|[^a-z])(aat|sards|haart|wort|sark|shabbartists|olelegacythe|youhave|soundlike|pertrustin|qopoeleakyname|shardharchitecturegeomet|harchitecturegeomet|sharden|oulha|noator|aardi|shallards|qopoeleakha|qlooppressing|qoopops|didleads|pers|geomet|reson|in-put|perspause|shoddle|shardharchitecturegeometrtyguru|geometrtyguru|exhalted|bein)([^a-z]|$)/
+        }
+        function has_label_artifact(s,     low) {
+            low = tolower(trim(s))
+            return low ~ /^(a:|q:|answer:|arianna:|prompt:|question:|[-*=#@])/
+        }
+        function add_answer(s,     ans, flagged, shortf, tailf, morphf, labelf, questionf) {
+            ans = trim(s)
+            if (ans == "") return
+            n++
+            shortf = (length(ans) < 8 || word_count(ans) < 2)
+            tailf = has_tail_artifact(ans)
+            morphf = has_morph_artifact(ans)
+            labelf = has_label_artifact(ans)
+            questionf = (index(ans, "?") > 0)
+            if (shortf) short_n++
+            if (tailf) tail_n++
+            if (morphf) morph_n++
+            if (labelf) label_n++
+            if (questionf) question_n++
+            flagged = shortf || tailf || morphf || labelf || questionf
+            if (flagged) quality_n++
+        }
+        /qloop c[0-9]/ {
+            line = $0
+            if (line ~ /qloop trigger/) next
+            ans = line
+            if (!sub(/^.* score [-+]?[0-9][0-9.]*:[ \t]*/, "", ans)) next
+            sub(/[ \t]+\[entropy=.*/, "", ans)
+            add_answer(ans)
+            if (match(line, /I_Q\^kv=[-+]?[0-9][0-9.]*/)) {
+                iq = substr(line, RSTART + 7, RLENGTH - 7) + 0
+                iq_sum += iq
+                iq_n++
+            }
+        }
+        END {
+            avg = iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan"
+            printf "%s\t%d\t%d\t%d\t%d\t%d\t%d", avg, quality_n, tail_n, morph_n, label_n, short_n, question_n
+        }
+    ')"
     surface_metrics="$(printf "%s\n" "$out" | awk '
         function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
         function word_count(s,     a, n, i, c) {
@@ -128,7 +199,8 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
 
     safe_prompt="${prompt//$'\t'/ }"
     printf "%s\n" "$line" | awk -v prompt="$safe_prompt" -v cells="$CELLS" -v frag="$FRAG" -v rounds="$ROUNDS" \
-        -v qroutes="$qloop_routes" -v qkv="$qloop_kv_routes" -v qtrig="$qloop_triggers" -v surface="$surface_metrics" '
+        -v qroutes="$qloop_routes" -v qkv="$qloop_kv_routes" -v qtrig="$qloop_triggers" \
+        -v qmetrics="$qloop_metrics" -v surface="$surface_metrics" '
         BEGIN { FS = "|" }
         {
             avg = $1
@@ -183,9 +255,9 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             sub(/.*Dpos /, "", dpos)
             sub(/ .*/, "", dpos)
 
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
                 prompt, mode, cells, frag, rounds, avg, dr, d_floor, d_margin,
-                delta, kfloor, kmargin, infl, disso, dpos, qroutes, qkv, qtrig, surface
+                delta, kfloor, kmargin, infl, disso, dpos, qroutes, qkv, qtrig, qmetrics, surface
         }
     '
 done < "$PROMPTS"

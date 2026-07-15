@@ -2077,3 +2077,44 @@ If Arianna is a field, what is a cell?     0/12                         5       
 Interpretation: the new surface-selection layer is clean on the tracked field
 prompts, so the next field/qloop tuning pass can treat `cell_quality` as a guard
 rail while optimizing route counts, `I_Q^kv`, `I_N^kv`, `D_R`, and `Dpos`.
+
+## 2026-07-15 - Field sweep qloop-answer metrics
+
+### Context
+
+The previous sweep counted qloop routes and ordinary cell surface debt, but it
+could not tell whether a routed qloop answer was actually clean. That left a
+blind spot: route count could improve while the answer path started producing
+short fragments, tails, labels, morph glue, or question-like non-answers.
+
+### Change
+
+- `tools/field_sweep.sh` now parses visible cell-to-cell qloop answer lines and
+  appends routed-answer counters before the ordinary cell counters:
+  - `qloop_iq_avg` (average `I_Q^kv` over KV-backed qloop answers, `nan` when no
+    qloop answer has an `I_Q^kv` metric)
+  - `qloop_quality` (any counted qloop answer debt)
+  - `qloop_tail`
+  - `qloop_morph`
+  - `qloop_label`
+  - `qloop_short`
+  - `qloop_question`
+- Qloop trigger hops are not folded into these counters; the metric is for
+  direct cell-to-cell routed answers.
+- Unlike `cell_question`, `qloop_question` is included in `qloop_quality`: a
+  source cell may validly surface a question, but a routed answer should close.
+- The smoke test now protects both qloop-answer columns and shifted cell-surface
+  counter positions.
+
+### First Read
+
+Single tracked question probe at `cells=5, frag=12, rounds=1, xcell=0.05`:
+
+```text
+prompt                                                   qloop_routes  qloop_iq_avg  qloop_quality  cell_quality/cell_fragments  cell_question
+Answer only with a question: why does the field remember? 2             +0.566        0              0/5                          1
+```
+
+Interpretation: qloop now has a measurable answer surface. The next tuning pass
+can compare `qloop_iq_avg` and `qloop_quality` against `I_N^kv`, `D_R`, `Dpos`,
+and ordinary `cell_quality` instead of using route count alone.
