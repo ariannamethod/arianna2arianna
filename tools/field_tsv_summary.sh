@@ -51,6 +51,7 @@ awk -F '\t' '
         col("prompt"); col("kv_influence"); col("d_r"); col("d_margin")
         col("disso"); col("dpos"); col("qloop_routes"); col("qloop_kv_routes")
         col("qloop_triggers"); col("qloop_gated"); col("qloop_iq_avg"); col("qloop_quality")
+        col("qloop_score_avg"); col("qloop_gate_score_avg")
         col("qloop_iq_pos"); col("qloop_iq_neg"); col("qloop_iq_zero")
         col("qloop_tail"); col("qloop_morph"); col("qloop_label")
         col("qloop_short"); col("qloop_question"); col("cell_fragments")
@@ -65,8 +66,20 @@ awk -F '\t' '
         qloop_routes += qroutes
         qloop_kv_routes += qkv
         qloop_triggers += $(col("qloop_triggers")) + 0
-        qloop_gated += $(col("qloop_gated")) + 0
+        qgate = $(col("qloop_gated")) + 0
+        qloop_gated += qgate
         if (qroutes > 0) qloop_prompt_rows++
+
+        v = $(col("qloop_score_avg"))
+        if (numeric(v) && qroutes > 0) {
+            qscore_sum += (v + 0) * qroutes
+            qscore_n += qroutes
+        }
+        v = $(col("qloop_gate_score_avg"))
+        if (numeric(v) && qgate > 0) {
+            qgate_score_sum += (v + 0) * qgate
+            qgate_score_n += qgate
+        }
 
         qloop_quality += $(col("qloop_quality")) + 0
         qloop_iq_pos += $(col("qloop_iq_pos")) + 0
@@ -135,6 +148,9 @@ awk -F '\t' '
         printf "rows: %d\n", rows
         printf "qloop: routes %d, kv %d, triggers %d, gated %d, prompts %d/%d\n",
             qloop_routes, qloop_kv_routes, qloop_triggers, qloop_gated, qloop_prompt_rows, rows
+        printf "qloop_score: accepted avg %s, gated avg %s\n",
+            qscore_n ? sprintf("%.3f", qscore_sum / qscore_n) : "nan",
+            qgate_score_n ? sprintf("%.3f", qgate_score_sum / qgate_score_n) : "nan"
         printf "qloop_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d\n",
             qloop_quality, qloop_routes, qloop_tail, qloop_morph, qloop_label, qloop_short, qloop_question
         printf "cell_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d\n",

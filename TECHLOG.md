@@ -2470,3 +2470,25 @@ On the current baseline sweep, `xcell=0.02/qloop=1/rounds=3` is `11/(11+1)` =
 supports keeping `qloop=1` as the normal field route limit and gives the future
 adaptive router a clean target: prefer candidates that enter the chorus without
 burning the fallback pool.
+
+## 2026-07-16 - Field qloop route-score diagnostics
+
+### Context
+
+Route efficiency shows how many inspected candidates survive the gate, but it
+does not say whether the existing pre-generation route score is predictive. The
+runtime already prints a route `score` for both accepted qloop answers and
+`qloop gate` rejections. That is enough to instrument the relationship without
+changing qloop selection.
+
+### Change
+
+- `tools/field_sweep.sh` now emits `qloop_score_avg` and
+  `qloop_gate_score_avg` for accepted and gated cell-to-cell qloop candidates.
+- `tools/field_tsv_summary.sh` reports the weighted accepted/gated route-score
+  averages.
+- `tools/field_grid.sh` carries both averages into the compact grid.
+
+This keeps the adaptive-router path factual: the next scorer can compare route
+score, gate pressure, `I_Q^kv`, and answer debt before any C-side prior starts
+reshaping candidate selection.
