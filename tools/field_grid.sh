@@ -14,6 +14,7 @@ summary files under runs/.
 Knobs:
   A2A_FIELD_XCELLS="0 0.01 0.02 0.05" field neighbour KV weights
   A2A_FIELD_QLOOPS="1 2"           qloop route limits
+  A2A_FIELD_QLOOP_TCONFS="0.20"    qloop target-confidence route weights
   A2A_FIELD_ROUNDS_LIST="3"        round counts to compare
   A2A_FIELD_CELLS=4                field cells
   A2A_FIELD_FRAG=12                tokens per cell fragment
@@ -21,7 +22,7 @@ Knobs:
   A2A_QLOOP_MIN_IQ=0.0             reject KV-backed qloop answers below this I_Q^kv
 
 These map to field_sweep.sh / runtime knobs:
-  A2A_XCELL, A2A_QLOOP, A2A_ROUNDS, A2A_CELLS, A2A_FRAG, A2A_QLOOP_MIN_IQ
+  A2A_XCELL, A2A_QLOOP, A2A_QLOOP_TCONF_WEIGHT, A2A_ROUNDS, A2A_CELLS, A2A_FRAG, A2A_QLOOP_MIN_IQ
 EOF
 }
 
@@ -38,6 +39,7 @@ CELLS="${A2A_FIELD_CELLS:-${A2A_CELLS:-4}}"
 FRAG="${A2A_FIELD_FRAG:-${A2A_FRAG:-12}}"
 XCELLS="${A2A_FIELD_XCELLS:-0 0.01 0.02 0.05}"
 QLOOPS="${A2A_FIELD_QLOOPS:-1 2}"
+QLOOP_TCONFS="${A2A_FIELD_QLOOP_TCONFS:-${A2A_QLOOP_TCONF_WEIGHT:-0.20}}"
 ROUNDS_LIST="${A2A_FIELD_ROUNDS_LIST:-${A2A_ROUNDS:-3}}"
 KEEP_RAW="${A2A_FIELD_KEEP_RAW:-0}"
 
@@ -56,8 +58,8 @@ safe_num() {
 }
 
 compact_line() {
-    local xcell="$1" qloop="$2" rounds="$3" cells="$4" frag="$5" tsv_file="$6" summary_file="$7" raw_dir="$8"
-    awk -F '\t' -v xcell="$xcell" -v qloop="$qloop" -v rounds="$rounds" -v cells="$cells" -v frag="$frag" \
+    local xcell="$1" qloop="$2" tconf="$3" rounds="$4" cells="$5" frag="$6" tsv_file="$7" summary_file="$8" raw_dir="$9"
+    awk -F '\t' -v xcell="$xcell" -v qloop="$qloop" -v tconf="$tconf" -v rounds="$rounds" -v cells="$cells" -v frag="$frag" \
         -v tsv="$tsv_file" -v summary="$summary_file" -v raw="$raw_dir" '
         function numeric(x) { return x ~ /^[-+]?[0-9]+([.][0-9]+)?$/ }
         function clamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x) }
@@ -154,8 +156,8 @@ compact_line() {
                         - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * d_avg - 0.25 * pospart(dm_avg) \
                         - 0.2 * in_neg_rate - 0.4 * iq_neg_rate - 0.2 * dm_pos_rate - 0.15 * qgate_rate
 
-            printf "%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
-                xcell, qloop, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%d/%d\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
+                xcell, qloop, tconf, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
                 qgate_sum, qeff_rate, qscore_avg, qgate_score_avg, qprofile, qgate_profile,
                 qprompt_rows, rows, qquality_sum, qroutes_sum, cquality_sum, cfrag_sum,
                 qprompt_rate, qdebt_rate, cdebt_rate, in_pos, in_neg, in_zero,
@@ -172,12 +174,13 @@ compact_line() {
     ' "$tsv_file"
 }
 
-printf "xcell\tqloop\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
+printf "xcell\tqloop\tqloop_tconf_weight\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_quality\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
 
 for xcell in $XCELLS; do
     for qloop in $QLOOPS; do
+        for tconf in $QLOOP_TCONFS; do
         for rounds in $ROUNDS_LIST; do
-            tag="x$(safe_num "$xcell")_qloop$(safe_num "$qloop")_rounds$(safe_num "$rounds")_cells$(safe_num "$CELLS")_frag$(safe_num "$FRAG")"
+            tag="x$(safe_num "$xcell")_qloop$(safe_num "$qloop")_tconf$(safe_num "$tconf")_rounds$(safe_num "$rounds")_cells$(safe_num "$CELLS")_frag$(safe_num "$FRAG")"
             tsv_file="$OUTDIR/field_grid_${prompt_stem}_${tag}_${stamp}.tsv"
             summary_file="${tsv_file%.tsv}.summary.txt"
             raw_dir="-"
@@ -187,14 +190,16 @@ for xcell in $XCELLS; do
             raw_env="$raw_dir"
             [[ "$raw_env" == "-" ]] && raw_env=""
 
-            echo "sweeping xcell=$xcell qloop=$qloop rounds=$rounds cells=$CELLS frag=$FRAG -> $tsv_file" >&2
+            echo "sweeping xcell=$xcell qloop=$qloop tconf=$tconf rounds=$rounds cells=$CELLS frag=$FRAG -> $tsv_file" >&2
             A2A_CELLS="$CELLS" A2A_FRAG="$FRAG" A2A_ROUNDS="$rounds" \
             A2A_XCELL="$xcell" A2A_QLOOP="$qloop" \
+            A2A_QLOOP_TCONF_WEIGHT="$tconf" \
             A2A_FIELD_RAW_DIR="$raw_env" \
                 bash "$ROOT/tools/field_sweep.sh" "$PROMPTS" > "$tsv_file"
 
             bash "$ROOT/tools/field_tsv_summary.sh" "$tsv_file" > "$summary_file"
-            compact_line "$xcell" "$qloop" "$rounds" "$CELLS" "$FRAG" "$tsv_file" "$summary_file" "$raw_dir"
+            compact_line "$xcell" "$qloop" "$tconf" "$rounds" "$CELLS" "$FRAG" "$tsv_file" "$summary_file" "$raw_dir"
+        done
         done
     done
 done

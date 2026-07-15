@@ -947,6 +947,7 @@ static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw
 static int   g_repl_prompt_format = 0; /* 0=user_arianna, 1=qa */
 static float g_qloop_min = 0.42f;
 static float g_qloop_min_iq = 0.0f; /* reject KV-backed qloop answers whose asker KV lowers confidence */
+static float g_qloop_tconf_weight = 0.20f; /* route prior: target confidence contribution */
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -986,6 +987,11 @@ static void load_repl_prompt_env(void) {
         else if (strcmp(fmt, "qa") == 0) g_repl_prompt_format = 1;
         else fprintf(stderr, "warning: ignoring invalid A2A_REPL_PROMPT_FORMAT=%s\n", fmt);
     }
+}
+
+static void load_qloop_route_env(void) {
+    g_qloop_min_iq = env_float_clamped("A2A_QLOOP_MIN_IQ", 0.0f, -2.0f, 2.0f);
+    g_qloop_tconf_weight = env_float_clamped("A2A_QLOOP_TCONF_WEIGHT", 0.20f, -1.00f, 1.00f);
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -2233,7 +2239,7 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
         for (int t = 0; t < lim; t++) if (t != q) {
             float dist = 1.0f - vec_cosine(cent + (size_t)q * embed, cent + (size_t)t * embed, embed);
             float confidence = 1.0f / (1.0f + g_cell_ent[t]);
-            float score = dist + 0.15f * qopen + 0.20f * confidence + 0.05f * (float)(qmarks - 1);
+            float score = dist + 0.15f * qopen + g_qloop_tconf_weight * confidence + 0.05f * (float)(qmarks - 1);
             if (score < g_qloop_min) continue;
             int dup = 0;
             for (int i = 0; i < n; i++) if (out_t[i] == t || (out_q[i] == q && out_t[i] == t)) dup = 1;
@@ -2867,7 +2873,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_kvshuf = 1;
     g_kvpos = 0;
     g_qloop = 1;
-    g_qloop_min_iq = env_float_clamped("A2A_QLOOP_MIN_IQ", g_qloop_min_iq, -2.0f, 2.0f);
+    load_qloop_route_env();
     load_user_bridge_sampling_env();
     load_repl_prompt_env();
 
@@ -3053,7 +3059,7 @@ int main(int argc, char **argv) {
         g_qloop      = argc > 14 ? atoi(argv[14]) : (g_chorus ? 1 : 0);  /* 0=off; 1..2 resonant question routes */
         if (g_qloop < 0) g_qloop = 0;
         if (g_qloop > 2) g_qloop = 2;
-        g_qloop_min_iq = env_float_clamped("A2A_QLOOP_MIN_IQ", g_qloop_min_iq, -2.0f, 2.0f);
+        load_qloop_route_env();
         g_kvpos      = argc > 15 ? atoi(argv[15]) : 0;           /* 0=semantic/bag lane; 1=positional order-probe lane */
         g_kvpos      = g_kvpos ? 1 : 0;
         if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
@@ -3079,6 +3085,7 @@ int main(int argc, char **argv) {
         int ticks = argc > 4 ? atoi(argv[4]) : 8;
         int nfrag = argc > 5 ? atoi(argv[5]) : 16;
         int init  = argc > 6 ? atoi(argv[6]) : 4;
+        load_qloop_route_env();
         field_life(m, tok, prompt, init, ticks, nfrag, eos);
         return 0;
     }

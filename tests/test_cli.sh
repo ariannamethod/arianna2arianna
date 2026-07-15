@@ -56,6 +56,7 @@ a2a_assert_grep "A2A_TEMP_REPL_FORMATS" "$out" "repl temp sweep help names outer
 out="$(bash "$A2A_ROOT/tools/field_grid.sh" --help 2>&1)"
 a2a_assert_grep "A2A_FIELD_XCELLS" "$out" "field grid help names xcell grid"
 a2a_assert_grep "A2A_FIELD_QLOOPS" "$out" "field grid help names qloop grid"
+a2a_assert_grep "A2A_FIELD_QLOOP_TCONFS" "$out" "field grid help names qloop target-confidence grid"
 a2a_assert_grep "A2A_FIELD_ROUNDS_LIST" "$out" "field grid help names rounds grid"
 a2a_assert_grep "A2A_FIELD_KEEP_RAW" "$out" "field grid help names raw capture knob"
 a2a_assert_grep "A2A_QLOOP_MIN_IQ" "$out" "field grid help names qloop influence gate"

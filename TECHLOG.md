@@ -2527,3 +2527,57 @@ confidence` term suspect as a future prior input; it should not be strengthened
 blindly. The next C-side change should test a gate-aware route prior that
 penalizes overconfident targets or reduces the confidence coefficient, then
 compare efficiency, `I_Q^kv`, and answer debt against this profile.
+
+## 2026-07-16 - Qloop target-confidence prior sweep knob
+
+### Context
+
+The route-score component profile showed a concrete failure mode: candidates
+that later fail the `I_Q^kv` gate have higher target-confidence contribution
+than accepted candidates. Changing the default coefficient immediately would
+mix measurement with policy, so the next safe layer is a controlled route-prior
+axis.
+
+### Change
+
+- Added `A2A_QLOOP_TCONF_WEIGHT` for the target-confidence contribution in
+  `pick_question_routes()`.
+- Default remains `0.20`, preserving previous behavior unless the environment
+  overrides it.
+- `tools/field_grid.sh` now supports `A2A_FIELD_QLOOP_TCONFS`, includes the
+  active weight in each compact row, and passes it through to the runtime.
+- REPL, field mode, and life mode all load the same qloop route env.
+
+This makes the next experiment explicit:
+
+```sh
+A2A_FIELD_XCELLS="0.02" \
+A2A_FIELD_QLOOPS="1 2" \
+A2A_FIELD_QLOOP_TCONFS="-0.10 0 0.10 0.20" \
+A2A_FIELD_ROUNDS_LIST=3 make field-grid
+```
+
+Decision rule: prefer a lower/negative `tconf` coefficient only if it reduces
+gate pressure or improves `qloop_efficiency` without losing prompt coverage,
+`I_Q^kv` sign quality, or answer-surface cleanliness.
+
+### First Sweep
+
+`xcell=0.02`, `rounds=3`, canonical five-prompt corpus:
+
+```text
+qloop  tconf  routes/gated  eff    prompts  qloop_quality  avg_I_Q^kv  field_score
+1     -0.10   10/1          0.909  5/5      0/10           +1.177      +2.138
+1      0      10/1          0.909  5/5      0/10           +0.918      +2.097
+1      0.10   11/1          0.917  5/5      0/11           +1.009      +2.140
+1      0.20   11/1          0.917  5/5      0/11           +1.009      +2.140
+2     -0.10   14/6          0.700  5/5      0/14           +0.963      +2.090
+2      0.20   19/9          0.679  5/5      0/19           +0.840      +2.029
+```
+
+Reading: a global default flip is not justified yet. For normal `qloop=1`,
+`-0.10` improves average `I_Q^kv` but loses one accepted route and slightly
+lowers efficiency/score. For diagnostic `qloop=2`, the same negative tconf
+weight clearly reduces gate pressure and improves `I_Q^kv`. The next runtime
+policy should therefore be conditional or adaptive, not simply changing the
+global default away from `0.20`.

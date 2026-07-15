@@ -103,11 +103,13 @@ tuning field-level behavior rather than direct answer snippets. The normal
 field neighbour lane uses a gentle `xcell=0.02` default; direct user-KV answer
 injection is a separate REPL bridge knob. Normal field/repl qloop defaults to
 one routed answer (`qloop=1`); `qloop=2` remains available for diagnostics when
-you want a second candidate route. KV-backed cell qloop answers are admitted
-only when `I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`); rejected answers are
-reported as `qloop_gated` and are not written into the chorus. The qloop limit
-counts admitted answers, not failed candidates, so a gated route may fall
-through to the next candidate without widening the accepted chorus.
+you want a second candidate route. The route score's target-confidence term is
+controlled by `A2A_QLOOP_TCONF_WEIGHT` (default `0.20`) and can be swept through
+`A2A_FIELD_QLOOP_TCONFS`. KV-backed cell qloop answers are admitted only when
+`I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`); rejected answers are reported as
+`qloop_gated` and are not written into the chorus. The qloop limit counts
+admitted answers, not failed candidates, so a gated route may fall through to
+the next candidate without widening the accepted chorus.
 
 `make field-grid` runs `field_sweep.sh` across field-level settings, writes each
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
@@ -119,12 +121,14 @@ balance, and a rough `field_score` for sorting candidate settings before
 reading the raw samples. Set
 `A2A_FIELD_KEEP_RAW=1` to save the full per-prompt field outputs next to each
 TSV. Defaults are intentionally small:
-`A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`, and
-`A2A_FIELD_ROUNDS_LIST="3"`. Override the grid with:
+`A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`,
+`A2A_FIELD_QLOOP_TCONFS="0.20"`, and `A2A_FIELD_ROUNDS_LIST="3"`. Override the
+grid with:
 
 ```sh
 A2A_FIELD_XCELLS="0.01 0.02 0.03" make field-grid
 A2A_FIELD_XCELLS="0 0.02" A2A_FIELD_QLOOPS="0 1 2" make field-grid
+A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOP_TCONFS="-0.10 0 0.10 0.20" make field-grid
 A2A_FIELD_ROUNDS_LIST="1 2 3" A2A_FIELD_CELLS=4 A2A_FIELD_FRAG=12 make field-grid
 A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="1 2" make field-grid
 ```
