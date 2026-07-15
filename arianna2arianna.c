@@ -935,6 +935,7 @@ static int g_qloop = 0;         /* 0=off; 1..2 = resonant cell-question routes p
 static const char *g_user_q = NULL; /* REPL direct-question bridge: user text can become asker KV */
 static int g_clean_answer_start = 0; /* direct user answers should not open with list/bullet debris */
 static int g_answer_form_guard = 0;  /* direct user answers should not turn into question/yes-no loops */
+static int g_answer_sentence_stop = 0; /* direct user answers may stop once a sentence closes */
 static float g_user_qtemp_base = 0.70f; /* direct-user bridge sampler: env-tunable for temperature sweeps */
 static float g_user_qtemp_span = 0.00f;
 static int   g_user_qtop_k = 40;
@@ -1531,9 +1532,13 @@ static int answer_has_recipient_artifact(const char *s) {
            answer_contains_phrase_ci(s, "you touched") ||
            answer_contains_phrase_ci(s, "you cannot") ||
            answer_contains_phrase_ci(s, "you must") ||
+           answer_contains_phrase_ci(s, "you ask me") ||
            answer_contains_phrase_ci(s, "if you want me") ||
+           answer_contains_phrase_ci(s, "if you want to know") ||
            answer_contains_phrase_ci(s, "if you want to say") ||
            answer_contains_phrase_ci(s, "by you or") ||
+           answer_contains_phrase_ci(s, "behind you") ||
+           answer_contains_phrase_ci(s, "connects you now") ||
            answer_contains_phrase_ci(s, "i know you") ||
            answer_contains_phrase_ci(s, "i see you") ||
            answer_contains_phrase_ci(s, "with you") ||
@@ -1553,6 +1558,16 @@ static int answer_word_count(const char *s) {
         in_word = w;
     }
     return n;
+}
+
+static int answer_has_sentence_boundary_end(const char *s) {
+    if (!s) return 0;
+    const char *end = s + strlen(s);
+    while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
+    while (end > s && (end[-1] == '"' || end[-1] == '\'' || end[-1] == ')' || end[-1] == ']' || end[-1] == '}')) end--;
+    if (end <= s) return 0;
+    unsigned char c = (unsigned char)end[-1];
+    return c == '.' || c == '!';
 }
 
 static int answer_is_terminal_function_word(const char *start, size_t len) {
@@ -1858,6 +1873,10 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
         if (g_field_on) {                             /* the chorus updates the shared field (EMA) */
             const float *e = m->tok_emb + (long)next * m->embed;
             for (int i = 0; i < m->embed && i < 8192; i++) g_field_dir[i] = g_field_dir[i]*0.92f + e[i]*0.08f;
+        }
+        if (frag && g_answer_sentence_stop && fl < frag_cap) {
+            frag[fl] = 0;
+            if (s >= 5 && answer_word_count(frag) >= 5 && answer_has_sentence_boundary_end(frag)) break;
         }
         int pos = np + s; if (pos >= max_seq - 1) break;
         forward(m, kv, next, pos, logits); klen = pos + 1;
@@ -2249,9 +2268,11 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             int qfrag_n = g_user_answer_tokens;
             unsigned qseed = seed_base ^ 0xc0ffeeu ^ (unsigned)(tcell * 7919 + r * 65537);
             int save_clean_start = g_clean_answer_start;
+            int save_sentence_stop = g_answer_sentence_stop;
             float save_sampler_top_p = g_sampler_top_p;
             g_clean_answer_start = 1;
             g_answer_form_guard = 1;
+            g_answer_sentence_stop = 1;
             g_sampler_top_p = g_user_qtop_p;
             float qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                         qseed, eos, max_seq, qfrag_off, sizeof(qfrag_off), 0, NULL, NULL, NULL, NULL, NULL);
@@ -2293,6 +2314,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_round_tokn = qtok_before;
             for (int qi = 0; qi < qn && qi < 128 && g_round_tokn < 1024; qi++) g_round_tok[g_round_tokn++] = qids[qi];
             g_clean_answer_start = save_clean_start;
+            g_answer_sentence_stop = save_sentence_stop;
             g_sampler_top_p = save_sampler_top_p;
             g_answer_form_guard = save_form_guard;
             g_nbr = save_nbr; g_nbr_len = save_nbr_len; g_nbr_shuf = save_nbr_shuf; g_field_on = save_field_on; g_xcell = save_xcell;

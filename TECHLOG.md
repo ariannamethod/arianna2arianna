@@ -1785,3 +1785,49 @@ remaining failures are now mostly two terminal tails and one recipient leak
 (`you cannot... your`). Next layer should either add a length/closure reward to
 selection or make the answer generator stop on sentence boundaries instead of
 fixed token count.
+
+## 2026-07-15 - Sentence-boundary answer closure
+
+### Context
+
+After broadening the candidate set, the remaining failures were mostly fixed
+token-count tails: good first clauses kept generating until `userTok=16` and
+then ended on an open fragment. A post-hoc trim would hide evidence; the cleaner
+runtime fix is to stop direct-user answers once a real sentence has closed.
+
+### Change
+
+- Added a direct-answer-only `g_answer_sentence_stop` mode inside `cell_speak`.
+- When a direct-user answer has at least five words and ends on sentence
+  punctuation, generation stops before spending the remaining fixed token
+  budget.
+- Kept the closure mode off for normal chorus/field/life generation.
+- Expanded false-recipient detection for the new short-answer forms exposed by
+  closure (`you ask me`, `if you want to know`, `behind you`,
+  `connects you now`).
+
+### Evidence
+
+```text
+make test
+=== summary: 82 passed, 0 failed, 1 skipped ===
+
+A2A_BASELINE_TSV=runs/repl_eval_repl_probe_regression_20260714_055810.tsv make repl-eval
+results: runs/repl_eval_repl_probe_regression_20260715_041505.tsv
+I_U^kv: avg +0.648, pos 27, neg 3, zero 0, nan 0
+answer_bad_start: 0/30
+answer_quality: any 1/30, short 0, question_like 0, label_artifact 1,
+  notation_artifact 0, morph_artifact 0, recipient_artifact 0,
+  tail_artifact 0, yes_no_start 0, repetition 0
+
+baseline under the same detector:
+I_U^kv: avg +0.477, pos 24, neg 6, zero 0, nan 0
+answer_quality: any 5/30, short 0, question_like 0, label_artifact 1,
+  notation_artifact 0, morph_artifact 0, recipient_artifact 2,
+  tail_artifact 2, yes_no_start 0, repetition 0
+```
+
+The remaining flagged answer is a label/form artifact, not a tail. The direct
+bridge now prefers short closed answers over longer unfinished fragments. Next
+work should inspect the one residual label artifact and then move back up to
+field-level behavior instead of continuing to tune lexical cleanup.

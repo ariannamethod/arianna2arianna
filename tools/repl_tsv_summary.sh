@@ -175,9 +175,13 @@ summarize() {
                    low ~ /you touched/ ||
                    low ~ /you cannot/ ||
                    low ~ /you must/ ||
+                   low ~ /you ask me/ ||
                    low ~ /if you want me/ ||
+                   low ~ /if you want to know/ ||
                    low ~ /if you want to say/ ||
                    low ~ /by you or/ ||
+                   low ~ /behind you/ ||
+                   low ~ /connects you now/ ||
                    low ~ /i know you/ ||
                    low ~ /i see you/ ||
                    low ~ /with you/ ||
