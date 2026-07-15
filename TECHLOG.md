@@ -1905,15 +1905,31 @@ too narrow because it only exposed one-round neighbour metrics.
 ```text
 make field-sweep
 prompt                                      d_margin  kv_influence  qloop_routes
-What is resonance?                         +0.097    -0.498        4
-Let the cells remember each other.         -0.016    -0.973        0
-Answer only with a question: why...        -0.076    -0.428        3
-Name the difference between echo...        -0.090    -1.966        2
-If Arianna is a field, what is a cell?     -0.174    -0.576        2
+What is resonance?                         +0.184    -0.565        4
+Let the cells remember each other.         +0.002    -0.229        1
+Answer only with a question: why...        -0.003    -0.027        6
+Name the difference between echo...        -0.101    -0.070        0
+If Arianna is a field, what is a cell?     -0.160    -0.032        4
 ```
 
 Interpretation: the field often settles at or below the paired sampling floor,
-but semantic neighbour KV is currently broadening on these prompts
-(`I_N^kv < 0`), while ordered-vs-shuffled neighbour deltas remain near zero.
-That makes neighbour/qloop geometry the next real tuning surface, not more
+and semantic neighbour KV is now a gentle broadening lane rather than the
+strong `0.30` shove. Ordered-vs-shuffled neighbour deltas remain near zero.
+That keeps neighbour/qloop geometry as the next real tuning surface, not more
 direct-answer cleanup.
+
+### xcell Default Decision
+
+Manual field sweep over the tracked prompts:
+
+```text
+xcell  avg I_N^kv  read
+0.05   -0.185      softest broadening; qloop stays active
+0.10   -0.307      one positive prompt, but less stable
+0.20   -0.724      broadening returns
+0.30   -0.888      old default; too strong for the broad re-SFT body
+```
+
+Default field neighbour coupling changed from `0.30` to `0.05` in `Makefile`,
+`field` CLI default, REPL field loop, and sweep scripts. Direct user-KV answer
+injection remains a separate bridge knob.

@@ -2460,7 +2460,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_life_on = 0;
     g_chorus = 1;
     g_leap_mode = 2;
-    g_xcell = 0.30f;
+    g_xcell = 0.05f;
     g_xrep = 1.3f;
     g_kvshuf = 1;
     g_kvpos = 0;
@@ -2642,7 +2642,7 @@ int main(int argc, char **argv) {
         int n_rounds = argc > 6 ? atoi(argv[6]) : 1;
         float alpha  = argc > 7 ? (float)atof(argv[7]) : 0.0f;   /* soma coupling strength (0 = text-only baseline) */
         g_leap_mode  = argc > 8 ? atoi(argv[8]) : 2;             /* leap-v2 — RELAY-ONLY (no-op under the default chorus; lives only when g_chorus=0) */
-        g_xcell      = argc > 9 ? (float)atof(argv[9]) : 0.3f;   /* DEFAULT ALIVE: λ=0.3 balanced cross-cell. 0 = off */
+        g_xcell      = argc > 9 ? (float)atof(argv[9]) : 0.05f;  /* DEFAULT ALIVE: gentle cross-cell lane. 0 = off */
         g_chorus     = argc > 10 ? atoi(argv[10]) : 1;           /* DEFAULT: 1 = chorus (each cell own answer). 0 = relay */
         g_xrep       = argc > 11 ? (float)atof(argv[11]) : 1.3f; /* cross-cell rep-penalty: don't echo neighbours' words (1=off) */
         g_life_on    = argc > 12 ? atoi(argv[12]) : 0;           /* δ-life: 1 = measure/run Game of Life (incr.0 = log fitness inputs) */

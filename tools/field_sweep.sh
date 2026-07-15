@@ -13,7 +13,7 @@ FRAG="${A2A_FRAG:-12}"
 ROUNDS="${A2A_ROUNDS:-3}"
 ALPHA="${A2A_ALPHA:-0}"
 LEAP="${A2A_LEAP:-2}"
-XCELL="${A2A_XCELL:-0.30}"
+XCELL="${A2A_XCELL:-0.05}"
 CHORUS="${A2A_CHORUS:-1}"
 XREP="${A2A_XREP:-1.3}"
 LIFE="${A2A_LIFE:-0}"
@@ -71,31 +71,41 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             d_margin = (dr == "nan" || d_floor == "") ? "nan" : sprintf("%+.3f", dr - d_floor)
 
             kv = $4
-            mode = kv
-            sub(/.*kv\[/, "", mode)
-            sub(/\].*/, "", mode)
+            if (kv ~ /off/) {
+                mode = "off"
+                delta = "nan"
+                kfloor = "nan"
+                kmargin = "nan"
+                infl = "nan"
+                disso = $5
+                dpos = $6
+            } else {
+                mode = kv
+                sub(/.*kv\[/, "", mode)
+                sub(/\].*/, "", mode)
 
-            delta = kv
-            sub(/.*\] /, "", delta)
-            sub(/ .*/, "", delta)
+                delta = kv
+                sub(/.*\] /, "", delta)
+                sub(/ .*/, "", delta)
 
-            kfloor = kv
-            sub(/.*floor /, "", kfloor)
-            sub(/ .*/, "", kfloor)
+                kfloor = kv
+                sub(/.*floor /, "", kfloor)
+                sub(/ .*/, "", kfloor)
 
-            kmargin = kv
-            sub(/.*margin /, "", kmargin)
-            sub(/\).*/, "", kmargin)
+                kmargin = kv
+                sub(/.*margin /, "", kmargin)
+                sub(/\).*/, "", kmargin)
 
-            infl = $5
-            sub(/.*\] /, "", infl)
-            sub(/ .*/, "", infl)
+                infl = $5
+                sub(/.*\] /, "", infl)
+                sub(/ .*/, "", infl)
 
-            disso = $6
+                disso = $6
+                dpos = $7
+            }
             sub(/.*D_R /, "", disso)
             sub(/ .*/, "", disso)
 
-            dpos = $7
             sub(/.*Dpos /, "", dpos)
             sub(/ .*/, "", dpos)
 
