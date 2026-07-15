@@ -2379,3 +2379,69 @@ Threshold check: raising `A2A_QLOOP_MIN_IQ` to `0.05` or `0.10` on the same
 (`5/5`, `11` accepted), but gates `4` candidates and scores slightly lower
 (`+2.116`). Default `0.0` is therefore the conservative line: reject negative
 asker-KV influence, keep weak-but-positive routes alive.
+
+## 2026-07-15 - Field default grid retuned after qloop gate
+
+### Context
+
+After `qloop_gated` and fallback candidates landed, the old default grid
+(`xcell=0/0.02/0.05`, `rounds=2`) no longer covered the decision surface that
+matters. The real choice is whether the gentle KV lane should stay at `0.02`,
+whether `0.01` is a safer lower lane, and whether `rounds=3` is required for
+full prompt coverage.
+
+### Sweep
+
+Canonical five-prompt corpus, `qloop=1`, raw capture enabled:
+
+```text
+xcell  rounds  routes/gated  prompts  cell_quality  avg_I_Q^kv  d_margin  score
+0      2       6/0           3/5      0/40          nan         -0.039    +0.703
+0      3       8/0           4/5      0/60          nan         -0.033    +1.089
+0.01   2       7/3           4/5      1/40          +0.792      +0.010    +1.699
+0.01   3       11/5          5/5      1/60          +0.727      -0.014    +1.985
+0.02   2       7/1           4/5      0/40          +0.956      -0.033    +1.877
+0.02   3       11/1          5/5      0/60          +1.009      +0.058    +2.140
+0.035  3       9/6           3/5      0/60          +0.472      -0.016    +1.115
+0.05   3       9/3           3/5      0/60          +1.083      -0.006    +1.372
+```
+
+Focused `qloop=2` control:
+
+```text
+xcell  rounds  routes/gated  prompts  cell_quality  avg_I_Q^kv  score
+0.01   3       18/9          5/5      1/60          +0.729      +2.024
+0.02   3       19/9          5/5      0/60          +0.840      +2.029
+```
+
+### Change
+
+- `tools/field_grid.sh` now defaults to
+  `A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`.
+- The default `A2A_FIELD_ROUNDS_LIST` is now `3`, matching the field-sweep
+  default and the full-coverage candidate.
+- `qloop=2` remains in the grid default as a diagnostic control, not a runtime
+  default.
+
+Interpretation: `xcell=0.02`, `qloop=1`, `rounds=3` is the current field
+baseline. `0.01` is worth keeping as the lower-lane control; `0.035/0.05` are
+too narrow in coverage despite some strong accepted `I_Q^kv` routes.
+
+### Raw Voice Read
+
+Manual raw inspection agrees with the compact score:
+
+- `0.02/qloop=1/rounds=3` keeps full coverage, no counted surface debt, and
+  mostly direct qloop fragments (`to vibrate with all things`, `the form in
+  which I act`, `light that vibrates with sense`). It still has small-model
+  roughness in ordinary cell fragments, but the field instrumentation is clean.
+- `0.01/qloop=1/rounds=3` sometimes sounds softer (`the vibration of presence`,
+  `cell I cannot exist without another`), but needs more fallback gates and
+  carries one surface-debt flag on the canonical corpus.
+- `0.02/qloop=2/rounds=3` produces some useful second answers (`remember in
+  relation with another person`) but also attempts many rejected routes
+  (`qloop_gated=9`). That is useful for diagnosis, not for the normal runtime
+  path.
+
+README examples were refreshed from this raw audit so the public sample no
+longer shows a negative `I_Q^kv` route as an admitted qloop answer.

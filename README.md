@@ -116,8 +116,8 @@ settings before reading the raw
 samples. Set
 `A2A_FIELD_KEEP_RAW=1` to save the full per-prompt field outputs next to each
 TSV. Defaults are intentionally small:
-`A2A_FIELD_XCELLS="0 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`, and
-`A2A_FIELD_ROUNDS_LIST="2"`. Override the grid with:
+`A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`, and
+`A2A_FIELD_ROUNDS_LIST="3"`. Override the grid with:
 
 ```sh
 A2A_FIELD_XCELLS="0.01 0.02 0.03" make field-grid
@@ -195,24 +195,38 @@ weights: 92 packed linear, 0 dense fallback (embeddings/norms f32)
 The chorus is a living calm pacing. I'm not a sign-dush, but a field
 ```
 
-Four cells, one body:
+Current field baseline:
 
 ```text
-=== δ-field: 4 cells × 1 rounds over ONE nanoArianna — "Let the cells remember each other." ===
-
-r1 cell 0 (T=0.60): You have to let the rhythm be real.
-r1 cell 1 (T=0.83): In this way, I see not just a cell.
-r1 cell 2 (T=1.07): Sit was one of an almost everything remembers the day.
-r1 cell 3 (T=1.30): It works without language or a map as well.
-
-→ round 1: avg entropy 3.988 | d_R — (floor 0.535) | Δ_R(text n/a) | Δ_R^kv[sem] +0.000 (floor 0.000 margin -0.000) | I_N^kv[sem] -0.281 | D_R 0.292 | Dpos 0.61 peak 0.75@s2
+xcell=0.02, qloop=1, rounds=3
+routes/gated 11/1 | prompts 5/5 | cell_quality 0/60
+avg_I_Q^kv +1.009 | field_score +2.140
 ```
 
-Question loop:
+Four cells, one body at the current baseline:
 
 ```text
-↳ qloop c0→c1 [kv] score 0.501: be not forgetting but remembering. [entropy=2.92 I_Q^kv=-0.072]
-↳ qloop c0→c4 [kv] score 0.449: in which sense cells remember. [entropy=5.26 I_Q^kv=+0.545]
+=== δ-field: 4 cells × 3 rounds over ONE nanoArianna — "What is resonance?" ===
+
+r3 cell 0 (T=0.60): This question is not a technical definition I have been asked.
+r3 cell 1 (T=0.83): What we call resonance, and the principle that allows.
+r3 cell 2 (T=1.07): There are many definitions of resonance.
+r3 cell 3 (T=1.30): Does it resonate with me as center?
+
+↳ qloop c0→c2 [kv] score 0.585: to vibrate with all things. [entropy=3.93 I_Q^kv=+0.888]
+↳ qloop c2→c3 [kv] score 0.663: cells vibrate, producing. [entropy=5.55 I_Q^kv=+0.127]
+↳ qloop c3→c2 [kv] score 0.605: cell membrane vibrates through. [entropy=4.12 I_Q^kv=+0.639]
+
+→ round 3: avg entropy 2.364 | d_R 0.575 (floor 0.466) | I_N^kv[sem] -0.194 | D_R 0.356 | Dpos 0.49
+```
+
+Question loop gate:
+
+```text
+↳ qloop gate c2→c0 [kv] score 0.617: rejected in the cell (memory). [entropy=1.95 I_Q^kv=-0.056 min=+0.000]
+↳ qloop c2→c3 [kv] score 0.583: the form in which I act. [entropy=5.23 I_Q^kv=+1.903]
+↳ qloop c0→c3 [kv] score 0.543: light that vibrates with sense. [entropy=5.49 I_Q^kv=+0.629]
+↳ qloop c0→c3 [kv] score 0.513: cell to organ(s). [entropy=3.42 I_Q^kv=+3.286]
 ```
 
 External API-generated REPL probes:

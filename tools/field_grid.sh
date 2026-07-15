@@ -12,9 +12,9 @@ Runs field_sweep.sh across field-level settings and writes per-setting TSV plus
 summary files under runs/.
 
 Knobs:
-  A2A_FIELD_XCELLS="0 0.02 0.05"   field neighbour KV weights
+  A2A_FIELD_XCELLS="0 0.01 0.02 0.05" field neighbour KV weights
   A2A_FIELD_QLOOPS="1 2"           qloop route limits
-  A2A_FIELD_ROUNDS_LIST="2"        round counts to compare
+  A2A_FIELD_ROUNDS_LIST="3"        round counts to compare
   A2A_FIELD_CELLS=4                field cells
   A2A_FIELD_FRAG=12                tokens per cell fragment
   A2A_FIELD_KEEP_RAW=0             save raw per-prompt field outputs next to TSVs
@@ -36,9 +36,9 @@ PROMPTS="${1:-${A2A_FIELD_PROMPTS:-$ROOT/prompts/kv_influence.txt}}"
 
 CELLS="${A2A_FIELD_CELLS:-${A2A_CELLS:-4}}"
 FRAG="${A2A_FIELD_FRAG:-${A2A_FRAG:-12}}"
-XCELLS="${A2A_FIELD_XCELLS:-0 0.02 0.05}"
+XCELLS="${A2A_FIELD_XCELLS:-0 0.01 0.02 0.05}"
 QLOOPS="${A2A_FIELD_QLOOPS:-1 2}"
-ROUNDS_LIST="${A2A_FIELD_ROUNDS_LIST:-${A2A_ROUNDS:-2}}"
+ROUNDS_LIST="${A2A_FIELD_ROUNDS_LIST:-${A2A_ROUNDS:-3}}"
 KEEP_RAW="${A2A_FIELD_KEEP_RAW:-0}"
 
 if [[ ! -f "$PROMPTS" ]]; then
