@@ -94,12 +94,14 @@ averages (`qloop_dist_avg`, `qloop_qopen_avg`, `qloop_tconf_avg`,
 `qloop_qmarks_avg`, plus gated counterparts), qloop answer quality counters
 (`qloop_iq_avg`, `qloop_iq_pos`, `qloop_iq_neg`, `qloop_iq_zero`,
 `qloop_quality`, `qloop_tail`, `qloop_morph`, `qloop_label`, `qloop_short`,
-`qloop_question`), and ordinary cell-surface quality counters
+`qloop_question`, `qloop_words_avg`), and ordinary cell-surface quality counters
 (`cell_quality`, `cell_tail`, `cell_morph`, `cell_label`, `cell_short`).
-`cell_question` is reported separately because questions can be valid qloop
-material rather than surface debt; `qloop_question` is counted as answer debt
-because the routed answer path should close rather than ask again. Use it when
-tuning field-level behavior rather than direct answer snippets. The normal
+`cell_question` and `cell_words_avg` are reported separately because questions
+can be valid qloop material rather than surface debt, and answer density helps
+catch settings that look clean only because the chorus became thin;
+`qloop_question` is counted as answer debt because the routed answer path should
+close rather than ask again. Use it when tuning field-level behavior rather
+than direct answer snippets. The normal
 field neighbour lane uses a gentle `xcell=0.02` default; direct user-KV answer
 injection is a separate REPL bridge knob. Normal field/repl qloop defaults to
 one routed answer (`qloop=1`); `qloop=2` remains available for diagnostics when
@@ -119,7 +121,8 @@ the next candidate without widening the accepted chorus.
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
 comparing qloop coverage, qloop gate pressure, qloop route efficiency,
 accepted/gated qloop route scores and component profiles, qloop/cell surface
-debt, `I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`, `D_R`, and `Dpos`. The compact table also reports
+debt, qloop/cell answer density, `I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`,
+`D_R`, and `Dpos`. The compact table also reports
 qloop/cell debt rates, `I_N^kv` and `I_Q^kv` sign balance, `d_margin` sign
 balance, and a rough `field_score` for sorting candidate settings before
 reading the raw samples. Set

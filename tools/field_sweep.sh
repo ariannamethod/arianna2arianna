@@ -48,7 +48,7 @@ raw_name() {
     printf "%03d_%s.txt" "$seq" "$slug"
 }
 
-printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\n"
+printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_words_avg\n"
 
 raw_seq=0
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
@@ -62,7 +62,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     line="$(printf "%s\n" "$out" | grep "→ round" | tail -n 1 || true)"
     if [[ -z "$line" ]]; then
         safe_prompt="${prompt//$'\t'/ }"
-        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS"
+        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\tnan\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS"
         continue
     fi
 
@@ -159,11 +159,13 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             }
         }
         function avg_or_nan(sum, n) { return n ? sprintf("%.3f", sum / n) : "nan" }
-        function add_answer(s,     ans, flagged, shortf, tailf, morphf, labelf, questionf) {
+        function add_answer(s,     ans, wc, flagged, shortf, tailf, morphf, labelf, questionf) {
             ans = trim(s)
             if (ans == "") return
             n++
-            shortf = (length(ans) < 8 || word_count(ans) < 2)
+            wc = word_count(ans)
+            words_sum += wc
+            shortf = (length(ans) < 8 || wc < 2)
             tailf = has_tail_artifact(ans)
             morphf = has_morph_artifact(ans)
             labelf = has_label_artifact(ans)
@@ -204,13 +206,14 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             score_avg = score_n ? sprintf("%.3f", score_sum / score_n) : "nan"
             gate_score_avg = gate_score_n ? sprintf("%.3f", gate_score_sum / gate_score_n) : "nan"
             avg = iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan"
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d",
+            words_avg = n ? sprintf("%.3f", words_sum / n) : "nan"
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s",
                 score_avg, gate_score_avg,
                 avg_or_nan(dist_sum, dist_n), avg_or_nan(gate_dist_sum, gate_dist_n),
                 avg_or_nan(qopen_sum, qopen_n), avg_or_nan(gate_qopen_sum, gate_qopen_n),
                 avg_or_nan(tconf_sum, tconf_n), avg_or_nan(gate_tconf_sum, gate_tconf_n),
                 avg_or_nan(qmarks_sum, qmarks_n), avg_or_nan(gate_qmarks_sum, gate_qmarks_n),
-                avg, iq_pos, iq_neg, iq_zero, quality_n, tail_n, morph_n, label_n, short_n, question_n
+                avg, iq_pos, iq_neg, iq_zero, quality_n, tail_n, morph_n, label_n, short_n, question_n, words_avg
         }
     ')"
     surface_metrics="$(printf "%s\n" "$out" | awk '
@@ -280,11 +283,13 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             sub(/[ \t]+\[entropy=.*/, "", s)
             return trim(s)
         }
-        function add_fragment(s,     f, flagged, shortf, tailf, morphf, labelf) {
+        function add_fragment(s,     f, wc, flagged, shortf, tailf, morphf, labelf) {
             f = strip_diag(s)
             if (f == "") return
             n++
-            shortf = (length(f) < 8 || word_count(f) < 2)
+            wc = word_count(f)
+            words_sum += wc
+            shortf = (length(f) < 8 || wc < 2)
             tailf = has_tail_artifact(f)
             morphf = has_morph_artifact(f)
             labelf = has_label_artifact(f)
@@ -310,7 +315,8 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
         }
         END {
             if (in_cell) add_fragment(frag)
-            printf "%d\t%d\t%d\t%d\t%d\t%d\t%d", n, quality_n, tail_n, morph_n, label_n, short_n, question_n
+            words_avg = n ? sprintf("%.3f", words_sum / n) : "nan"
+            printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s", n, quality_n, tail_n, morph_n, label_n, short_n, question_n, words_avg
         }
     ')"
 

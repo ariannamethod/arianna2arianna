@@ -2632,3 +2632,37 @@ adapt  routes/gated  eff    prompts  qloop_quality  avg_I_Q^kv  field_score
 
 The adaptive lane reproduces the earlier `qloop=2` negative-tconf win while
 keeping the fixed `0.20` policy as the explicit default.
+
+## 2026-07-16 - Field answer-density counters
+
+### Context
+
+The adaptive qloop lane improves gate pressure, but the existing compact score
+mainly measured coverage, hidden influence, and debt. It did not make answer
+thinness visible, so a setting could look better because it routed fewer or
+poorer fragments rather than because the field became healthier.
+
+### Change
+
+- `tools/field_sweep.sh` now reports `qloop_words_avg` for accepted qloop
+  answers and `cell_words_avg` for ordinary cell fragments.
+- `tools/field_tsv_summary.sh` aggregates both as a `density:` line.
+- `tools/field_grid.sh` carries both density counters in the compact table.
+- Tests now pin the expanded TSV/compact column contract.
+
+These counters are deliberately not folded into `field_score` yet. They are a
+guardrail for reading the next tuning sweep: if gate pressure improves while
+word density collapses, the candidate is not a real field improvement.
+
+### Focused Check
+
+Same fixed/adaptive `qloop=2` check as above, now with density visible:
+
+```text
+adapt  routes/gated  eff    qloop_words_avg  cell_words_avg  avg_I_Q^kv  field_score
+0      19/9          0.679  4.895            7.933           +0.840      +2.029
+1      14/6          0.700  4.643            7.933           +0.963      +2.090
+```
+
+Reading: the adaptive lane reduces accepted route count, but does not collapse
+answer density; the ordinary cell chorus density is unchanged in this check.

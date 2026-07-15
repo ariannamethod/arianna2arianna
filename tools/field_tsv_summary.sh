@@ -65,7 +65,8 @@ awk -F '\t' '
         col("qloop_qmarks_avg"); col("qloop_gate_qmarks_avg")
         col("qloop_iq_pos"); col("qloop_iq_neg"); col("qloop_iq_zero")
         col("qloop_tail"); col("qloop_morph"); col("qloop_label")
-        col("qloop_short"); col("qloop_question"); col("cell_fragments")
+        col("qloop_short"); col("qloop_question"); col("qloop_words_avg")
+        col("cell_fragments"); col("cell_words_avg")
         col("cell_quality"); col("cell_tail"); col("cell_morph")
         col("cell_label"); col("cell_short"); col("cell_question")
         next
@@ -109,8 +110,10 @@ awk -F '\t' '
         qloop_label += $(col("qloop_label")) + 0
         qloop_short += $(col("qloop_short")) + 0
         qloop_question += $(col("qloop_question")) + 0
+        add_weighted("qloop_words_avg", qroutes, "qwords")
 
         cell_fragments += $(col("cell_fragments")) + 0
+        add_weighted("cell_words_avg", $(col("cell_fragments")) + 0, "cwords")
         cell_quality += $(col("cell_quality")) + 0
         cell_tail += $(col("cell_tail")) + 0
         cell_morph += $(col("cell_morph")) + 0
@@ -177,6 +180,8 @@ awk -F '\t' '
             qloop_quality, qloop_routes, qloop_tail, qloop_morph, qloop_label, qloop_short, qloop_question
         printf "cell_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d\n",
             cell_quality, cell_fragments, cell_tail, cell_morph, cell_label, cell_short, cell_question
+        printf "density: qloop_words_avg %s, cell_words_avg %s\n",
+            avg_text("qwords"), avg_text("cwords")
         printf "I_N^kv: avg %s, pos %d, neg %d, zero %d\n",
             in_n ? sprintf("%+.3f", in_sum / in_n) : "nan", in_pos, in_neg, in_zero
         printf "I_Q^kv: avg %s, pos %d, neg %d, zero %d, rows %d\n",
