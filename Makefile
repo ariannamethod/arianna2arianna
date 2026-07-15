@@ -46,6 +46,7 @@ XCELL  ?= 0.30
 TICKS  ?= 5
 INIT   ?= 4
 SWEEP_PROMPTS ?= prompts/kv_influence.txt
+FIELD_SWEEP_PROMPTS ?= $(SWEEP_PROMPTS)
 REPL_PROMPTS ?= prompts/repl_questions.txt
 REPL_EVAL_PROMPTS ?= prompts/repl_probe_regression.txt
 TEMP_SWEEP_PROMPTS ?= $(REPL_EVAL_PROMPTS)
@@ -105,6 +106,9 @@ life: $(BIN) $(MODEL)
 sweep-influence: $(BIN) $(MODEL)
 	A2A_MODEL="$(MODEL)" bash tools/kv_influence_sweep.sh "$(SWEEP_PROMPTS)"
 
+field-sweep: $(BIN) $(MODEL)
+	A2A_MODEL="$(MODEL)" bash tools/field_sweep.sh "$(FIELD_SWEEP_PROMPTS)"
+
 repl-sweep: $(BIN) $(MODEL)
 	A2A_MODEL="$(MODEL)" bash tools/repl_question_sweep.sh "$(REPL_PROMPTS)"
 
@@ -126,7 +130,7 @@ openai-repl-probe: $(BIN) $(MODEL)
 clean:
 	rm -f $(BIN)
 
-.PHONY: run run-q8 run-q4 repl field restest life sweep-influence repl-sweep repl-eval repl-temp-sweep repl-substrate-compare recipient-lock openai-repl-probe clean weights weights-q8 weights-q4 test portable fast-x86 bench
+.PHONY: run run-q8 run-q4 repl field restest life sweep-influence field-sweep repl-sweep repl-eval repl-temp-sweep repl-substrate-compare recipient-lock openai-repl-probe clean weights weights-q8 weights-q4 test portable fast-x86 bench
 
 test: $(BIN)
 	bash tests/run.sh

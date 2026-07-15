@@ -84,6 +84,12 @@ prints one TSV row per prompt with `Δ_R^kv`, permutation floor/margin, and
 semantic-neighbour anchor: its `I_N^kv` sign is body-dependent after re-SFT, but
 it should stay finite and non-zero.
 
+`make field-sweep` runs the same prompts through full multi-round `field` mode
+and prints a final-round TSV with settling (`d_r`, floor, margin), neighbour
+KV controls (`Δ_R^kv`, floor, margin, `I_N^kv`), field disagreement (`D_R`,
+`Dpos`), and qloop route counts. Use it when tuning field-level behavior rather
+than direct answer snippets.
+
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average
 `I_N^kv`. It also records the direct user-route target, route score, and answer

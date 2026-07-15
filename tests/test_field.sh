@@ -48,6 +48,14 @@ else
     a2a_fail "memory prompt did not report semantic neighbour influence"
 fi
 
+field_sweep_prompts="$(mktemp)"
+printf "Let the cells remember each other.\n" > "$field_sweep_prompts"
+field_sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=2 bash "$A2A_ROOT/tools/field_sweep.sh" "$field_sweep_prompts" 2>&1)"
+rm -f "$field_sweep_prompts"
+a2a_assert_grep "^prompt[[:space:]]+mode[[:space:]]+cells[[:space:]]+frag[[:space:]]+rounds[[:space:]]+avg_entropy[[:space:]]+d_r[[:space:]]+d_floor" "$field_sweep_out" "field sweep reports final-round TSV header"
+a2a_assert_grep "Let the cells remember each other\\.[[:space:]]+sem[[:space:]]+3[[:space:]]+4[[:space:]]+2" "$field_sweep_out" "field sweep reports semantic final-round row"
+a2a_assert_grep "Let the cells remember each other\\..*[[:space:]][0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+$" "$field_sweep_out" "field sweep reports qloop route counters"
+
 qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does the field remember?" field 5 12 1 0 2 0.30 1 1.3 0 1 2 0 2>&1)"
 a2a_assert_grep "qloop c[0-9]+.*\\[kv\\]" "$qloop_out" "qloop answers use asker KV"
 a2a_assert_grep "I_Q\\^kv=" "$qloop_out" "qloop reports asker KV influence"

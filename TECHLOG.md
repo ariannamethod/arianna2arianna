@@ -1877,3 +1877,43 @@ answer_quality: any 7/30, short 0, question_like 0, label_artifact 0,
 The current direct user bridge now clears the tracked 30-prompt answer-quality
 surface under the stricter detector. Remaining work should move upward to field
 behavior instead of adding more lexical cleanup.
+
+## 2026-07-15 - Field-level sweep harness
+
+### Context
+
+With direct-user answers clean on the tracked REPL probe surface, the next
+layer is the field itself: whether the chorus settles relative to its sampling
+floor, whether neighbour KV sharpens or broadens the next-token distribution,
+and whether qloop routes actually fire. `kv_influence_sweep.sh` was useful but
+too narrow because it only exposed one-round neighbour metrics.
+
+### Change
+
+- Added `tools/field_sweep.sh`, a full `field`-mode TSV harness.
+- Added `make field-sweep`.
+- The TSV reports final-round:
+  - field shape (`cells`, `frag`, `rounds`);
+  - settling (`d_r`, `d_floor`, `d_margin`);
+  - neighbour controls (`kv_delta`, `kv_floor`, `kv_margin`, `kv_influence`);
+  - field disagreement (`disso`, `dpos`);
+  - qloop route counts (`qloop_routes`, `qloop_kv_routes`, `qloop_triggers`).
+- Added a smoke test that verifies the field-level TSV shape and qloop counters.
+
+### First Read
+
+```text
+make field-sweep
+prompt                                      d_margin  kv_influence  qloop_routes
+What is resonance?                         +0.097    -0.498        4
+Let the cells remember each other.         -0.016    -0.973        0
+Answer only with a question: why...        -0.076    -0.428        3
+Name the difference between echo...        -0.090    -1.966        2
+If Arianna is a field, what is a cell?     -0.174    -0.576        2
+```
+
+Interpretation: the field often settles at or below the paired sampling floor,
+but semantic neighbour KV is currently broadening on these prompts
+(`I_N^kv < 0`), while ordered-vs-shuffled neighbour deltas remain near zero.
+That makes neighbour/qloop geometry the next real tuning surface, not more
+direct-answer cleanup.
