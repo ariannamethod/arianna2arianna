@@ -57,6 +57,7 @@ out="$(bash "$A2A_ROOT/tools/field_grid.sh" --help 2>&1)"
 a2a_assert_grep "A2A_FIELD_XCELLS" "$out" "field grid help names xcell grid"
 a2a_assert_grep "A2A_FIELD_QLOOPS" "$out" "field grid help names qloop grid"
 a2a_assert_grep "A2A_FIELD_ROUNDS_LIST" "$out" "field grid help names rounds grid"
+a2a_assert_grep "A2A_FIELD_KEEP_RAW" "$out" "field grid help names raw capture knob"
 out="$(bash "$A2A_ROOT/tools/field_tsv_summary.sh" --help 2>&1)"
 a2a_assert_grep "field_sweep.tsv" "$out" "field TSV summary help names input shape"
 
@@ -72,7 +73,9 @@ a2a_assert_grep "qloop_quality: any 0/2" "$field_summary_out" "field TSV summary
 a2a_assert_grep "cell_quality: any 1/4, tail 1" "$field_summary_out" "field TSV summary reports cell debt"
 a2a_assert_grep "I_N\\^kv: avg \\+0\\.050" "$field_summary_out" "field TSV summary reports neighbour influence average"
 a2a_assert_grep "I_Q\\^kv: avg \\+0\\.500" "$field_summary_out" "field TSV summary reports qloop influence average"
+a2a_assert_grep "rates: qloop_prompt_rate 0\\.500, qloop_kv_rate 1\\.000, qloop_debt_rate 0\\.000, cell_debt_rate 0\\.250" "$field_summary_out" "field TSV summary reports risk rates"
 a2a_assert_grep "field: avg_d_r 0\\.550" "$field_summary_out" "field TSV summary reports field averages"
+a2a_assert_grep "field_score: \\+0\\.935" "$field_summary_out" "field TSV summary reports rough field score"
 
 summary_tsv="$(mktemp)"
 baseline_tsv="$(mktemp)"

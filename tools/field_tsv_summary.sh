@@ -31,6 +31,8 @@ fi
 
 awk -F '\t' '
     function numeric(x) { return x ~ /^[-+]?[0-9]+([.][0-9]+)?$/ }
+    function clamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x) }
+    function pospart(x) { return x > 0 ? x : 0 }
     function col(name) {
         if (!(name in idx)) {
             printf "missing column: %s\n", name > "/dev/stderr"
@@ -101,6 +103,20 @@ awk -F '\t' '
         add_numeric("dpos", num_sum, num_n)
     }
     END {
+        qprompt_rate = rows ? qloop_prompt_rows / rows : 0
+        qkv_rate = qloop_routes ? qloop_kv_routes / qloop_routes : 0
+        qdebt_rate = qloop_routes ? qloop_quality / qloop_routes : 0
+        cdebt_rate = cell_fragments ? cell_quality / cell_fragments : 0
+        iq_avg = iq_n ? iq_sum / iq_n : 0
+        in_avg = in_n ? in_sum / in_n : 0
+        in_neg_rate = in_n ? in_neg / in_n : 0
+        dm_avg = num_n["d_margin"] ? num_sum["d_margin"] / num_n["d_margin"] : 0
+        disso_avg = num_n["disso"] ? num_sum["disso"] / num_n["disso"] : 0
+        dpos_avg = num_n["dpos"] ? num_sum["dpos"] / num_n["dpos"] : 0
+        field_score = 2.0 * qprompt_rate + 0.5 * qkv_rate + 0.5 * clamp(iq_avg, -1, 1) + 0.2 * clamp(in_avg, -1, 1) \
+                    - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * disso_avg - 0.25 * pospart(dm_avg) \
+                    - 0.2 * in_neg_rate
+
         printf "rows: %d\n", rows
         printf "qloop: routes %d, kv %d, triggers %d, prompts %d/%d\n",
             qloop_routes, qloop_kv_routes, qloop_triggers, qloop_prompt_rows, rows
@@ -112,10 +128,13 @@ awk -F '\t' '
             in_n ? sprintf("%+.3f", in_sum / in_n) : "nan", in_pos, in_neg, in_zero
         printf "I_Q^kv: avg %s, rows %d\n",
             iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan", iq_rows
+        printf "rates: qloop_prompt_rate %.3f, qloop_kv_rate %.3f, qloop_debt_rate %.3f, cell_debt_rate %.3f\n",
+            qprompt_rate, qkv_rate, qdebt_rate, cdebt_rate
         printf "field: avg_d_r %s, avg_d_margin %s, avg_D_R %s, avg_Dpos %s\n",
             num_n["d_r"] ? sprintf("%.3f", num_sum["d_r"] / num_n["d_r"]) : "nan",
             num_n["d_margin"] ? sprintf("%+.3f", num_sum["d_margin"] / num_n["d_margin"]) : "nan",
             num_n["disso"] ? sprintf("%.3f", num_sum["disso"] / num_n["disso"]) : "nan",
             num_n["dpos"] ? sprintf("%.2f", num_sum["dpos"] / num_n["dpos"]) : "nan"
+        printf "field_score: %+.3f (rough rank: coverage + influence - debt - disagreement)\n", field_score
     }
 ' "$tsv"
