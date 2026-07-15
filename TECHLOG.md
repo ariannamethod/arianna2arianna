@@ -2034,3 +2034,46 @@ Verification:
 make test
 === summary: 88 passed, 0 failed, 1 skipped ===
 ```
+
+## 2026-07-15 - Field sweep cell-surface metrics
+
+### Context
+
+After ordinary field cells started committing selected surface fragments, visual
+spot checks were no longer enough. Field/qloop tuning needs to know whether a
+change improved routing while silently reintroducing tail/morph/label debt in
+the ordinary cells.
+
+### Change
+
+- `tools/field_sweep.sh` now parses visible `rN cell M` fragments from the field
+  run and appends surface counters to the TSV:
+  - `cell_fragments`
+  - `cell_quality` (any counted surface debt)
+  - `cell_tail`
+  - `cell_morph`
+  - `cell_label`
+  - `cell_short`
+  - `cell_question`
+- `cell_question` is not folded into `cell_quality`: question-bearing cells are
+  valid qloop material, not necessarily a defect.
+- The parser handles multi-line fragments by accumulating until the cell entropy
+  marker, then strips field diagnostics before scoring.
+- Added smoke coverage for the new header and counter positions.
+
+### First Read
+
+Tracked prompt sweep at `cells=4, frag=12, rounds=3, xcell=0.05`:
+
+```text
+prompt                                      cell_quality/cell_fragments  cell_question  qloop_routes
+What is resonance?                         0/12                         4              6
+Let the cells remember each other.         0/12                         0              0
+Answer only with a question: why...        0/12                         4              6
+Name the difference between echo...        0/12                         0              0
+If Arianna is a field, what is a cell?     0/12                         5              6
+```
+
+Interpretation: the new surface-selection layer is clean on the tracked field
+prompts, so the next field/qloop tuning pass can treat `cell_quality` as a guard
+rail while optimizing route counts, `I_Q^kv`, `I_N^kv`, `D_R`, and `Dpos`.

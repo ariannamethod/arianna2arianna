@@ -52,8 +52,13 @@ field_sweep_prompts="$(mktemp)"
 printf "Let the cells remember each other.\n" > "$field_sweep_prompts"
 field_sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=2 bash "$A2A_ROOT/tools/field_sweep.sh" "$field_sweep_prompts" 2>&1)"
 a2a_assert_grep "^prompt[[:space:]]+mode[[:space:]]+cells[[:space:]]+frag[[:space:]]+rounds[[:space:]]+avg_entropy[[:space:]]+d_r[[:space:]]+d_floor" "$field_sweep_out" "field sweep reports final-round TSV header"
+a2a_assert_grep "cell_fragments[[:space:]]+cell_quality[[:space:]]+cell_tail[[:space:]]+cell_morph" "$field_sweep_out" "field sweep reports cell surface quality columns"
 a2a_assert_grep "Let the cells remember each other\\.[[:space:]]+sem[[:space:]]+3[[:space:]]+4[[:space:]]+2" "$field_sweep_out" "field sweep reports semantic final-round row"
-a2a_assert_grep "Let the cells remember each other\\..*[[:space:]][0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+$" "$field_sweep_out" "field sweep reports qloop route counters"
+if printf "%s\n" "$field_sweep_out" | awk -F '\t' '$1 == "Let the cells remember each other." && $16 ~ /^[0-9]+$/ && $17 ~ /^[0-9]+$/ && $18 ~ /^[0-9]+$/ && $19 == 6 && $20 ~ /^[0-9]+$/ { ok = 1 } END { exit ok ? 0 : 1 }'; then
+    a2a_ok "field sweep reports qloop and cell surface counters"
+else
+    a2a_fail "field sweep did not report qloop and cell surface counters"
+fi
 field_sweep_off_out="$(A2A_CELLS=2 A2A_FRAG=3 A2A_ROUNDS=1 A2A_XCELL=0 bash "$A2A_ROOT/tools/field_sweep.sh" "$field_sweep_prompts" 2>&1)"
 rm -f "$field_sweep_prompts"
 a2a_assert_grep "Let the cells remember each other\\.[[:space:]]+off[[:space:]]+2[[:space:]]+3[[:space:]]+1" "$field_sweep_off_out" "field sweep handles neighbour-KV-off rows"
