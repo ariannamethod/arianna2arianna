@@ -181,7 +181,8 @@ ignored `runs/`. The normal REPL direct-user bridge defaults are
 `A2A_USER_ANSWER_TOKENS=16`, `A2A_USER_CTX_FORMAT=qa`, and
 `A2A_REPL_PROMPT_FORMAT=user_arianna`. `A2A_USER_CTX_FORMAT` controls the
 direct user-answer bridge; `A2A_REPL_PROMPT_FORMAT` controls the outer turn
-context that every cell sees.
+context that every cell sees. `A2A_TEMP_USER_TOKENS` sweeps direct answer
+budgets and is the first check for tail-closure problems.
 Override sweep grids with:
 
 ```sh
@@ -189,6 +190,7 @@ A2A_TEMP_BASES="0.35 0.45 0.55 0.70" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="16 24 40" A2A_TEMP_REPS="1.3 1.6 2.05" make repl-temp-sweep
 A2A_TEMP_BASES="0.70 0.90" A2A_TEMP_SPANS="0" A2A_TEMP_TOP_PS="0.80 0.92 1.00" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPS="1.15 1.30" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_USER_KVS="0 0.05 0.10 0.20 0.30" make repl-temp-sweep
+A2A_TEMP_BASES="0.70" A2A_TEMP_USER_TOKENS="16 24 32" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_FORMATS="field_qa plain_field_qa qa raw" make repl-temp-sweep
 A2A_TEMP_BASES="0.45" A2A_TEMP_TOP_KS="40" A2A_TEMP_REPL_FORMATS="user_arianna qa" make repl-temp-sweep
 ```

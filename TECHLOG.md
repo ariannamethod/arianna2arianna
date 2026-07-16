@@ -2749,3 +2749,82 @@ REPL answers on this corpus. It slightly raises `I_U^kv`, but does not improve
 dialogue quality and adds one tail artifact. The next dialogue work should
 therefore target direct user-bridge sampler/format/tail closure, not the
 cell-qloop route prior.
+
+## 2026-07-16 - Direct user bridge token sweep axis
+
+### Context
+
+The first dialogue compare showed that the field-level candidate does not fix
+direct REPL answer quality. Most flagged debt is tail closure: snippets often
+start cleanly and preserve the user bridge, but end without a complete sentence.
+
+The existing sampler sweep covered temperature, top-k/top-p, repetition,
+user-KV weight, and prompt formats, but it could not sweep the direct answer
+token budget. That made tail closure impossible to separate from sampler or
+format effects.
+
+### Change
+
+- Added `A2A_TEMP_USER_TOKENS` to `tools/repl_temp_sweep.sh`.
+- The compact sweep table now includes `user_tokens`.
+- Each setting passes `A2A_USER_ANSWER_TOKENS` through to the runtime.
+
+Focused first check:
+
+```sh
+A2A_TEMP_BASES="0.70" \
+A2A_TEMP_SPANS="0" \
+A2A_TEMP_TOP_KS="40" \
+A2A_TEMP_TOP_PS="1.00" \
+A2A_TEMP_REPS="1.30" \
+A2A_TEMP_USER_KVS="0.05" \
+A2A_TEMP_USER_TOKENS="16 24 32" \
+A2A_TEMP_FORMATS="qa" \
+A2A_TEMP_REPL_FORMATS="user_arianna" \
+make repl-temp-sweep
+```
+
+Result:
+
+```text
+user_tokens  I_U^kv  quality_any  morph  tail  repetition
+16           +0.464  24/30        3      23    0
+24           +0.583  19/30        2      17    1
+32           +0.583  16/30        2      14    0
+```
+
+Interpretation: longer direct answers do not damage the bridge; `32` tokens
+substantially reduce tail cutoffs while preserving the strongest measured
+`I_U^kv`. It is not a default flip yet, because some completions still read as
+open tails or indirect second-person residue. This is now a measured candidate
+axis, not a guess.
+
+Format check at `user_tokens=32`, same sampler:
+
+```text
+user_format      I_U^kv  quality_any  morph  repetition
+field_qa         +0.604  28/30        1      1
+plain_field_qa   +0.441  24/30        1      1
+qa               +0.583  16/30        2      0
+raw              +0.377  21/30        0      0
+```
+
+`qa` remains the best current direct bridge format despite not winning every
+counter. The field wrappers raise artifact counts for the direct answer path;
+`raw` is cleaner on morphology but loses too much bridge signal.
+
+Sampler check at `qa`, `user_tokens=32`, `userKV=0.05`:
+
+```text
+top_p  rep   I_U^kv  quality_any  morph  tail  repetition
+0.80   1.30  +0.331  23/30        0      22    2
+0.80   1.60  +0.325  21/30        0      18    1
+1.00   1.30  +0.583  16/30        2      14    0
+1.00   1.60  +0.422  20/30        1      19    0
+```
+
+`top_p=0.80` is rejected for now: it lowers `I_U^kv` too much. Raising
+`rep` to `1.60` reduces one morphology flag but also weakens the bridge. The
+current best measured direct-user sampler remains `top_p=1.00, rep=1.30`; the
+next fix should target tail closure/answer ending directly instead of
+over-tightening sampling.

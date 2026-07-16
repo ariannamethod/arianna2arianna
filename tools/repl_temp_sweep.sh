@@ -17,6 +17,7 @@ Knobs:
   A2A_TEMP_TOP_PS="1.00"            direct-user top_p nucleus values
   A2A_TEMP_REPS="1.30"              direct-user repetition penalties
   A2A_TEMP_USER_KVS="0.05"          direct-user cross-KV weights
+  A2A_TEMP_USER_TOKENS="16"         direct-user answer token budgets
   A2A_TEMP_FORMATS="qa"             direct-user context formats
   A2A_TEMP_REPL_FORMATS="user_arianna qa" outer REPL prompt formats
 
@@ -46,6 +47,7 @@ TOP_KS="${A2A_TEMP_TOP_KS:-40}"
 TOP_PS="${A2A_TEMP_TOP_PS:-1.00}"
 REPS="${A2A_TEMP_REPS:-1.30}"
 USER_KVS="${A2A_TEMP_USER_KVS:-0.05}"
+USER_TOKENS="${A2A_TEMP_USER_TOKENS:-${A2A_USER_ANSWER_TOKENS:-16}}"
 FORMATS="${A2A_TEMP_FORMATS:-qa}"
 REPL_FORMATS="${A2A_TEMP_REPL_FORMATS:-user_arianna}"
 
@@ -64,8 +66,9 @@ safe_num() {
 }
 
 compact_line() {
-    local fmt="$1" repl_fmt="$2" base="$3" span="$4" top_k="$5" top_p="$6" rep="$7" user_kv="$8" tsv_file="$9" summary_file="${10}"
+    local fmt="$1" repl_fmt="$2" base="$3" span="$4" top_k="$5" top_p="$6" rep="$7" user_kv="$8" user_tokens="$9" tsv_file="${10}" summary_file="${11}"
     awk -v fmt="$fmt" -v repl_fmt="$repl_fmt" -v base="$base" -v span="$span" -v top_k="$top_k" -v top_p="$top_p" -v rep="$rep" -v user_kv="$user_kv" \
+        -v user_tokens="$user_tokens" \
         -v tsv="$tsv_file" -v summary="$summary_file" '
         BEGIN {
             rows = bridge = iu = in_kv = route = any = short = question = label = notation = morph = yesno = repeat = kv = "-"
@@ -93,14 +96,14 @@ compact_line() {
         }
         /^answer_kv_changed:/ { kv = $2 }
         END {
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-                fmt, repl_fmt, base, span, top_k, top_p, rep, user_kv, rows, bridge, iu, in_kv, route,
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+                fmt, repl_fmt, base, span, top_k, top_p, rep, user_kv, user_tokens, rows, bridge, iu, in_kv, route,
                 any, short, question, label, notation, morph, yesno, repeat, kv, tsv, summary
         }
     ' "$summary_file"
 }
 
-printf "user_format\trepl_format\ttemp_base\ttemp_span\ttop_k\ttop_p\trep\tuser_kv\trows\tbridge\ti_u_avg\ti_n_avg\troute_score\tquality_any\tshort\tquestion_like\tlabel\tnotation\tmorph\tyes_no\trepetition\tkv_changed\ttsv\tsummary\n"
+printf "user_format\trepl_format\ttemp_base\ttemp_span\ttop_k\ttop_p\trep\tuser_kv\tuser_tokens\trows\tbridge\ti_u_avg\ti_n_avg\troute_score\tquality_any\tshort\tquestion_like\tlabel\tnotation\tmorph\tyes_no\trepetition\tkv_changed\ttsv\tsummary\n"
 
 for fmt in $FORMATS; do
     for repl_fmt in $REPL_FORMATS; do
@@ -110,19 +113,21 @@ for fmt in $FORMATS; do
                     for top_p in $TOP_PS; do
                         for rep in $REPS; do
                             for user_kv in $USER_KVS; do
-                                tag="fmt${fmt}_repl${repl_fmt}_base$(safe_num "$base")_span$(safe_num "$span")_topk$(safe_num "$top_k")_topp$(safe_num "$top_p")_rep$(safe_num "$rep")_userkv$(safe_num "$user_kv")"
-                                tsv_file="$OUTDIR/repl_temp_${prompt_stem}_${tag}_${stamp}.tsv"
-                                summary_file="${tsv_file%.tsv}.summary.txt"
+                                for user_tokens in $USER_TOKENS; do
+                                    tag="fmt${fmt}_repl${repl_fmt}_base$(safe_num "$base")_span$(safe_num "$span")_topk$(safe_num "$top_k")_topp$(safe_num "$top_p")_rep$(safe_num "$rep")_userkv$(safe_num "$user_kv")_usertok$(safe_num "$user_tokens")"
+                                    tsv_file="$OUTDIR/repl_temp_${prompt_stem}_${tag}_${stamp}.tsv"
+                                    summary_file="${tsv_file%.tsv}.summary.txt"
 
-                                echo "sweeping user_format=$fmt repl_format=$repl_fmt base=$base span=$span top_k=$top_k top_p=$top_p rep=$rep user_kv=$user_kv cells=$CELLS frag=$FRAG rounds=$ROUNDS -> $tsv_file" >&2
-                                A2A_CELLS="$CELLS" A2A_FRAG="$FRAG" A2A_ROUNDS="$ROUNDS" \
-                                A2A_USER_QTEMP_BASE="$base" A2A_USER_QTEMP_SPAN="$span" \
-                                A2A_USER_TOP_K="$top_k" A2A_USER_TOP_P="$top_p" A2A_USER_REP="$rep" A2A_USER_CTX_FORMAT="$fmt" \
-                                A2A_USER_KV_WEIGHT="$user_kv" A2A_REPL_PROMPT_FORMAT="$repl_fmt" \
-                                    bash "$ROOT/tools/repl_question_sweep.sh" "$PROMPTS" > "$tsv_file"
+                                    echo "sweeping user_format=$fmt repl_format=$repl_fmt base=$base span=$span top_k=$top_k top_p=$top_p rep=$rep user_kv=$user_kv user_tokens=$user_tokens cells=$CELLS frag=$FRAG rounds=$ROUNDS -> $tsv_file" >&2
+                                    A2A_CELLS="$CELLS" A2A_FRAG="$FRAG" A2A_ROUNDS="$ROUNDS" \
+                                    A2A_USER_QTEMP_BASE="$base" A2A_USER_QTEMP_SPAN="$span" \
+                                    A2A_USER_TOP_K="$top_k" A2A_USER_TOP_P="$top_p" A2A_USER_REP="$rep" A2A_USER_CTX_FORMAT="$fmt" \
+                                    A2A_USER_KV_WEIGHT="$user_kv" A2A_USER_ANSWER_TOKENS="$user_tokens" A2A_REPL_PROMPT_FORMAT="$repl_fmt" \
+                                        bash "$ROOT/tools/repl_question_sweep.sh" "$PROMPTS" > "$tsv_file"
 
-                                bash "$ROOT/tools/repl_tsv_summary.sh" "$tsv_file" > "$summary_file"
-                                compact_line "$fmt" "$repl_fmt" "$base" "$span" "$top_k" "$top_p" "$rep" "$user_kv" "$tsv_file" "$summary_file"
+                                    bash "$ROOT/tools/repl_tsv_summary.sh" "$tsv_file" > "$summary_file"
+                                    compact_line "$fmt" "$repl_fmt" "$base" "$span" "$top_k" "$top_p" "$rep" "$user_kv" "$user_tokens" "$tsv_file" "$summary_file"
+                                done
                             done
                         done
                     done
