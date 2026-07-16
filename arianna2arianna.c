@@ -2441,6 +2441,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     kv_cache *cell_kv[8] = {0}; int cell_klen[8] = {0};
     int keep_qloop_kv = (g_qloop && out_disso);   /* qloop answers can hear the asking cell's KV, not only pasted text */
     g_round_tokn = 0;   /* fresh shared word-memory for this round's cross-cell rep-penalty */
+    double base_t0 = now_ms();
     for (int c = 0; c < n_cells; c++) {
         if (g_chorus) snprintf(ctx, sizeof(ctx), "%s", prompt);   /* CHORUS: each cell answers the SAME prompt from its own angle; awareness via cross-cell, not text */
         else if (g_leap_mode && r > 0) {             /* RELAY (legacy): dissonance-into-forward route */
@@ -2604,7 +2605,11 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             }
         }
     }
+    double base_ms = now_ms() - base_t0;
+    double qloop_ms = 0.0;
+    int qloop_gen = 0, qloop_retry = 0;
     if (g_qloop && verbose && out_disso && cent) {
+        double qloop_t0 = now_ms();
         int qcell[8] = {0}, tcell[8] = {0};
         float qscore[8] = {-1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
         float qdist[8] = {0.0f}, qopen[8] = {0.0f}, qtconf[8] = {0.0f};
@@ -2643,12 +2648,17 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_answer_form_guard = 1;
             g_answer_sentence_stop = 1;
             g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_field_on = 0;
-            float qent_off = qkv_on ? cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
-                                                 qseed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL) : 0.0f;
+            float qent_off = 0.0f;
+            if (qkv_on) {
+                qloop_gen++;
+                qent_off = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
+                                      qseed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);
+            }
             g_round_tokn = qtok_before; g_field_on = save_field_on;
             if (qkv_on) { g_nbr = cell_kv[qcell[route]]; g_nbr_len = cell_klen[qcell[route]]; g_xcell = answer_xcell; }
             else { g_nbr = NULL; g_nbr_len = 0; }
             g_nbr_shuf = 0;
+            qloop_gen++;
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, 40, 1.4f,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
             clean_answer_fragment(qfrag);
@@ -2675,6 +2685,8 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                     if (attempt == 2) retry_top_k = 24;
                     if (attempt == 3) retry_top_k = 16;
                     unsigned retry_seed = qseed ^ retry_salt[attempt];
+                    qloop_gen++;
+                    qloop_retry++;
                     float qent_retry = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, retry_temp, retry_top_k, 1.4f,
                                                   retry_seed, eos, max_seq, qfrag_retry, sizeof(qfrag_retry), 0,
                                                   qids_retry, &qn_retry, NULL, NULL, NULL);
@@ -2754,6 +2766,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                                  prompt, tcell[route], qfrag, next);
                         int rnp = bpe_encode(tok, rctx, rctx_ids, max_seq - 8);
                         float rtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)next / (n_cells - 1) : 0.5f);
+                        qloop_gen++;
                         float rent = cell_speak(m, tok, rctx_ids, rnp, 2, rtemp, 40, 1.4f,
                                                 seed_base ^ 0xb17a5u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + next * 4057 + r * 7919),
                                                 eos, max_seq, rfrag, sizeof(rfrag), 0, rids, &rn, NULL, NULL, NULL);
@@ -2767,7 +2780,10 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                 }
             }
         }
+        qloop_ms = now_ms() - qloop_t0;
     }
+    if (verbose) printf("\n  timing: base_ms=%.0f qloop_ms=%.0f qloop_gen=%d qloop_retry=%d", base_ms, qloop_ms, qloop_gen, qloop_retry);
+    if (flog) fprintf(flog, "- timing base_ms=%.0f qloop_ms=%.0f qloop_gen=%d qloop_retry=%d\n", base_ms, qloop_ms, qloop_gen, qloop_retry);
     if (g_user_q && *g_user_q && g_qloop && verbose && out_disso && cent && g_xcell > 0) {
         int qids_prompt[512], qnprompt = bpe_encode(tok, g_user_q, qids_prompt, 512);
         float *qcent = (float*)calloc(m->embed, sizeof(float));

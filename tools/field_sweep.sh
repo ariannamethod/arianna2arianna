@@ -48,7 +48,7 @@ raw_name() {
     printf "%03d_%s.txt" "$seq" "$slug"
 }
 
-printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_iq_low\tqloop_iq_strong\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_recipient\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_words_avg\telapsed_sec\n"
+printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_iq_low\tqloop_iq_strong\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_recipient\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_words_avg\tbase_ms\tqloop_ms\tqloop_gen\tqloop_retry\telapsed_sec\n"
 
 raw_seq=0
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
@@ -64,7 +64,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     line="$(printf "%s\n" "$out" | grep "→ round" | tail -n 1 || true)"
     if [[ -z "$line" ]]; then
         safe_prompt="${prompt//$'\t'/ }"
-        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\tnan\t%s\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS" "$elapsed_sec"
+        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\tnan\tnan\tnan\t0\t0\t%s\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS" "$elapsed_sec"
         continue
     fi
 
@@ -74,6 +74,24 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     qloop_gated="$(printf "%s\n" "$out" | grep -c "↳ qloop gate" || true)"
     qloop_stmt_routes="$(printf "%s\n" "$out" | awk '/qloop c[0-9]/ && /qmarks=0/ { n++ } END { print n + 0 }')"
     qloop_stmt_gated="$(printf "%s\n" "$out" | awk '/qloop gate c[0-9]/ && /qmarks=0/ { n++ } END { print n + 0 }')"
+    timing_metrics="$(printf "%s\n" "$out" | awk '
+        /^[ \t]*timing:/ {
+            for (i = 1; i <= NF; i++) {
+                split($i, kv, "=")
+                if (kv[1] == "base_ms") base = kv[2]
+                else if (kv[1] == "qloop_ms") qloop = kv[2]
+                else if (kv[1] == "qloop_gen") gen = kv[2]
+                else if (kv[1] == "qloop_retry") retry = kv[2]
+            }
+        }
+        END {
+            if (base == "") base = "nan"
+            if (qloop == "") qloop = "nan"
+            if (gen == "") gen = 0
+            if (retry == "") retry = 0
+            printf "%s\t%s\t%s\t%s", base, qloop, gen, retry
+        }
+    ')"
     qloop_metrics="$(printf "%s\n" "$out" | awk '
         function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
         function word_count(s,     a, n, i, c) {
@@ -339,7 +357,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     printf "%s\n" "$line" | awk -v prompt="$safe_prompt" -v cells="$CELLS" -v frag="$FRAG" -v rounds="$ROUNDS" \
         -v qroutes="$qloop_routes" -v qkv="$qloop_kv_routes" -v qtrig="$qloop_triggers" -v qgate="$qloop_gated" \
         -v qstmt="$qloop_stmt_routes" -v qstmtgate="$qloop_stmt_gated" \
-        -v qmetrics="$qloop_metrics" -v surface="$surface_metrics" -v elapsed="$elapsed_sec" '
+        -v qmetrics="$qloop_metrics" -v surface="$surface_metrics" -v timing="$timing_metrics" -v elapsed="$elapsed_sec" '
         BEGIN { FS = "|" }
         {
             avg = $1
@@ -394,10 +412,10 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             sub(/.*Dpos /, "", dpos)
             sub(/ .*/, "", dpos)
 
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
                 prompt, mode, cells, frag, rounds, avg, dr, d_floor, d_margin,
                 delta, kfloor, kmargin, infl, disso, dpos, qroutes, qkv, qtrig, qgate,
-                qstmt, qstmtgate, qmetrics, surface, elapsed
+                qstmt, qstmtgate, qmetrics, surface, timing, elapsed
         }
     '
 done < "$PROMPTS"

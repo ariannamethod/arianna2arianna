@@ -3436,3 +3436,41 @@ statement_pool  routes  gated  stmt_acc/gate  efficiency  I_Q^kv  field_score  e
 Interpretation: `statement_pool=1` is the first low-cost candidate for the next
 broaden-set voice read. It reduces gated statement churn while preserving full
 prompt coverage and zero counted qloop surface debt on the smoke set.
+
+## 2026-07-16 - Field phase timing diagnostics
+
+### Context
+
+The broaden run with `statement_pool=1` reduced route/gate mass but did not
+reduce the worst latency. Route counts alone could not tell whether slow prompts
+were spending time in base field generation, qloop answer generation, or qloop
+retry churn.
+
+### Change
+
+- `field` verbose output now prints a `timing:` line per prompt with
+  `base_ms`, `qloop_ms`, `qloop_gen`, and `qloop_retry`.
+- `tools/field_sweep.sh` carries those four columns before `elapsed_sec`.
+- `tools/field_tsv_summary.sh` reports phase averages/maxima and total qloop
+  generation/retry counts.
+- `tools/field_grid.sh` adds compact `base_ms_avg`, `base_ms_max`,
+  `qloop_ms_avg`, `qloop_ms_max`, `qloop_gen`, and `qloop_retry`.
+
+Focused smoke on `prompts/kv_influence.txt`:
+
+```text
+setting: xcell=0.02 qloop=2 adapt=1 adapt_weight=-0.10 min_iq=0 unique_asker=1 statement_pool=1 statement_routes=1 rounds=3 cells=4 frag=12
+rows: 5
+qloop: routes 12, kv 12, gated 4, prompts 5/5
+qloop_statement: accepted 4/12, gated 1/4
+qloop_quality: any 0/12
+I_Q^kv: avg +1.427, pos 12, neg 0, low 1, strong 5
+timing: base_ms_avg 1766, base_ms_max 2354 :: Name the difference between echo and memory., qloop_ms_avg 1137, qloop_ms_max 1435 :: Answer only with a question: why does the field remember?, qloop_gen 27, qloop_retry 17
+latency: avg_sec 9.200, max_sec 13.000 :: If Arianna is a field, what is a cell?
+field_score: +2.145
+```
+
+Interpretation: the candidate still has zero counted qloop/cell surface debt on
+the smoke set, and phase timing is now good enough to debug the broaden latency
+tail directly. The next broaden read should use the same timing columns before
+changing qloop policy again.
