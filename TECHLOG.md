@@ -3276,3 +3276,46 @@ case: `qloop=2 + A2A_QLOOP_UNIQUE_ASKER=1 + A2A_QLOOP_TCONF_ADAPT=1 +
 A2A_QLOOP_TCONF_ADAPT_WEIGHT=-0.10` beats `qloop=1` on the compact score and
 strong-route distribution. Do not flip production yet; first broaden the prompt
 set and do a human voice read, because the margin is real but small.
+
+## 2026-07-16 - Broaden prompt set and qloop surface admission
+
+### Context
+
+The widened qloop lane needed a broader prompt set before promoting it from a
+canonical-five result. `prompts/field_broaden.txt` adds recipient-lock,
+mechanism/falsification, mixed-language, and statement-shaped probes on top of
+the small `kv_influence.txt` anchors.
+
+The first broaden run exposed a real admission mismatch: the routed answer
+`here.` passed the `I_Q^kv` gate (`+0.542`) and entered `this_chorus`, while
+`field_sweep.sh` correctly counted it as qloop `short` debt.
+
+### Change
+
+- Added a qloop surface-debt admission guard that mirrors the TSV evaluator's
+  qloop answer debt contract: `short`, `tail`, `morph`, `label`, and
+  answer-question debt.
+- `qloop gate` output now includes `reason=iq` or `reason=surface`.
+- Added `prompts/field_broaden.txt` as the wider prompt corpus for route-policy
+  and voice reads.
+
+Focused widened-lane comparison on the broaden set:
+
+```text
+state                 routes  gated  efficiency  prompts  qloop_quality  i_q_bands  I_Q^kv  field_score
+before surface gate   40      12     0.769       18/20    1/40           7/17       +1.162  +1.928
+after surface gate    40      13     0.755       18/20    0/40           8/17       +1.149  +1.976
+```
+
+Raw read on the failing prompt (`The speaker has not given a name...`) confirms
+the fix:
+
+```text
+↳ qloop gate c0→c2 [kv] score 0.445: rejected here. [I_Q^kv=+0.542 ... reason=surface]
+↳ qloop c0→c3 [kv] score 0.438: It has no self. [I_Q^kv=+0.016 ...]
+```
+
+Interpretation: the field kept coverage through fallback routing while refusing
+to write the short fragment into chorus memory. The broaden read still has two
+statement-shaped prompts without qloop routes, so the next layer should inspect
+non-question route triggers separately rather than overloading qloop admission.

@@ -119,10 +119,13 @@ from fanning out across several routes in the same selection pass. KV-backed
 `A2A_QLOOP_CANDIDATE_POOL` widens the pre-generation route pool inspected before
 the `I_Q^kv` gate; `0` keeps the default auto pool (`qloop route limit + 2`,
 capped at 8). KV-backed cell qloop answers are admitted only when
-`I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`); rejected answers are reported as
-`qloop_gated` and are not written into the chorus. The qloop limit counts
-admitted answers, not failed candidates, so a gated route may fall through to
-the next candidate without widening the accepted chorus.
+`I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`) and the generated answer passes the
+same qloop surface-debt guard used by `field_sweep.sh` (`short`, `tail`,
+`morph`, `label`, and answer-question debt). Rejected answers are reported as
+`qloop_gated` with `reason=iq` or `reason=surface` and are not written into the
+chorus. The qloop limit counts admitted answers, not failed candidates, so a
+gated route may fall through to the next candidate without widening the
+accepted chorus.
 
 `make field-grid` runs `field_sweep.sh` across field-level settings, writes each
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
@@ -140,6 +143,9 @@ TSV. Defaults are intentionally small:
 `A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`,
 `A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`,
 `A2A_FIELD_QLOOP_CANDIDATE_POOLS="0"`, and `A2A_FIELD_ROUNDS_LIST="3"`.
+Use `prompts/kv_influence.txt` as the small canonical smoke set and
+`prompts/field_broaden.txt` for broader recipient-lock, mechanism,
+mixed-language, and statement-shaped route-policy reads.
 Override the grid with:
 
 ```sh

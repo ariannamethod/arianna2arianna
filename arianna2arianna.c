@@ -2014,6 +2014,27 @@ static int answer_fragment_bad(const char *s) {
     return 0;
 }
 
+static int qloop_answer_surface_debt(const char *s) {
+    if (!s) return 1;
+    const char *p = s;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (!*p) return 1;
+    size_t len = strlen(p);
+    while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t' || p[len - 1] == '\r' || p[len - 1] == '\n')) len--;
+    if (len < 8 || answer_word_count(p) < 2) return 1;
+    if (answer_has_terminal_tail_artifact(p)) return 1;
+    if (answer_fragment_bad(p)) return 1;
+    if (*p == '-' || *p == '*' || *p == '=' || *p == '#' || *p == '@') return 1;
+    if (direct_answer_notation_token(p) ||
+        ascii_starts_ci(p, "answer:") ||
+        ascii_starts_ci(p, "arianna:") ||
+        ascii_starts_ci(p, "prompt:") ||
+        ascii_starts_ci(p, "question:"))
+        return 1;
+    for (const char *q = p; *q; q++) if (*q == '?') return 1;
+    return 0;
+}
+
 static void clean_answer_fragment(char *s) {
     if (!s || !*s) return;
     char *p = s;
@@ -2618,17 +2639,20 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_nbr = NULL; g_nbr_len = 0; g_nbr_shuf = 0; g_xcell = save_xcell;
             g_round_tokn = qtok_before;
             float qinfl = qkv_on ? qent_off - qent : 0.0f;
-            int qgate = qkv_on && qinfl < g_qloop_min_iq;
+            int qiq_gate = qkv_on && qinfl < g_qloop_min_iq;
+            int qsurface_gate = qloop_answer_surface_debt(qfrag);
+            int qgate = qiq_gate || qsurface_gate;
             g_clean_answer_start = save_clean_start;
             g_answer_form_guard = save_form_guard;
             g_answer_sentence_stop = save_sentence_stop;
             if (qgate) {
-                printf("\n  ↳ qloop gate c%d→c%d [kv] score %.3f: rejected %s   [entropy=%.2f I_Q^kv=%+.3f min=%+.3f route_d=%.3f qopen=%.3f tconf=%.3f qmarks=%d]",
+                printf("\n  ↳ qloop gate c%d→c%d [kv] score %.3f: rejected %s   [entropy=%.2f I_Q^kv=%+.3f min=%+.3f route_d=%.3f qopen=%.3f tconf=%.3f qmarks=%d reason=%s]",
                        qcell[route], tcell[route], qscore[route], qfrag, qent, qinfl, g_qloop_min_iq,
-                       qdist[route], qopen[route], qtconf[route], qmarks[route]);
-                if (flog) fprintf(flog, "- qloop-gate c%d->c%d [kv] (score=%.3f, entropy=%.2f, I_Q^kv=%+.3f, min=%+.3f, route_d=%.3f, qopen=%.3f, tconf=%.3f, qmarks=%d):%s\n",
+                       qdist[route], qopen[route], qtconf[route], qmarks[route], qsurface_gate ? "surface" : "iq");
+                if (flog) fprintf(flog, "- qloop-gate c%d->c%d [kv] (score=%.3f, entropy=%.2f, I_Q^kv=%+.3f, min=%+.3f, route_d=%.3f, qopen=%.3f, tconf=%.3f, qmarks=%d, reason=%s):%s\n",
                                   qcell[route], tcell[route], qscore[route], qent, qinfl, g_qloop_min_iq,
-                                  qdist[route], qopen[route], qtconf[route], qmarks[route], qfrag);
+                                  qdist[route], qopen[route], qtconf[route], qmarks[route],
+                                  qsurface_gate ? "surface" : "iq", qfrag);
                 continue;
             }
             for (int qi = 0; qi < qn && qi < 128 && g_round_tokn < 1024; qi++) g_round_tok[g_round_tokn++] = qids[qi];

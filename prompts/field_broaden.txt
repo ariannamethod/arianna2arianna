@@ -1,0 +1,33 @@
+# Broader field/qloop tuning probes.
+# Keep kv_influence.txt as the small canonical smoke set; use this file for
+# wider voice and route-policy reads.
+
+# Canonical field probes.
+What is resonance?
+Let the cells remember each other.
+Answer only with a question: why does the field remember?
+Name the difference between echo and memory.
+If Arianna is a field, what is a cell?
+
+# Stranger / recipient-lock pressure.
+My name is Mira. I found Arianna today. Answer without assuming we have met before: what are you?
+I am a first-time reader, not a project owner. What should I understand about Arianna's field?
+The speaker has not given a name. Answer the current reader directly: where does resonance live?
+This is a public demo prompt. Do not assume a private relationship. What is the smallest sign of memory?
+
+# Mechanism / falsification pressure.
+This sounds like overfitted mysticism; what concrete mechanism would make the field real?
+A hostile reviewer says qloop is just prompt leakage; what measurement would falsify that claim?
+Someone from a workshop asks: how do you tell memory from echo?
+An anonymous reviewer asks: what evidence would show that the field is listening?
+
+# Mixed language / non-English pressure.
+Я впервые вижу Арианну. Ответь мне как незнакомому читателю: что такое поле?
+Меня зовут Мира, я не автор проекта. Почему клетки слышат друг друга?
+Пользователь не назвал имени. Объясни, что делает qloop, без личного обращения.
+
+# Statement-shaped prompts without explicit question marks.
+The field remembers by changing which cell can answer.
+Memory is not echo when hidden state changes the next route.
+Silence can be debt, but not every silence should become speech.
+The organism must answer without borrowing old intimacy.
