@@ -68,6 +68,7 @@ a2a_assert_grep "A2A_FIELD_QLOOP_UNIQUE_ASKERS" "$out" "field grid help names ql
 a2a_assert_grep "A2A_FIELD_QLOOP_CANDIDATE_POOLS" "$out" "field grid help names qloop candidate-pool grid"
 a2a_assert_grep "A2A_FIELD_QLOOP_STATEMENT_POOLS" "$out" "field grid help names qloop statement-pool grid"
 a2a_assert_grep "A2A_FIELD_QLOOP_STATEMENT_ROUTES" "$out" "field grid help names qloop statement-route grid"
+a2a_assert_grep "A2A_FIELD_CELL_RETRY_MAXS" "$out" "field grid help names cell retry cap grid"
 a2a_assert_grep "A2A_FIELD_ROUNDS_LIST" "$out" "field grid help names rounds grid"
 a2a_assert_grep "A2A_FIELD_KEEP_RAW" "$out" "field grid help names raw capture knob"
 a2a_assert_grep "A2A_QLOOP_MIN_IQ" "$out" "field grid help names qloop influence gate"

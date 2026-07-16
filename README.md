@@ -139,7 +139,10 @@ echoes). Rejected answers are reported as
 `qloop_gated` with `reason=iq` or `reason=surface` and are not written into the
 chorus. The qloop limit counts admitted answers, not failed candidates, so a
 gated route may fall through to the next candidate without widening the
-accepted chorus.
+accepted chorus. `A2A_CELL_RETRY_MAX` caps base-cell surface retries
+(`4` preserves the default repair path, `1` disables retry churn) and is useful
+when mixed-language prompts keep producing short/debris surfaces after every
+attempt.
 
 `make field-grid` runs `field_sweep.sh` across field-level settings, writes each
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
@@ -164,7 +167,8 @@ intentionally small:
 `A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`,
 `A2A_FIELD_QLOOP_CANDIDATE_POOLS="0"`,
 `A2A_FIELD_QLOOP_STATEMENT_POOLS="0"`,
-`A2A_FIELD_QLOOP_STATEMENT_ROUTES="0"`, and `A2A_FIELD_ROUNDS_LIST="3"`.
+`A2A_FIELD_QLOOP_STATEMENT_ROUTES="0"`,
+`A2A_FIELD_CELL_RETRY_MAXS="4"`, and `A2A_FIELD_ROUNDS_LIST="3"`.
 Use `prompts/kv_influence.txt` as the small canonical smoke set and
 `prompts/field_broaden.txt` for broader recipient-lock, mechanism,
 mixed-language, and statement-shaped route-policy reads.
@@ -180,6 +184,7 @@ A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_MIN_IQS="0 0.25 0.5
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_UNIQUE_ASKERS="0 1" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_STATEMENT_POOLS="0 1 2" A2A_FIELD_QLOOP_STATEMENT_ROUTES="1" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_STATEMENT_ROUTES="0 1" make field-grid
+A2A_FIELD_XCELLS="0.02" A2A_FIELD_CELL_RETRY_MAXS="1 2 4" make field-grid
 A2A_FIELD_ROUNDS_LIST="1 2 3" A2A_FIELD_CELLS=4 A2A_FIELD_FRAG=12 make field-grid
 A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="1 2" make field-grid
 ```

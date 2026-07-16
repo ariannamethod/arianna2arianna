@@ -956,6 +956,7 @@ static int   g_qloop_statement_routes = 0; /* 1 = fallback to clean non-question
 static int   g_qloop_statement_pool = 0;   /* 0=inherit candidate pool; >0 = cap statement fallback candidates */
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
+static int g_cell_retry_max = 4; /* max attempts for bad base-cell surface; 1 disables retry churn */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
  * tokens — it can say the same meaning in its OWN words. g_round_tok = the chorus's emitted tokens this round. */
 static int   g_round_tok[1024]; static int g_round_tokn = 0;
@@ -1004,6 +1005,10 @@ static void load_qloop_route_env(void) {
     g_qloop_candidate_pool = env_int_clamped("A2A_QLOOP_CANDIDATE_POOL", 0, 0, 8);
     g_qloop_statement_routes = env_int_clamped("A2A_QLOOP_STATEMENT_ROUTES", 0, 0, 1);
     g_qloop_statement_pool = env_int_clamped("A2A_QLOOP_STATEMENT_POOL", 0, 0, 8);
+}
+
+static void load_field_generation_env(void) {
+    g_cell_retry_max = env_int_clamped("A2A_CELL_RETRY_MAX", 4, 1, 4);
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -2521,7 +2526,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                 best_score = cand_score;
             }
             if (cand_kv) kv_free(cand_kv);
-            if (attempt == 0 && cand_score > 0) max_attempts = 4;
+            if (attempt == 0 && cand_score > 0) max_attempts = g_cell_retry_max;
         }
         g_round_tokn = tok_before;
         if (field_snap_n) memcpy(g_field_dir, field_before, (size_t)field_snap_n * sizeof(float));
@@ -3026,6 +3031,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_kvpos = 0;
     g_qloop = env_int_clamped("A2A_REPL_QLOOP", 1, 0, 2);
     load_qloop_route_env();
+    load_field_generation_env();
     load_user_bridge_sampling_env();
     load_repl_prompt_env();
 
@@ -3212,6 +3218,7 @@ int main(int argc, char **argv) {
         if (g_qloop < 0) g_qloop = 0;
         if (g_qloop > 2) g_qloop = 2;
         load_qloop_route_env();
+        load_field_generation_env();
         g_kvpos      = argc > 15 ? atoi(argv[15]) : 0;           /* 0=semantic/bag lane; 1=positional order-probe lane */
         g_kvpos      = g_kvpos ? 1 : 0;
         if (n_cells <= 0) {   /* auto: the field sizes itself from the prompt's entropy */
@@ -3228,6 +3235,7 @@ int main(int argc, char **argv) {
         int n_cells  = argc > 4 ? atoi(argv[4]) : 4;
         int nfrag    = argc > 5 ? atoi(argv[5]) : 12;
         int n_rounds = argc > 6 ? atoi(argv[6]) : 3;
+        load_field_generation_env();
         field_resonance_test(m, tok, prompt, n_cells, nfrag, n_rounds, eos);
         return 0;
     }
@@ -3238,6 +3246,7 @@ int main(int argc, char **argv) {
         int nfrag = argc > 5 ? atoi(argv[5]) : 16;
         int init  = argc > 6 ? atoi(argv[6]) : 4;
         load_qloop_route_env();
+        load_field_generation_env();
         field_life(m, tok, prompt, init, ticks, nfrag, eos);
         return 0;
     }

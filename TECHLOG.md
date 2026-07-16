@@ -3512,3 +3512,32 @@ diagnostics add cost, but they are not the root. With probes disabled, the final
 round still spends 30 extra base retries across 12 cells and keeps severe cell
 surface debt. The next repair target is a base cell retry cap/guard for
 mixed-language degradation, not a qloop route-policy change.
+
+## 2026-07-16 - Base cell retry cap axis
+
+### Context
+
+The mixed-language slow set proved that base surface retries were expensive and
+mostly unsuccessful. The code needed a runtime cap so the same harness could
+compare "no retry", "one repair attempt", and the historical full repair path.
+
+### Change
+
+- Added `A2A_CELL_RETRY_MAX` (`1..4`, default `4`) for base-cell surface repair.
+- Added `A2A_FIELD_CELL_RETRY_MAXS` to `field_grid.sh`.
+- The compact grid now includes `cell_retry_max` as a setting column.
+
+Targeted mixed-language slow set, `A2A_KVSHUF=0`:
+
+```text
+retry  routes  prompts  cell_quality  field_score  base_gen/retry/probe  elapsed_avg/max
+1      3       2/3      29/36         +0.686       12/0/0                19.0/21.0
+2      5       3/3      27/36         +1.637       22/10/0               42.3/52.0
+4      8       3/3      25/36         +1.695       42/30/0               80.7/89.0
+```
+
+Interpretation: `retry=1` is too strict because it loses qloop coverage.
+`retry=2` preserves prompt coverage and almost all useful field score while
+cutting the slow-set wall time roughly in half versus the historical default.
+Keep global default at `4` until a broader read confirms no regression, but use
+`A2A_FIELD_CELL_RETRY_MAXS="2 4"` in the next broaden comparison.
