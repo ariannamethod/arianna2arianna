@@ -3004,3 +3004,56 @@ pressure and lowers aggregate score at the current policy. Adaptive
 target-confidence helps (`+2.090` vs `+2.029`) but does not beat the current
 `qloop=1` baseline (`+2.140`). Next field tuning should sweep qloop=2
 `tconf/adapt_weight` before changing defaults.
+
+## 2026-07-16 - Field-grid adaptive-weight axis
+
+### Context
+
+The previous field-grid read showed that `qloop=2` only becomes competitive
+when target-confidence pressure is reduced for widened routing. The remaining
+question was whether the adaptive weight itself is the real tuning surface.
+
+### Change
+
+- `tools/field_grid.sh` now accepts
+  `A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS`, passing each value through to
+  `A2A_QLOOP_TCONF_ADAPT_WEIGHT`.
+- The compact TSV includes `qloop_tconf_adapt_weight`, so sweep rows record the
+  actual adaptive policy instead of hiding it in filenames.
+- README and tests pin the expanded 38-column compact contract.
+
+Focused sweep:
+
+```sh
+A2A_FIELD_XCELLS=0.02 \
+A2A_FIELD_QLOOPS=2 \
+A2A_FIELD_QLOOP_TCONF_ADAPTS=1 \
+A2A_FIELD_QLOOP_TCONFS=0.20 \
+A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.30 -0.10 0 0.10" \
+A2A_FIELD_ROUNDS_LIST=3 \
+A2A_FIELD_CELLS=4 \
+A2A_FIELD_FRAG=12 \
+make field-grid
+```
+
+Result:
+
+```text
+qloop  adapt_weight  routes  gated  efficiency  I_Q^kv  qloop_quality  cell_quality  field_score
+2      -0.30         12      4      0.750       +1.085  0/12           0/60          +2.074
+2      -0.10         14      6      0.700       +0.963  0/14           0/60          +2.090
+2       0            15      7      0.682       +0.729  0/15           0/60          +1.970
+2       0.10         16      8      0.667       +0.799  0/16           0/60          +2.004
+```
+
+Baseline check under the same compact contract:
+
+```text
+qloop  adapt_weight  routes  gated  efficiency  I_Q^kv  qloop_quality  cell_quality  field_score
+1      -0.10         11      1      0.917       +1.009  0/11           0/60          +2.140
+```
+
+Decision: keep production on `qloop=1`. For diagnostics, `qloop=2` should use
+the adaptive lane with `A2A_QLOOP_TCONF_ADAPT_WEIGHT=-0.10`; stronger negative
+pressure improves `I_Q^kv` but starts under-routing the field, while zero or
+positive pressure admits too many lower-quality routes.
