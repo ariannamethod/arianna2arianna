@@ -951,6 +951,7 @@ static float g_qloop_tconf_weight = 0.20f; /* route prior: target confidence con
 static int   g_qloop_tconf_adapt = 0;      /* 1 = use adaptive target-confidence prior for widened qloop */
 static float g_qloop_tconf_adapt_weight = -0.10f;
 static int   g_qloop_unique_asker = 0;     /* 1 = widened qloop may not fan one asking cell into multiple routes */
+static int   g_qloop_candidate_pool = 0;   /* 0=auto max_routes+2; >0 = inspect this many pre-generation routes */
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -998,6 +999,7 @@ static void load_qloop_route_env(void) {
     g_qloop_tconf_adapt = env_int_clamped("A2A_QLOOP_TCONF_ADAPT", 0, 0, 1);
     g_qloop_tconf_adapt_weight = env_float_clamped("A2A_QLOOP_TCONF_ADAPT_WEIGHT", -0.10f, -1.00f, 1.00f);
     g_qloop_unique_asker = env_int_clamped("A2A_QLOOP_UNIQUE_ASKER", 0, 0, 1);
+    g_qloop_candidate_pool = env_int_clamped("A2A_QLOOP_CANDIDATE_POOL", 0, 0, 8);
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -2265,57 +2267,8 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
     int lim = n_cells < 8 ? n_cells : 8;
     int n = 0;
     if (!cent || lim < 2) return 0;
-    if (g_qloop_unique_asker && g_qloop > 1) {
-        struct route_candidate {
-            int q, t, qmarks;
-            float score, dist, qopen, tconf;
-        } cand[8];
-        int nc = 0;
-        for (int q = 0; q < lim; q++) {
-            int qmarks = frag_question_count(frag[q]);
-            if (qmarks <= 0) continue;
-            float qopen = g_cell_ent[q] / 8.0f; if (qopen > 1.0f) qopen = 1.0f;
-            int best_t = -1;
-            float best_score = -1.0f, best_dist = 0.0f, best_tconf = 0.0f;
-            for (int t = 0; t < lim; t++) if (t != q) {
-                float dist = 1.0f - vec_cosine(cent + (size_t)q * embed, cent + (size_t)t * embed, embed);
-                float confidence = 1.0f / (1.0f + g_cell_ent[t]);
-                float tconf_weight = (g_qloop_tconf_adapt && g_qloop > 1) ? g_qloop_tconf_adapt_weight : g_qloop_tconf_weight;
-                float score = dist + 0.15f * qopen + tconf_weight * confidence + 0.05f * (float)(qmarks - 1);
-                if (score < g_qloop_min) continue;
-                if (best_t < 0 || score > best_score) {
-                    best_t = t;
-                    best_score = score;
-                    best_dist = dist;
-                    best_tconf = confidence;
-                }
-            }
-            if (best_t >= 0 && nc < 8) {
-                cand[nc++] = (struct route_candidate){ q, best_t, qmarks, best_score, best_dist, qopen, best_tconf };
-            }
-        }
-        for (int i = 1; i < nc; i++) {
-            struct route_candidate c = cand[i];
-            int j = i - 1;
-            while (j >= 0 && cand[j].score < c.score) {
-                cand[j + 1] = cand[j];
-                j--;
-            }
-            cand[j + 1] = c;
-        }
-        for (int c = 0; c < nc && n < max_routes; c++) {
-            int dup = 0;
-            for (int i = 0; i < n; i++) if (out_t[i] == cand[c].t) dup = 1;
-            if (dup) continue;
-            out_q[n] = cand[c].q; out_t[n] = cand[c].t; out_score[n] = cand[c].score;
-            if (out_dist) out_dist[n] = cand[c].dist;
-            if (out_qopen) out_qopen[n] = cand[c].qopen;
-            if (out_tconf) out_tconf[n] = cand[c].tconf;
-            if (out_qmarks) out_qmarks[n] = cand[c].qmarks;
-            n++;
-        }
-        return n;
-    }
+    /* Same-asker uniqueness is an acceptance policy, not a pre-generation
+     * filter: a gated first target must not erase that asker's fallback route. */
     for (int q = 0; q < lim; q++) {
         int qmarks = frag_question_count(frag[q]);
         if (qmarks <= 0) continue;
@@ -2576,18 +2529,22 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         }
     }
     if (g_qloop && verbose && out_disso && cent) {
-        int qcell[4] = {0, 0, 0, 0}, tcell[4] = {0, 0, 0, 0};
-        float qscore[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
-        float qdist[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-        float qopen[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-        float qtconf[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-        int qmarks[4] = {0, 0, 0, 0};
+        int qcell[8] = {0}, tcell[8] = {0};
+        float qscore[8] = {-1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+        float qdist[8] = {0.0f}, qopen[8] = {0.0f}, qtconf[8] = {0.0f};
+        int qmarks[8] = {0};
+        int accepted_qseen[8] = {0};
         int max_routes = g_qloop > 2 ? 2 : g_qloop;
-        int candidate_routes = max_routes + 2; if (candidate_routes > 4) candidate_routes = 4;
+        int candidate_routes = g_qloop_candidate_pool > 0 ? g_qloop_candidate_pool : max_routes + 2;
+        if (candidate_routes < max_routes) candidate_routes = max_routes;
+        if (candidate_routes > 8) candidate_routes = 8;
         int routes = pick_question_routes(cur_frag, cent, n_cells, m->embed, qcell, tcell, qscore,
                                           qdist, qopen, qtconf, qmarks, candidate_routes);
         int accepted_routes = 0;
         for (int route = 0; route < routes && accepted_routes < max_routes; route++) {
+            if (g_qloop_unique_asker && g_qloop > 1 && qcell[route] >= 0 && qcell[route] < 8 && accepted_qseen[qcell[route]]) {
+                continue;
+            }
             char qctx[4096], qfrag[1024]; int qctx_ids[512], qids[128], qn = 0;
             snprintf(qctx, sizeof(qctx), "%s\ncell %d asked: %s\ncell %d answers the question to itself:",
                      prompt, qcell[route], cur_frag[qcell[route]], tcell[route]);
@@ -2597,7 +2554,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             float save_xcell = g_xcell;
             float answer_xcell = (g_life_on && tcell[route] < POP_MAX) ? g_pop[tcell[route]].lambda : g_xcell;
             int qkv_on = (qcell[route] < 8 && cell_kv[qcell[route]] && cell_klen[qcell[route]] > 0 && answer_xcell > 0);
-            unsigned qseed = seed_base ^ 0xa2a51u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + r * 265443576 + route * 65537);
+            unsigned qseed = seed_base ^ 0xa2a51u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + r * 265443576);
             int qtok_before = g_round_tokn, save_field_on = g_field_on;
             int save_clean_start = g_clean_answer_start;
             int save_form_guard = g_answer_form_guard;
@@ -2690,6 +2647,9 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                              qdist[route], qopen[route], qtconf[route], qmarks[route], qfrag);
             }
             accepted_routes++;
+            if (g_qloop_unique_asker && g_qloop > 1 && qcell[route] >= 0 && qcell[route] < 8) {
+                accepted_qseen[qcell[route]] = 1;
+            }
 
             if (frag_question_count(qfrag) > 0 && qn > 0) {
                 float *qcent = (float*)calloc(m->embed, sizeof(float));
@@ -2712,7 +2672,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                         int rnp = bpe_encode(tok, rctx, rctx_ids, max_seq - 8);
                         float rtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)next / (n_cells - 1) : 0.5f);
                         float rent = cell_speak(m, tok, rctx_ids, rnp, 2, rtemp, 40, 1.4f,
-                                                seed_base ^ 0xb17a5u ^ (unsigned)(next * 4057 + route * 65537 + r * 7919),
+                                                seed_base ^ 0xb17a5u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + next * 4057 + r * 7919),
                                                 eos, max_seq, rfrag, sizeof(rfrag), 0, rids, &rn, NULL, NULL, NULL);
                         for (int i = 0; hist && i < rn; i++) if (rids[i] >= 0 && rids[i] < m->vocab) hist[rids[i]]++;
                         add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", rfrag);

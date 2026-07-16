@@ -3223,3 +3223,56 @@ diagnostic improvement, but it still does not beat the simpler `qloop=1`
 baseline once coverage, efficiency, and the conservative `I_Q^kv` clamp are
 counted. Production stays on `qloop=1`; `qloop=2 + unique_asker + adaptive
 tconf` remains the widened diagnostic lane.
+
+## 2026-07-16 - Qloop route-stable seed and accepted-unique fallback
+
+### Context
+
+Raw comparison of `qloop=1` baseline versus `qloop=2 + unique_asker + adaptive
+tconf` exposed two confounders in the widened-route read:
+
+- `A2A_QLOOP_UNIQUE_ASKER=1` was pruning to one target per asking cell before
+  generation. If that target failed the `I_Q^kv` gate, the same asker could not
+  fall through to another target.
+- qloop generation seed included the candidate's route-rank index. Changing
+  route ordering therefore changed the text and `I_Q^kv` for the same
+  `(asking cell, target cell, round)` route.
+
+That made earlier qloop-policy comparisons partly about candidate ordering,
+not only about route geometry.
+
+### Change
+
+- `A2A_QLOOP_UNIQUE_ASKER=1` is now enforced after a qloop answer passes the
+  gate. A gated route does not consume the asker's one accepted route.
+- Qloop answer and trigger seeds are now route-identity stable: they depend on
+  `(qcell, tcell, round)` rather than the candidate's rank in the route list.
+- Added `A2A_QLOOP_CANDIDATE_POOL` plus
+  `A2A_FIELD_QLOOP_CANDIDATE_POOLS` so the pre-generation fallback pool can be
+  widened experimentally. Default `0` keeps the old auto pool (`route limit + 2`).
+- README and tests pin the expanded 42-column compact grid contract.
+
+Post-fix canonical comparison:
+
+```text
+lane                  pool  routes  gated  efficiency  i_q_bands  I_Q^kv  field_score
+qloop=1 baseline      0     11      2      0.846       2/3        +0.965  +2.112
+qloop=2 unique/adapt  0     10      2      0.833       1/4        +1.275  +2.126
+qloop=2 unique/adapt  8     10      2      0.833       1/4        +1.275  +2.126
+```
+
+Voice read from the raw files:
+
+- Baseline keeps weak positives such as `not to be held within itself`
+  (`I_Q^kv +0.025`) and `let there be hiddenness behind` (`+0.027`).
+- The widened unique/adaptive lane replaces one weak route with `cell membrane
+  bounding` (`+2.612`) while preserving full prompt coverage and zero counted
+  qloop surface debt.
+- `candidate_pool=8` does not improve this corpus beyond auto pool, so the
+  pool knob stays diagnostic rather than a recommended default.
+
+Decision: with route-stable generation, the widened lane finally has a grounded
+case: `qloop=2 + A2A_QLOOP_UNIQUE_ASKER=1 + A2A_QLOOP_TCONF_ADAPT=1 +
+A2A_QLOOP_TCONF_ADAPT_WEIGHT=-0.10` beats `qloop=1` on the compact score and
+strong-route distribution. Do not flip production yet; first broaden the prompt
+set and do a human voice read, because the margin is real but small.

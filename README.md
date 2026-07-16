@@ -116,7 +116,9 @@ second-route searches can reduce target-confidence pressure without moving the
 main path. `A2A_QLOOP_UNIQUE_ASKER=1` is a diagnostic widened-qloop policy that
 lets an asking cell choose only its best target, preventing one question cell
 from fanning out across several routes in the same selection pass. KV-backed
-cell qloop answers are admitted only when
+`A2A_QLOOP_CANDIDATE_POOL` widens the pre-generation route pool inspected before
+the `I_Q^kv` gate; `0` keeps the default auto pool (`qloop route limit + 2`,
+capped at 8). KV-backed cell qloop answers are admitted only when
 `I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`); rejected answers are reported as
 `qloop_gated` and are not written into the chorus. The qloop limit counts
 admitted answers, not failed candidates, so a gated route may fall through to
@@ -136,8 +138,9 @@ TSV. Defaults are intentionally small:
 `A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`,
 `A2A_FIELD_QLOOP_TCONFS="0.20"`, `A2A_FIELD_QLOOP_TCONF_ADAPTS="0"`,
 `A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`,
-`A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`, and
-`A2A_FIELD_ROUNDS_LIST="3"`. Override the grid with:
+`A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`,
+`A2A_FIELD_QLOOP_CANDIDATE_POOLS="0"`, and `A2A_FIELD_ROUNDS_LIST="3"`.
+Override the grid with:
 
 ```sh
 A2A_FIELD_XCELLS="0.01 0.02 0.03" make field-grid
