@@ -128,9 +128,9 @@ comparing qloop coverage, qloop gate pressure, qloop route efficiency,
 accepted/gated qloop route scores and component profiles, qloop/cell surface
 debt, qloop/cell answer density, `I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`,
 `D_R`, and `Dpos`. The compact table also reports
-qloop/cell debt rates, `I_N^kv` and `I_Q^kv` sign balance, `d_margin` sign
-balance, and a rough `field_score` for sorting candidate settings before
-reading the raw samples. Set
+qloop/cell debt rates, `I_N^kv` sign balance, `I_Q^kv` sign balance plus
+weak/strong positive bands, `d_margin` sign balance, and a rough `field_score`
+for sorting candidate settings before reading the raw samples. Set
 `A2A_FIELD_KEEP_RAW=1` to save the full per-prompt field outputs next to each
 TSV. Defaults are intentionally small:
 `A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`,

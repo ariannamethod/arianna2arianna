@@ -64,6 +64,7 @@ awk -F '\t' '
         col("qloop_tconf_avg"); col("qloop_gate_tconf_avg")
         col("qloop_qmarks_avg"); col("qloop_gate_qmarks_avg")
         col("qloop_iq_pos"); col("qloop_iq_neg"); col("qloop_iq_zero")
+        col("qloop_iq_low"); col("qloop_iq_strong")
         col("qloop_tail"); col("qloop_morph"); col("qloop_label")
         col("qloop_short"); col("qloop_question"); col("qloop_words_avg")
         col("cell_fragments"); col("cell_words_avg")
@@ -105,6 +106,8 @@ awk -F '\t' '
         qloop_iq_pos += $(col("qloop_iq_pos")) + 0
         qloop_iq_neg += $(col("qloop_iq_neg")) + 0
         qloop_iq_zero += $(col("qloop_iq_zero")) + 0
+        qloop_iq_low += $(col("qloop_iq_low")) + 0
+        qloop_iq_strong += $(col("qloop_iq_strong")) + 0
         qloop_tail += $(col("qloop_tail")) + 0
         qloop_morph += $(col("qloop_morph")) + 0
         qloop_label += $(col("qloop_label")) + 0
@@ -184,8 +187,9 @@ awk -F '\t' '
             avg_text("qwords"), avg_text("cwords")
         printf "I_N^kv: avg %s, pos %d, neg %d, zero %d\n",
             in_n ? sprintf("%+.3f", in_sum / in_n) : "nan", in_pos, in_neg, in_zero
-        printf "I_Q^kv: avg %s, pos %d, neg %d, zero %d, rows %d\n",
-            iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan", qloop_iq_pos, qloop_iq_neg, qloop_iq_zero, iq_rows
+        printf "I_Q^kv: avg %s, pos %d, neg %d, zero %d, low %d, strong %d, rows %d\n",
+            iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan",
+            qloop_iq_pos, qloop_iq_neg, qloop_iq_zero, qloop_iq_low, qloop_iq_strong, iq_rows
         printf "rates: qloop_prompt_rate %.3f, qloop_kv_rate %.3f, qloop_debt_rate %.3f, qloop_gate_rate %.3f, qloop_efficiency %.3f, cell_debt_rate %.3f\n",
             qprompt_rate, qkv_rate, qdebt_rate, qgate_rate, qeff_rate, cdebt_rate
         printf "field: avg_d_r %s, avg_d_margin %s, avg_D_R %s, avg_Dpos %s\n",

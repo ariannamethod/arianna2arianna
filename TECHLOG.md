@@ -3141,7 +3141,7 @@ wide, not necessarily deeper.
   constraint.
 - `tools/field_grid.sh` exposes this as `A2A_FIELD_QLOOP_UNIQUE_ASKERS` and
   records `qloop_unique_asker` in the compact TSV.
-- README and tests pin the expanded 40-column compact contract.
+- README and tests pin the expanded compact contract.
 
 Focused sweep:
 
@@ -3189,3 +3189,37 @@ A2A_QLOOP_UNIQUE_ASKER=1 + A2A_QLOOP_TCONF_ADAPT=1 +
 A2A_QLOOP_TCONF_ADAPT_WEIGHT=-0.10` as the best diagnostic widened-route lane
 so far. It removes same-asker fan-out and nearly matches the one-route baseline
 without losing prompt coverage.
+
+## 2026-07-16 - Field-grid qloop I_Q band diagnostics
+
+### Context
+
+The unique-asker lane raised average `I_Q^kv`, but the compact scorer clamps
+`I_Q^kv` at `1.0` and earlier min-IQ sweeps proved that a higher average can be
+fake progress when it comes from dropping coverage. The grid needed a cheap
+distribution read before changing score or route policy again.
+
+### Change
+
+- `tools/field_sweep.sh` now reports two accepted-route bands:
+  - `qloop_iq_low`: accepted qloop routes with `0 < I_Q^kv < 0.10`.
+  - `qloop_iq_strong`: accepted qloop routes with `I_Q^kv >= 1.0`.
+- `tools/field_tsv_summary.sh` reports both bands next to `I_Q^kv` sign
+  balance.
+- `tools/field_grid.sh` adds compact `i_q_bands` as `low/strong`.
+- README and tests pin the expanded 41-column compact contract.
+
+Focused comparison on the canonical five-prompt corpus:
+
+```text
+lane                  routes  gated  efficiency  i_q_signs  i_q_bands  I_Q^kv  field_score
+qloop=1 baseline      11      1      0.917       11/0/0     2/3        +1.009  +2.140
+qloop=2 unique         9      1      0.900        9/0/0     1/3        +1.259  +2.136
+```
+
+Interpretation: the widened unique-asker lane keeps the same three strong
+positive qloop routes while removing one weak positive route. That is a real
+diagnostic improvement, but it still does not beat the simpler `qloop=1`
+baseline once coverage, efficiency, and the conservative `I_Q^kv` clamp are
+counted. Production stays on `qloop=1`; `qloop=2 + unique_asker + adaptive
+tconf` remains the widened diagnostic lane.
