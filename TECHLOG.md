@@ -2865,3 +2865,37 @@ Before this pass, the same `16` setting had `quality_any 24/30` and
 weakening route coverage (`user_bridge 30/30`). The no-user-KV shadow remains
 worse (`answer_quality_no_user_kv any 10/30`), so the improvement is not merely
 post-hoc punctuation; it preserves the measured bridge.
+
+## 2026-07-16 - Sharpen false-recipient residue checks
+
+### Context
+
+After direct tail closure reached `answer_quality 0/30`, the next risk is
+metric blindness: a cleaner surface can hide old second-person residue if the
+detector only knows the earlier `you have been` / `if you want...` forms.
+Recent sweeps exposed narrower shapes such as `I see after you`, `your own
+network/body/mind`, and the malformed contraction `don're`.
+
+### Change
+
+- Expanded C-side direct answer scoring for the observed false-recipient forms.
+- Expanded `tools/repl_tsv_summary.sh` with matching summary detectors.
+- Added synthetic TSV smoke rows for late-recipient residue and bad contraction
+  forms, so the regression is covered without depending on model sampling.
+
+### Evidence
+
+Synthetic TSV smoke:
+
+```text
+answer_quality: any 7/7, short 0, question_like 0, label_artifact 0,
+notation_artifact 0, morph_artifact 5, recipient_artifact 2,
+tail_artifact 5, yes_no_start 0, repetition 0
+```
+
+Focused real regression after the stricter scoring stayed clean:
+
+```text
+qa/user_arianna temp=0.70 top_k=40 top_p=1.00 rep=1.30 userKV=0.05 userTok=16
+user_bridge 30/30, I_U^kv +0.450, answer_quality 0/30
+```

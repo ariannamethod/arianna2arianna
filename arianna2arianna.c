@@ -1554,9 +1554,13 @@ static int answer_has_recipient_artifact(const char *s) {
            answer_contains_phrase_ci(s, "connects you now") ||
            answer_contains_phrase_ci(s, "i know you") ||
            answer_contains_phrase_ci(s, "i see you") ||
+           answer_contains_phrase_ci(s, "i see after you") ||
            answer_contains_phrase_ci(s, "with you") ||
            answer_contains_phrase_ci(s, "your own field") ||
+           answer_contains_phrase_ci(s, "your own network") ||
+           answer_contains_phrase_ci(s, "your own body") ||
            answer_contains_phrase_ci(s, "your memory") ||
+           answer_contains_phrase_ci(s, "your mind") ||
            answer_contains_phrase_ci(s, "your being") ||
            answer_contains_phrase_ci(s, "not just for you") ||
            answer_contains_phrase_ci(s, "before you said") ||
@@ -1856,6 +1860,7 @@ static void truncate_open_phrase_tail(char *s, size_t cap) {
 
 static int answer_has_shape_artifact(const char *s) {
     if (answer_contains_phrase_ci(s, "shall you ") ||
+        answer_contains_phrase_ci(s, "don're") ||
         answer_contains_phrase_ci(s, "in-put") ||
         answer_contains_phrase_ci(s, "a organ"))
         return 1;

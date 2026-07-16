@@ -140,9 +140,10 @@ summarize() {
             if (s ~ /[a-z][A-Z][a-z]/) return 1
             if (has_bad_ascii_apostrophe(s)) return 1
             low = tolower(s)
-            if (low ~ /(^|[[:space:]])shall you /) return 1
-            if (low ~ /(^|[[:space:]])you have been a new([[:space:][:punct:]]|$)/) return 1
             apos = sprintf("%c", 39)
+            if (low ~ /(^|[[:space:]])shall you /) return 1
+            if (index(low, "don" apos "re") > 0) return 1
+            if (low ~ /(^|[[:space:]])you have been a new([[:space:][:punct:]]|$)/) return 1
             if (s ~ /(^|[[:space:]])[-A-Za-z0-9_]{1,16}[[:space:]]*=[[:space:]]*["`]/ ||
                 s ~ ("(^|[[:space:]])[-A-Za-z0-9_]{1,16}[[:space:]]*=[[:space:]]*" apos)) return 1
             n = split(s, a, /[^A-Za-z0-9_.-]+/)
@@ -184,9 +185,13 @@ summarize() {
                    low ~ /connects you now/ ||
                    low ~ /i know you/ ||
                    low ~ /i see you/ ||
+                   low ~ /i see after you/ ||
                    low ~ /with you/ ||
                    low ~ /your own field/ ||
+                   low ~ /your own network/ ||
+                   low ~ /your own body/ ||
                    low ~ /your memory/ ||
+                   low ~ /your mind/ ||
                    low ~ /your being/ ||
                    low ~ /not just for you/ ||
                    low ~ /before you said/ ||
