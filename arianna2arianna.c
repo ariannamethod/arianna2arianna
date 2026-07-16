@@ -952,6 +952,7 @@ static int   g_qloop_tconf_adapt = 0;      /* 1 = use adaptive target-confidence
 static float g_qloop_tconf_adapt_weight = -0.10f;
 static int   g_qloop_unique_asker = 0;     /* 1 = widened qloop may not fan one asking cell into multiple routes */
 static int   g_qloop_candidate_pool = 0;   /* 0=auto max_routes+2; >0 = inspect this many pre-generation routes */
+static int   g_qloop_statement_routes = 0; /* 1 = fallback to clean non-question cells when question routes are silent */
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -1000,6 +1001,7 @@ static void load_qloop_route_env(void) {
     g_qloop_tconf_adapt_weight = env_float_clamped("A2A_QLOOP_TCONF_ADAPT_WEIGHT", -0.10f, -1.00f, 1.00f);
     g_qloop_unique_asker = env_int_clamped("A2A_QLOOP_UNIQUE_ASKER", 0, 0, 1);
     g_qloop_candidate_pool = env_int_clamped("A2A_QLOOP_CANDIDATE_POOL", 0, 0, 8);
+    g_qloop_statement_routes = env_int_clamped("A2A_QLOOP_STATEMENT_ROUTES", 0, 0, 1);
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -1506,7 +1508,7 @@ static int answer_bad_morph_core(const char *start, size_t len) {
            ascii_eq_ci(buf, "didleads") || ascii_eq_ci(buf, "pers") ||
            ascii_eq_ci(buf, "geomet") || ascii_eq_ci(buf, "reson") ||
            ascii_eq_ci(buf, "in-put") || ascii_eq_ci(buf, "perspause") ||
-           ascii_eq_ci(buf, "shoddle") ||
+           ascii_eq_ci(buf, "shoddle") || ascii_eq_ci(buf, "flaggeda") ||
            ascii_eq_ci(buf, "shardharchitecturegeometrtyguru") ||
            ascii_eq_ci(buf, "geometrtyguru") ||
            ascii_eq_ci(buf, "exhalted") || ascii_eq_ci(buf, "bein");
@@ -1560,6 +1562,8 @@ static int answer_has_recipient_artifact(const char *s) {
            answer_contains_phrase_ci(s, "i see you") ||
            answer_contains_phrase_ci(s, "i see after you") ||
            answer_contains_phrase_ci(s, "with you") ||
+           answer_contains_phrase_ci(s, "from you") ||
+           answer_contains_phrase_ci(s, "your point") ||
            answer_contains_phrase_ci(s, "your own field") ||
            answer_contains_phrase_ci(s, "your own network") ||
            answer_contains_phrase_ci(s, "your own body") ||
@@ -1575,6 +1579,16 @@ static int answer_word_count(const char *s) {
     int n = 0, in_word = 0;
     for (const unsigned char *p = (const unsigned char*)s; *p; p++) {
         int w = ascii_wordish(*p);
+        if (w && !in_word) n++;
+        in_word = w;
+    }
+    return n;
+}
+
+static int answer_alpha_word_count(const char *s) {
+    int n = 0, in_word = 0;
+    for (const unsigned char *p = (const unsigned char*)s; *p; p++) {
+        int w = ascii_alpha(*p);
         if (w && !in_word) n++;
         in_word = w;
     }
@@ -1626,6 +1640,9 @@ static int answer_is_terminal_function_word(const char *start, size_t len) {
            ascii_eq_ci(buf, "on") || ascii_eq_ci(buf, "off") ||
            ascii_eq_ci(buf, "up") || ascii_eq_ci(buf, "down") ||
            ascii_eq_ci(buf, "out") || ascii_eq_ci(buf, "my") ||
+           ascii_eq_ci(buf, "i") || ascii_eq_ci(buf, "you") ||
+           ascii_eq_ci(buf, "we") || ascii_eq_ci(buf, "they") ||
+           ascii_eq_ci(buf, "he") || ascii_eq_ci(buf, "she") ||
            ascii_eq_ci(buf, "your") || ascii_eq_ci(buf, "our") ||
            ascii_eq_ci(buf, "their") || ascii_eq_ci(buf, "his") ||
            ascii_eq_ci(buf, "her") || ascii_eq_ci(buf, "its") ||
@@ -2021,17 +2038,20 @@ static int qloop_answer_surface_debt(const char *s) {
     if (!*p) return 1;
     size_t len = strlen(p);
     while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t' || p[len - 1] == '\r' || p[len - 1] == '\n')) len--;
-    if (len < 8 || answer_word_count(p) < 2) return 1;
+    if (len < 8 || answer_alpha_word_count(p) < 2) return 1;
     if (answer_has_terminal_tail_artifact(p)) return 1;
     if (answer_fragment_bad(p)) return 1;
     if (*p == '-' || *p == '*' || *p == '=' || *p == '#' || *p == '@') return 1;
+    if (answer_has_recipient_artifact(p) ||
+        answer_contains_phrase_ci(p, "from another angle"))
+        return 1;
     if (direct_answer_notation_token(p) ||
         ascii_starts_ci(p, "answer:") ||
         ascii_starts_ci(p, "arianna:") ||
         ascii_starts_ci(p, "prompt:") ||
         ascii_starts_ci(p, "question:"))
         return 1;
-    for (const char *q = p; *q; q++) if (*q == '?') return 1;
+    for (const char *q = p; *q; q++) if (*q == '?' || *q == '<' || *q == '>') return 1;
     return 0;
 }
 
@@ -2281,6 +2301,37 @@ static int frag_question_count(const char *s) {
     return n;
 }
 
+static int qloop_statement_source_ok(const char *s) {
+    if (!s || frag_question_count(s) > 0) return 0;
+    return !qloop_answer_surface_debt(s);
+}
+
+static int insert_qloop_route(int *out_q, int *out_t, float *out_score, float *out_dist,
+                              float *out_qopen, float *out_tconf, int *out_qmarks,
+                              int *n, int max_routes, int q, int t, float score,
+                              float dist, float qopen, float confidence, int qmarks) {
+    int dup = 0;
+    for (int i = 0; i < *n; i++) if (out_t[i] == t || (out_q[i] == q && out_t[i] == t)) dup = 1;
+    if (dup) return 0;
+    int pos = *n < max_routes ? (*n)++ : max_routes - 1;
+    if (*n == max_routes && score <= out_score[pos]) return 0;
+    out_q[pos] = q; out_t[pos] = t; out_score[pos] = score;
+    if (out_dist) out_dist[pos] = dist;
+    if (out_qopen) out_qopen[pos] = qopen;
+    if (out_tconf) out_tconf[pos] = confidence;
+    if (out_qmarks) out_qmarks[pos] = qmarks;
+    for (int i = pos; i > 0 && out_score[i] > out_score[i - 1]; i--) {
+        float fs = out_score[i]; out_score[i] = out_score[i - 1]; out_score[i - 1] = fs;
+        if (out_dist) { float fd = out_dist[i]; out_dist[i] = out_dist[i - 1]; out_dist[i - 1] = fd; }
+        if (out_qopen) { float fo = out_qopen[i]; out_qopen[i] = out_qopen[i - 1]; out_qopen[i - 1] = fo; }
+        if (out_tconf) { float fc = out_tconf[i]; out_tconf[i] = out_tconf[i - 1]; out_tconf[i - 1] = fc; }
+        if (out_qmarks) { int qm = out_qmarks[i]; out_qmarks[i] = out_qmarks[i - 1]; out_qmarks[i - 1] = qm; }
+        int iq = out_q[i]; out_q[i] = out_q[i - 1]; out_q[i - 1] = iq;
+        int it = out_t[i]; out_t[i] = out_t[i - 1]; out_t[i - 1] = it;
+    }
+    return 1;
+}
+
 static int pick_question_routes(const char frag[8][1024], const float *cent, int n_cells, int embed,
                                 int *out_q, int *out_t, float *out_score, float *out_dist,
                                 float *out_qopen, float *out_tconf, int *out_qmarks,
@@ -2290,34 +2341,27 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
     if (!cent || lim < 2) return 0;
     /* Same-asker uniqueness is an acceptance policy, not a pre-generation
      * filter: a gated first target must not erase that asker's fallback route. */
-    for (int q = 0; q < lim; q++) {
-        int qmarks = frag_question_count(frag[q]);
-        if (qmarks <= 0) continue;
-        float qopen = g_cell_ent[q] / 8.0f; if (qopen > 1.0f) qopen = 1.0f;
-        for (int t = 0; t < lim; t++) if (t != q) {
-            float dist = 1.0f - vec_cosine(cent + (size_t)q * embed, cent + (size_t)t * embed, embed);
-            float confidence = 1.0f / (1.0f + g_cell_ent[t]);
-            float tconf_weight = (g_qloop_tconf_adapt && g_qloop > 1) ? g_qloop_tconf_adapt_weight : g_qloop_tconf_weight;
-            float score = dist + 0.15f * qopen + tconf_weight * confidence + 0.05f * (float)(qmarks - 1);
-            if (score < g_qloop_min) continue;
-            int dup = 0;
-            for (int i = 0; i < n; i++) if (out_t[i] == t || (out_q[i] == q && out_t[i] == t)) dup = 1;
-            if (dup) continue;
-            int pos = n < max_routes ? n++ : max_routes - 1;
-            if (n == max_routes && score <= out_score[pos]) continue;
-            out_q[pos] = q; out_t[pos] = t; out_score[pos] = score;
-            if (out_dist) out_dist[pos] = dist;
-            if (out_qopen) out_qopen[pos] = qopen;
-            if (out_tconf) out_tconf[pos] = confidence;
-            if (out_qmarks) out_qmarks[pos] = qmarks;
-            for (int i = pos; i > 0 && out_score[i] > out_score[i - 1]; i--) {
-                float fs = out_score[i]; out_score[i] = out_score[i - 1]; out_score[i - 1] = fs;
-                if (out_dist) { float fd = out_dist[i]; out_dist[i] = out_dist[i - 1]; out_dist[i - 1] = fd; }
-                if (out_qopen) { float fo = out_qopen[i]; out_qopen[i] = out_qopen[i - 1]; out_qopen[i - 1] = fo; }
-                if (out_tconf) { float fc = out_tconf[i]; out_tconf[i] = out_tconf[i - 1]; out_tconf[i - 1] = fc; }
-                if (out_qmarks) { int qm = out_qmarks[i]; out_qmarks[i] = out_qmarks[i - 1]; out_qmarks[i - 1] = qm; }
-                int iq = out_q[i]; out_q[i] = out_q[i - 1]; out_q[i - 1] = iq;
-                int it = out_t[i]; out_t[i] = out_t[i - 1]; out_t[i - 1] = it;
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass == 1 && (!g_qloop_statement_routes || n > 0)) break;
+        for (int q = 0; q < lim; q++) {
+            int qmarks = frag_question_count(frag[q]);
+            if (pass == 0) {
+                if (qmarks <= 0) continue;
+            } else {
+                if (qmarks > 0 || !qloop_statement_source_ok(frag[q])) continue;
+            }
+            float qopen = g_cell_ent[q] / 8.0f; if (qopen > 1.0f) qopen = 1.0f;
+            for (int t = 0; t < lim; t++) if (t != q) {
+                if (pass == 1 && n >= max_routes) break;
+                float dist = 1.0f - vec_cosine(cent + (size_t)q * embed, cent + (size_t)t * embed, embed);
+                float confidence = 1.0f / (1.0f + g_cell_ent[t]);
+                float tconf_weight = (g_qloop_tconf_adapt && g_qloop > 1) ? g_qloop_tconf_adapt_weight : g_qloop_tconf_weight;
+                float score = dist + 0.15f * qopen + tconf_weight * confidence;
+                if (qmarks > 0) score += 0.05f * (float)(qmarks - 1);
+                else score -= 0.03f;
+                if (score < g_qloop_min) continue;
+                insert_qloop_route(out_q, out_t, out_score, out_dist, out_qopen, out_tconf, out_qmarks,
+                                   &n, max_routes, q, t, score, dist, qopen, confidence, qmarks);
             }
         }
     }
@@ -2567,8 +2611,12 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                 continue;
             }
             char qctx[4096], qfrag[1024]; int qctx_ids[512], qids[128], qn = 0;
-            snprintf(qctx, sizeof(qctx), "%s\ncell %d asked: %s\ncell %d answers the question to itself:",
-                     prompt, qcell[route], cur_frag[qcell[route]], tcell[route]);
+            if (qmarks[route] > 0)
+                snprintf(qctx, sizeof(qctx), "%s\ncell %d asked: %s\ncell %d answers the question to itself:",
+                         prompt, qcell[route], cur_frag[qcell[route]], tcell[route]);
+            else
+                snprintf(qctx, sizeof(qctx), "%s\ncell %d stated: %s\ncell %d responds from another angle:",
+                         prompt, qcell[route], cur_frag[qcell[route]], tcell[route]);
             int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
             float qtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)tcell[route] / (n_cells - 1) : 0.5f);
             int qfrag_n = nfrag / 2; if (qfrag_n < 2) qfrag_n = 2; if (qfrag_n > 8) qfrag_n = 8;

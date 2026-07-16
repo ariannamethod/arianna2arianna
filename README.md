@@ -96,8 +96,9 @@ averages (`qloop_dist_avg`, `qloop_qopen_avg`, `qloop_tconf_avg`,
 `qloop_qmarks_avg`, plus gated counterparts), qloop answer quality counters
 (`qloop_iq_avg`, `qloop_iq_pos`, `qloop_iq_neg`, `qloop_iq_zero`,
 `qloop_quality`, `qloop_tail`, `qloop_morph`, `qloop_label`, `qloop_short`,
-`qloop_question`, `qloop_words_avg`), and ordinary cell-surface quality counters
-(`cell_quality`, `cell_tail`, `cell_morph`, `cell_label`, `cell_short`).
+`qloop_question`, `qloop_recipient`, `qloop_words_avg`), and ordinary
+cell-surface quality counters (`cell_quality`, `cell_tail`, `cell_morph`,
+`cell_label`, `cell_short`).
 `cell_question` and `cell_words_avg` are reported separately because questions
 can be valid qloop material rather than surface debt, and answer density helps
 catch settings that look clean only because the chorus became thin;
@@ -118,10 +119,15 @@ lets an asking cell choose only its best target, preventing one question cell
 from fanning out across several routes in the same selection pass. KV-backed
 `A2A_QLOOP_CANDIDATE_POOL` widens the pre-generation route pool inspected before
 the `I_Q^kv` gate; `0` keeps the default auto pool (`qloop route limit + 2`,
-capped at 8). KV-backed cell qloop answers are admitted only when
+capped at 8). `A2A_QLOOP_STATEMENT_ROUTES=1` is a diagnostic fallback that
+uses clean non-question source cells (`qmarks=0`) only when the normal
+question-route picker is silent for that round; it does not replace question
+routing and is off by default. KV-backed cell qloop answers are
+admitted only when
 `I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`) and the generated answer passes the
 same qloop surface-debt guard used by `field_sweep.sh` (`short`, `tail`,
-`morph`, `label`, and answer-question debt). Rejected answers are reported as
+`morph`, `label`, answer-question debt, and concrete false-recipient/prompt-frame
+echoes). Rejected answers are reported as
 `qloop_gated` with `reason=iq` or `reason=surface` and are not written into the
 chorus. The qloop limit counts admitted answers, not failed candidates, so a
 gated route may fall through to the next candidate without widening the
@@ -142,7 +148,8 @@ TSV. Defaults are intentionally small:
 `A2A_FIELD_QLOOP_TCONFS="0.20"`, `A2A_FIELD_QLOOP_TCONF_ADAPTS="0"`,
 `A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`,
 `A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`,
-`A2A_FIELD_QLOOP_CANDIDATE_POOLS="0"`, and `A2A_FIELD_ROUNDS_LIST="3"`.
+`A2A_FIELD_QLOOP_CANDIDATE_POOLS="0"`,
+`A2A_FIELD_QLOOP_STATEMENT_ROUTES="0"`, and `A2A_FIELD_ROUNDS_LIST="3"`.
 Use `prompts/kv_influence.txt` as the small canonical smoke set and
 `prompts/field_broaden.txt` for broader recipient-lock, mechanism,
 mixed-language, and statement-shaped route-policy reads.
@@ -156,6 +163,7 @@ A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_TCONF_ADAPTS="0 1" 
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_TCONF_ADAPTS="1" A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.30 -0.10 0 0.10" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_MIN_IQS="0 0.25 0.50 0.75" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_UNIQUE_ASKERS="0 1" make field-grid
+A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_STATEMENT_ROUTES="0 1" make field-grid
 A2A_FIELD_ROUNDS_LIST="1 2 3" A2A_FIELD_CELLS=4 A2A_FIELD_FRAG=12 make field-grid
 A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="1 2" make field-grid
 ```

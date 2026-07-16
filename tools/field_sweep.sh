@@ -48,7 +48,7 @@ raw_name() {
     printf "%03d_%s.txt" "$seq" "$slug"
 }
 
-printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_iq_low\tqloop_iq_strong\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_words_avg\n"
+printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_iq_low\tqloop_iq_strong\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_recipient\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_words_avg\n"
 
 raw_seq=0
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
@@ -62,7 +62,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     line="$(printf "%s\n" "$out" | grep "→ round" | tail -n 1 || true)"
     if [[ -z "$line" ]]; then
         safe_prompt="${prompt//$'\t'/ }"
-        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\tnan\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS"
+        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\tnan\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS"
         continue
     fi
 
@@ -80,7 +80,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
         }
         function terminal_function_word(w) {
             w = tolower(w)
-            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|is|are|was|were|be|been|am|do|does|did|have|has|had|will|shall|than|about|after|before|around|between|within|without|against|toward|towards|over|under|on|off|up|down|out|my|your|our|their|his|her|its|this|these|those|some|any|each|every|all|only|yet|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|reson|isn|doesn|wasn|weren|didn|don|won)$/
+            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|is|are|was|were|be|been|am|do|does|did|have|has|had|will|shall|than|about|after|before|around|between|within|without|against|toward|towards|over|under|on|off|up|down|out|my|i|you|we|they|he|she|your|our|their|his|her|its|this|these|those|some|any|each|every|all|only|yet|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|reson|isn|doesn|wasn|weren|didn|don|won)$/
         }
         function is_copula_word(w) {
             w = tolower(w)
@@ -126,11 +126,15 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
         }
         function has_morph_artifact(s,     low) {
             low = tolower(s)
-            return low ~ /(^|[^a-z])(aat|sards|haart|wort|sark|shabbartists|olelegacythe|youhave|soundlike|pertrustin|qopoeleakyname|shardharchitecturegeomet|harchitecturegeomet|sharden|oulha|noator|aardi|shallards|qopoeleakha|qlooppressing|qoopops|didleads|pers|geomet|reson|in-put|perspause|shoddle|shardharchitecturegeometrtyguru|geometrtyguru|exhalted|bein)([^a-z]|$)/
+            return low ~ /(^|[^a-z])(aat|sards|haart|wort|sark|shabbartists|olelegacythe|youhave|soundlike|pertrustin|qopoeleakyname|shardharchitecturegeomet|harchitecturegeomet|sharden|oulha|noator|aardi|shallards|qopoeleakha|qlooppressing|qoopops|didleads|pers|geomet|reson|in-put|perspause|shoddle|flaggeda|shardharchitecturegeometrtyguru|geometrtyguru|exhalted|bein)([^a-z]|$)/
         }
         function has_label_artifact(s,     low) {
             low = tolower(trim(s))
             return low ~ /^(a:|q:|answer:|arianna:|prompt:|question:|[-*=#@])/
+        }
+        function has_recipient_artifact(s,     low) {
+            low = tolower(s)
+            return low ~ /(you have been|you have a field|you have no idea|you have to|you touched|you cannot|you must|you ask me|if you want me|if you want to know|if you want to say|by you or|behind you|connects you now|i know you|i see you|i see after you|with you|from you|your point|your own field|your own network|your own body|your memory|your mind|your being|not just for you|before you said|said to me|from another angle)/
         }
         function route_score(line) {
             if (match(line, / score [-+]?[0-9][0-9.]*:/)) return substr(line, RSTART + 7, RLENGTH - 8) + 0
@@ -159,7 +163,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             }
         }
         function avg_or_nan(sum, n) { return n ? sprintf("%.3f", sum / n) : "nan" }
-        function add_answer(s,     ans, wc, flagged, shortf, tailf, morphf, labelf, questionf) {
+        function add_answer(s,     ans, wc, flagged, shortf, tailf, morphf, labelf, questionf, recipientf) {
             ans = trim(s)
             if (ans == "") return
             n++
@@ -170,12 +174,14 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             morphf = has_morph_artifact(ans)
             labelf = has_label_artifact(ans)
             questionf = (index(ans, "?") > 0)
+            recipientf = has_recipient_artifact(ans)
             if (shortf) short_n++
             if (tailf) tail_n++
             if (morphf) morph_n++
             if (labelf) label_n++
             if (questionf) question_n++
-            flagged = shortf || tailf || morphf || labelf || questionf
+            if (recipientf) recipient_n++
+            flagged = shortf || tailf || morphf || labelf || questionf || recipientf
             if (flagged) quality_n++
         }
         /qloop c[0-9]/ {
@@ -211,14 +217,14 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             gate_score_avg = gate_score_n ? sprintf("%.3f", gate_score_sum / gate_score_n) : "nan"
             avg = iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan"
             words_avg = n ? sprintf("%.3f", words_sum / n) : "nan"
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s",
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s",
                 score_avg, gate_score_avg,
                 avg_or_nan(dist_sum, dist_n), avg_or_nan(gate_dist_sum, gate_dist_n),
                 avg_or_nan(qopen_sum, qopen_n), avg_or_nan(gate_qopen_sum, gate_qopen_n),
                 avg_or_nan(tconf_sum, tconf_n), avg_or_nan(gate_tconf_sum, gate_tconf_n),
                 avg_or_nan(qmarks_sum, qmarks_n), avg_or_nan(gate_qmarks_sum, gate_qmarks_n),
                 avg, iq_pos, iq_neg, iq_zero, iq_low, iq_strong,
-                quality_n, tail_n, morph_n, label_n, short_n, question_n, words_avg
+                quality_n, tail_n, morph_n, label_n, short_n, question_n, recipient_n, words_avg
         }
     ')"
     surface_metrics="$(printf "%s\n" "$out" | awk '
@@ -231,7 +237,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
         }
         function terminal_function_word(w) {
             w = tolower(w)
-            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|is|are|was|were|be|been|am|do|does|did|have|has|had|will|shall|than|about|after|before|around|between|within|without|against|toward|towards|over|under|on|off|up|down|out|my|your|our|their|his|her|its|this|these|those|some|any|each|every|all|only|yet|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|reson|isn|doesn|wasn|weren|didn|don|won)$/
+            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|is|are|was|were|be|been|am|do|does|did|have|has|had|will|shall|than|about|after|before|around|between|within|without|against|toward|towards|over|under|on|off|up|down|out|my|i|you|we|they|he|she|your|our|their|his|her|its|this|these|those|some|any|each|every|all|only|yet|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|reson|isn|doesn|wasn|weren|didn|don|won)$/
         }
         function is_copula_word(w) {
             w = tolower(w)
@@ -277,7 +283,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
         }
         function has_morph_artifact(s,     low) {
             low = tolower(s)
-            return low ~ /(^|[^a-z])(aat|sards|haart|wort|sark|shabbartists|olelegacythe|youhave|soundlike|pertrustin|qopoeleakyname|shardharchitecturegeomet|harchitecturegeomet|sharden|oulha|noator|aardi|shallards|qopoeleakha|qlooppressing|qoopops|didleads|pers|geomet|reson|in-put|perspause|shoddle|shardharchitecturegeometrtyguru|geometrtyguru|exhalted|bein)([^a-z]|$)/
+            return low ~ /(^|[^a-z])(aat|sards|haart|wort|sark|shabbartists|olelegacythe|youhave|soundlike|pertrustin|qopoeleakyname|shardharchitecturegeomet|harchitecturegeomet|sharden|oulha|noator|aardi|shallards|qopoeleakha|qlooppressing|qoopops|didleads|pers|geomet|reson|in-put|perspause|shoddle|flaggeda|shardharchitecturegeometrtyguru|geometrtyguru|exhalted|bein)([^a-z]|$)/
         }
         function has_label_artifact(s,     low) {
             low = tolower(trim(s))

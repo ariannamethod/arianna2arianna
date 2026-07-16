@@ -3319,3 +3319,51 @@ Interpretation: the field kept coverage through fallback routing while refusing
 to write the short fragment into chorus memory. The broaden read still has two
 statement-shaped prompts without qloop routes, so the next layer should inspect
 non-question route triggers separately rather than overloading qloop admission.
+
+## 2026-07-16 - Statement route fallback and qloop frame-debt guards
+
+### Context
+
+The broaden set showed that two statement-shaped prompts had no qloop routes at
+all under the strict question-only route trigger. The first naive statement
+experiment filled the unused candidate pool with clean non-question cells, but
+that was too broad: it pushed the lane toward route/gate explosion and let
+weak frame echoes compete as if they were real answers.
+
+### Change
+
+- Added `A2A_QLOOP_STATEMENT_ROUTES=1` as an off-by-default diagnostic fallback.
+  It only inspects clean `qmarks=0` source cells when the normal question-route
+  picker is silent for that round.
+- Added `A2A_FIELD_QLOOP_STATEMENT_ROUTES` to `field_grid.sh` and the compact
+  grid tag/header so statement fallback can be swept against the strict lane.
+- Tightened qloop surface admission so runtime and TSV agree on debt:
+  alphabetic word count, `<`/`>` debris, concrete false-recipient echoes
+  (`from you`, `your point`), prompt-frame echo (`from another angle`), terminal
+  subject-pronoun tails (`... which you.` / `... as I.`), and the observed
+  morph junk `flaggeda`.
+- Added `qloop_recipient` to `field_sweep.sh` / `field_tsv_summary.sh`; qloop
+  quality now reports recipient/prompt-frame debt explicitly.
+
+Final broaden-set comparison:
+
+```text
+state                       routes  gated  efficiency  prompts  qloop_quality  I_Q^kv  field_score
+question-only stmt0          40      13     0.755       18/20    0/40           +1.149  +1.976
+stmt1 fill-unused rejected   81      43     0.653       20/20    0/81           +1.080  +2.160
+stmt1 silent-fallback final  59      34     0.634       20/20    0/59           +1.128  +2.149
+```
+
+Raw read on the final run confirms the intended gates:
+
+```text
+↳ qloop gate c3→c2 [kv] ... rejected from another angle. ... reason=surface
+↳ qloop gate c1→c0 [kv] ... rejected membrane. ... reason=surface
+↳ qloop c3→c0 [kv] ... from biology, not just physics. ... qmarks=0
+```
+
+Interpretation: statement fallback is useful as a diagnostic route bridge: it
+restores full broaden coverage without writing the known frame/recipient/tail
+debt into chorus memory. It is not a production default yet. The long broaden
+tail and the higher gate rate mean the next layer should tune statement-route
+voice/latency separately before promoting it.

@@ -119,7 +119,7 @@ summarize() {
                    w == "qopoeleakha" || w == "qlooppressing" ||
                    w == "qoopops" || w == "didleads" ||
                    w == "shoddle" || w == "shardharchitecturegeometrtyguru" ||
-                   w == "geometrtyguru" || w == "exhalted" ||
+                   w == "geometrtyguru" || w == "flaggeda" || w == "exhalted" ||
                    w == "bein"
         }
         function has_bad_ascii_apostrophe(s,     apos, rest, pos, tail) {
@@ -218,7 +218,7 @@ summarize() {
         }
         function terminal_function_word(w) {
             w = tolower(w)
-            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|res|isn|doesn|wasn|weren|didn|don|won)$/
+            return w ~ /^(a|an|the|to|at|in|of|for|with|by|from|into|as|if|but|or|and|not|that|which|who|whose|when|where|why|how|can|could|would|should|must|may|might|i|you|we|they|he|she|res|isn|doesn|wasn|weren|didn|don|won)$/
         }
         function has_tail_artifact(s,     t, last, apos, a, n, i, w) {
             t = trim(s)
