@@ -73,7 +73,8 @@ awk -F '\t' '
         col("cell_fragments"); col("cell_words_avg")
         col("cell_quality"); col("cell_tail"); col("cell_morph")
         col("cell_label"); col("cell_short"); col("cell_question")
-        col("base_ms"); col("qloop_ms"); col("qloop_gen"); col("qloop_retry")
+        col("base_ms"); col("base_gen"); col("base_retry"); col("base_probe")
+        col("qloop_ms"); col("qloop_gen"); col("qloop_retry")
         col("elapsed_sec")
         next
     }
@@ -159,6 +160,9 @@ awk -F '\t' '
                 qloop_ms_seen = 1
             }
         }
+        base_gen += $(col("base_gen")) + 0
+        base_retry += $(col("base_retry")) + 0
+        base_probe += $(col("base_probe")) + 0
         qloop_gen += $(col("qloop_gen")) + 0
         qloop_retry += $(col("qloop_retry")) + 0
 
@@ -241,10 +245,11 @@ awk -F '\t' '
             num_n["disso"] ? sprintf("%.3f", num_sum["disso"] / num_n["disso"]) : "nan",
             num_n["dpos"] ? sprintf("%.2f", num_sum["dpos"] / num_n["dpos"]) : "nan"
         printf "settling: d_margin pos %d, neg %d, zero %d\n", dm_pos, dm_neg, dm_zero
-        printf "timing: base_ms_avg %.0f, base_ms_max %.0f :: %s, qloop_ms_avg %.0f, qloop_ms_max %.0f :: %s, qloop_gen %d, qloop_retry %d\n",
+        printf "timing: base_ms_avg %.0f, base_ms_max %.0f :: %s, base_gen %d, base_retry %d, base_probe %d, qloop_ms_avg %.0f, qloop_ms_max %.0f :: %s, qloop_gen %d, qloop_retry %d\n",
             base_ms_n ? base_ms_sum / base_ms_n : 0,
             base_ms_seen ? base_ms_max : 0,
             base_ms_seen ? base_ms_max_prompt : "n/a",
+            base_gen, base_retry, base_probe,
             qloop_ms_n ? qloop_ms_sum / qloop_ms_n : 0,
             qloop_ms_seen ? qloop_ms_max : 0,
             qloop_ms_seen ? qloop_ms_max_prompt : "n/a",

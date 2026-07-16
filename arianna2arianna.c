@@ -2442,6 +2442,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     int keep_qloop_kv = (g_qloop && out_disso);   /* qloop answers can hear the asking cell's KV, not only pasted text */
     g_round_tokn = 0;   /* fresh shared word-memory for this round's cross-cell rep-penalty */
     double base_t0 = now_ms();
+    int base_gen = 0, base_retry = 0, base_probe = 0;
     for (int c = 0; c < n_cells; c++) {
         if (g_chorus) snprintf(ctx, sizeof(ctx), "%s", prompt);   /* CHORUS: each cell answers the SAME prompt from its own angle; awareness via cross-cell, not text */
         else if (g_leap_mode && r > 0) {             /* RELAY (legacy): dissonance-into-forward route */
@@ -2491,6 +2492,8 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             float attempt_temp = temp * cell_retry_temp_mul[attempt];
             if (attempt_temp < 0.40f) attempt_temp = 0.40f;
             unsigned attempt_seed = seed ^ cell_retry_salt[attempt];
+            base_gen++;
+            if (attempt > 0) base_retry++;
             float cand_ent = cell_speak(m, tok, ids, np, nfrag_c, attempt_temp, cell_retry_top_k[attempt], 1.4f,
                                         attempt_seed, eos, max_seq, cand_frag, sizeof(cand_frag), 0,
                                         cand_ids, &cand_n,
@@ -2547,16 +2550,20 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_field_on = 0;
             g_nbr = prev_kv; g_nbr_len = prev_len;
             g_round_tokn = tok_before; g_nbr_shuf = 0;
+            base_gen++; base_probe++;
             float e0 = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);    /* neighbour ON, ordered */
             g_nbr = NULL; g_nbr_len = 0;
             g_round_tokn = tok_before; g_nbr_shuf = 0;
+            base_gen++; base_probe++;
             float eoff = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour OFF */
             g_nbr = prev_kv; g_nbr_len = prev_len;
             make_perm(g_nbr_perm, prev_len < 512 ? prev_len : 512, seed ^ 0x9e3779b9u);
             g_round_tokn = tok_before; g_nbr_shuf = 1;
+            base_gen++; base_probe++;
             float eA = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour SHUFFLED A */
             make_perm(g_nbr_perm, prev_len < 512 ? prev_len : 512, seed ^ 0x85ebca6bu);
             g_round_tokn = tok_before;
+            base_gen++; base_probe++;
             float eB = cell_speak(m, tok, ids, np, 1, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* neighbour SHUFFLED B */
             g_nbr = save_nbr; g_nbr_len = save_len; g_nbr_shuf = save_shuf;
             g_field_on = save_on; g_round_tokn = tok_after;
@@ -2581,6 +2588,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             int tok_after = g_round_tokn, saved[64], ns = 0;   /* cell c's coherent words are [tok_before, tok_after) */
             for (int k = tok_before; k < tok_after && ns < 64; k++) saved[ns++] = g_round_tok[k];
             g_round_tokn = tok_before;                    /* shadow sees the SAME word-memory as coherent (0..c-1), not cell c's own — kills the cross-rep artifact */
+            base_gen++; base_probe++;
             shuf_sum += cell_speak(m, tok, sids, np, nfrag_c, temp, 40, 1.4f, seed, eos, max_seq, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL);  /* nfrag_c: same length as coherent */
             g_field_on = save_on; g_round_tokn = tok_before + ns;
             for (int k = 0; k < ns; k++) g_round_tok[tok_before + k] = saved[k];   /* restore cell c's COHERENT words (not the shadow's) for cells c+1.. */
@@ -2782,8 +2790,8 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         }
         qloop_ms = now_ms() - qloop_t0;
     }
-    if (verbose) printf("\n  timing: base_ms=%.0f qloop_ms=%.0f qloop_gen=%d qloop_retry=%d", base_ms, qloop_ms, qloop_gen, qloop_retry);
-    if (flog) fprintf(flog, "- timing base_ms=%.0f qloop_ms=%.0f qloop_gen=%d qloop_retry=%d\n", base_ms, qloop_ms, qloop_gen, qloop_retry);
+    if (verbose) printf("\n  timing: base_ms=%.0f base_gen=%d base_retry=%d base_probe=%d qloop_ms=%.0f qloop_gen=%d qloop_retry=%d", base_ms, base_gen, base_retry, base_probe, qloop_ms, qloop_gen, qloop_retry);
+    if (flog) fprintf(flog, "- timing base_ms=%.0f base_gen=%d base_retry=%d base_probe=%d qloop_ms=%.0f qloop_gen=%d qloop_retry=%d\n", base_ms, base_gen, base_retry, base_probe, qloop_ms, qloop_gen, qloop_retry);
     if (g_user_q && *g_user_q && g_qloop && verbose && out_disso && cent && g_xcell > 0) {
         int qids_prompt[512], qnprompt = bpe_encode(tok, g_user_q, qids_prompt, 512);
         float *qcent = (float*)calloc(m->embed, sizeof(float));

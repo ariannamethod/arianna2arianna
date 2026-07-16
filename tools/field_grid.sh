@@ -161,6 +161,9 @@ compact_line() {
                     qloop_ms_seen = 1
                 }
             }
+            base_gen_sum += $(col("base_gen")) + 0
+            base_retry_sum += $(col("base_retry")) + 0
+            base_probe_sum += $(col("base_probe")) + 0
             qloop_gen_sum += $(col("qloop_gen")) + 0
             qloop_retry_sum += $(col("qloop_retry")) + 0
             v = $(col("d_r"))
@@ -210,7 +213,7 @@ compact_line() {
                         - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * d_avg - 0.25 * pospart(dm_avg) \
                         - 0.2 * in_neg_rate - 0.4 * iq_neg_rate - 0.2 * dm_pos_rate - 0.15 * qgate_rate
 
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%s\t%d/%d\t%s\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%s\t%d/%d\t%s\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%d\t%d\t%d\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
                 xcell, qloop, tconf, adapt, adapt_weight, min_iq, unique_asker, candidate_pool, statement_pool, statement_routes, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
                 qgate_sum, qstmt_sum, qstmt_gate_sum, qeff_rate, qscore_avg, qgate_score_avg, qprofile, qgate_profile,
                 qprompt_rows, rows, avg_text("qwords"), qquality_sum, qroutes_sum,
@@ -228,6 +231,7 @@ compact_line() {
                 field_score,
                 base_ms_n ? sprintf("%.0f", base_ms_sum / base_ms_n) : "nan",
                 base_ms_seen ? sprintf("%.0f", base_ms_max) : "nan",
+                base_gen_sum, base_retry_sum, base_probe_sum,
                 qloop_ms_n ? sprintf("%.0f", qloop_ms_sum / qloop_ms_n) : "nan",
                 qloop_ms_seen ? sprintf("%.0f", qloop_ms_max) : "nan",
                 qloop_gen_sum, qloop_retry_sum,
@@ -238,7 +242,7 @@ compact_line() {
     ' "$tsv_file"
 }
 
-printf "xcell\tqloop\tqloop_tconf_weight\tqloop_tconf_adapt\tqloop_tconf_adapt_weight\tqloop_min_iq\tqloop_unique_asker\tqloop_candidate_pool\tqloop_statement_pool\tqloop_statement_routes\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_words_avg\tqloop_quality\tcell_words_avg\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\ti_q_bands\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\tbase_ms_avg\tbase_ms_max\tqloop_ms_avg\tqloop_ms_max\tqloop_gen\tqloop_retry\telapsed_avg\telapsed_max\traw_dir\ttsv\tsummary\n"
+printf "xcell\tqloop\tqloop_tconf_weight\tqloop_tconf_adapt\tqloop_tconf_adapt_weight\tqloop_min_iq\tqloop_unique_asker\tqloop_candidate_pool\tqloop_statement_pool\tqloop_statement_routes\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_words_avg\tqloop_quality\tcell_words_avg\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\ti_q_bands\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\tbase_ms_avg\tbase_ms_max\tbase_gen\tbase_retry\tbase_probe\tqloop_ms_avg\tqloop_ms_max\tqloop_gen\tqloop_retry\telapsed_avg\telapsed_max\traw_dir\ttsv\tsummary\n"
 
 for xcell in $XCELLS; do
     for qloop in $QLOOPS; do

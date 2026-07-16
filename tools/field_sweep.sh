@@ -48,7 +48,7 @@ raw_name() {
     printf "%03d_%s.txt" "$seq" "$slug"
 }
 
-printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_iq_low\tqloop_iq_strong\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_recipient\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_words_avg\tbase_ms\tqloop_ms\tqloop_gen\tqloop_retry\telapsed_sec\n"
+printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_iq_low\tqloop_iq_strong\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_recipient\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_words_avg\tbase_ms\tbase_gen\tbase_retry\tbase_probe\tqloop_ms\tqloop_gen\tqloop_retry\telapsed_sec\n"
 
 raw_seq=0
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
@@ -64,7 +64,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     line="$(printf "%s\n" "$out" | grep "→ round" | tail -n 1 || true)"
     if [[ -z "$line" ]]; then
         safe_prompt="${prompt//$'\t'/ }"
-        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\tnan\tnan\tnan\t0\t0\t%s\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS" "$elapsed_sec"
+        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\tnan\tnan\t0\t0\t0\tnan\t0\t0\t%s\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS" "$elapsed_sec"
         continue
     fi
 
@@ -79,6 +79,9 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             for (i = 1; i <= NF; i++) {
                 split($i, kv, "=")
                 if (kv[1] == "base_ms") base = kv[2]
+                else if (kv[1] == "base_gen") base_gen = kv[2]
+                else if (kv[1] == "base_retry") base_retry = kv[2]
+                else if (kv[1] == "base_probe") base_probe = kv[2]
                 else if (kv[1] == "qloop_ms") qloop = kv[2]
                 else if (kv[1] == "qloop_gen") gen = kv[2]
                 else if (kv[1] == "qloop_retry") retry = kv[2]
@@ -86,10 +89,13 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
         }
         END {
             if (base == "") base = "nan"
+            if (base_gen == "") base_gen = 0
+            if (base_retry == "") base_retry = 0
+            if (base_probe == "") base_probe = 0
             if (qloop == "") qloop = "nan"
             if (gen == "") gen = 0
             if (retry == "") retry = 0
-            printf "%s\t%s\t%s\t%s", base, qloop, gen, retry
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s", base, base_gen, base_retry, base_probe, qloop, gen, retry
         }
     ')"
     qloop_metrics="$(printf "%s\n" "$out" | awk '

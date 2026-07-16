@@ -99,10 +99,11 @@ averages (`qloop_dist_avg`, `qloop_qopen_avg`, `qloop_tconf_avg`,
 `qloop_quality`, `qloop_tail`, `qloop_morph`, `qloop_label`, `qloop_short`,
 `qloop_question`, `qloop_recipient`, `qloop_words_avg`), and ordinary
 cell-surface quality counters (`cell_quality`, `cell_tail`, `cell_morph`,
-`cell_label`, `cell_short`). `base_ms`, `qloop_ms`, `qloop_gen`, and
-`qloop_retry` split per-prompt cost into base field generation versus qloop
-answer/retry work; `elapsed_sec` remains the wall-clock total so route settings
-can be compared by cost as well as voice quality.
+`cell_label`, `cell_short`). `base_ms`, `base_gen`, `base_retry`, `base_probe`,
+`qloop_ms`, `qloop_gen`, and `qloop_retry` split per-prompt cost into base field
+generation, surface-retry churn, diagnostic probes, and qloop answer/retry work;
+`elapsed_sec` remains the wall-clock total so route settings can be compared by
+cost as well as voice quality.
 `cell_question` and `cell_words_avg` are reported separately because questions
 can be valid qloop material rather than surface debt, and answer density helps
 catch settings that look clean only because the chorus became thin;
@@ -150,8 +151,9 @@ also reports
 qloop/cell debt rates, `I_N^kv` sign balance, `I_Q^kv` sign balance plus
 weak/strong positive bands, `d_margin` sign balance, and a rough `field_score`
 for sorting candidate settings before reading the raw samples. `base_ms_avg`,
-`base_ms_max`, `qloop_ms_avg`, `qloop_ms_max`, `qloop_gen`, and `qloop_retry`
-show whether a slow setting burns time in the base field or in qloop
+`base_ms_max`, `base_gen`, `base_retry`, `base_probe`, `qloop_ms_avg`,
+`qloop_ms_max`, `qloop_gen`, and `qloop_retry` show whether a slow setting burns
+time in base generation, cell surface retries, diagnostic probes, or qloop
 generation; `elapsed_avg` and `elapsed_max` expose slow prompt/settings
 combinations before they become production defaults. Set `A2A_FIELD_KEEP_RAW=1`
 to save the full per-prompt field outputs next to each TSV. Defaults are

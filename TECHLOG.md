@@ -3474,3 +3474,41 @@ Interpretation: the candidate still has zero counted qloop/cell surface debt on
 the smoke set, and phase timing is now good enough to debug the broaden latency
 tail directly. The next broaden read should use the same timing columns before
 changing qloop policy again.
+
+## 2026-07-16 - Base retry/probe timing split
+
+### Context
+
+The first phase timing read proved the slow mixed-language prompts were not
+primarily qloop-bound, but `base_ms` still mixed real cell attempts with
+diagnostic KV/order probes. The next split needed to distinguish cell
+surface-retry churn from instrumentation cost.
+
+### Change
+
+- `field` timing now includes `base_gen`, `base_retry`, and `base_probe`.
+- `base_gen` counts base-phase `cell_speak` calls.
+- `base_retry` counts retry attempts after a bad cell surface.
+- `base_probe` counts diagnostic control calls such as neighbour on/off,
+  shuffled-KV probes, and relay shadow passes.
+- `field_sweep.sh`, `field_tsv_summary.sh`, and `field_grid.sh` carry those
+  counters through the TSV contracts.
+
+Targeted mixed-language slow set (`field_broaden.txt` lines 25-27), same
+settings as the statement-pool broaden read, with `A2A_KVSHUF=0`:
+
+```text
+rows: 3
+qloop: routes 8, kv 8, gated 2, prompts 3/3
+qloop_quality: any 0/8
+cell_quality: any 25/36, short 25, question 11
+timing: base_ms_avg 13355, base_ms_max 15798, base_gen 42, base_retry 30, base_probe 0, qloop_ms_avg 2390, qloop_ms_max 3103, qloop_gen 7, qloop_retry 1
+latency: avg_sec 77.333, max_sec 87.000
+```
+
+The same targeted set with default `A2A_KVSHUF=1` was slower
+(`base_ms_avg 23006`, `qloop_ms_avg 2375`, `elapsed_avg 105.333`), so KV
+diagnostics add cost, but they are not the root. With probes disabled, the final
+round still spends 30 extra base retries across 12 cells and keeps severe cell
+surface debt. The next repair target is a base cell retry cap/guard for
+mixed-language degradation, not a qloop route-policy change.
