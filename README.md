@@ -113,7 +113,10 @@ controlled by `A2A_QLOOP_TCONF_WEIGHT` (default `0.20`) and can be swept through
 unchanged but makes widened qloop (`qloop>1`) use
 `A2A_QLOOP_TCONF_ADAPT_WEIGHT` (default `-0.10`) instead, so diagnostic
 second-route searches can reduce target-confidence pressure without moving the
-main path. KV-backed cell qloop answers are admitted only when
+main path. `A2A_QLOOP_UNIQUE_ASKER=1` is a diagnostic widened-qloop policy that
+lets an asking cell choose only its best target, preventing one question cell
+from fanning out across several routes in the same selection pass. KV-backed
+cell qloop answers are admitted only when
 `I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`); rejected answers are reported as
 `qloop_gated` and are not written into the chorus. The qloop limit counts
 admitted answers, not failed candidates, so a gated route may fall through to
@@ -132,8 +135,9 @@ reading the raw samples. Set
 TSV. Defaults are intentionally small:
 `A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`,
 `A2A_FIELD_QLOOP_TCONFS="0.20"`, `A2A_FIELD_QLOOP_TCONF_ADAPTS="0"`,
-`A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`, and `A2A_FIELD_ROUNDS_LIST="3"`.
-Override the grid with:
+`A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`,
+`A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`, and
+`A2A_FIELD_ROUNDS_LIST="3"`. Override the grid with:
 
 ```sh
 A2A_FIELD_XCELLS="0.01 0.02 0.03" make field-grid
@@ -141,6 +145,8 @@ A2A_FIELD_XCELLS="0 0.02" A2A_FIELD_QLOOPS="0 1 2" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOP_TCONFS="-0.10 0 0.10 0.20" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_TCONF_ADAPTS="0 1" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_TCONF_ADAPTS="1" A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.30 -0.10 0 0.10" make field-grid
+A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_MIN_IQS="0 0.25 0.50 0.75" make field-grid
+A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_UNIQUE_ASKERS="0 1" make field-grid
 A2A_FIELD_ROUNDS_LIST="1 2 3" A2A_FIELD_CELLS=4 A2A_FIELD_FRAG=12 make field-grid
 A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="1 2" make field-grid
 ```

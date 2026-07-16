@@ -3057,3 +3057,135 @@ Decision: keep production on `qloop=1`. For diagnostics, `qloop=2` should use
 the adaptive lane with `A2A_QLOOP_TCONF_ADAPT_WEIGHT=-0.10`; stronger negative
 pressure improves `I_Q^kv` but starts under-routing the field, while zero or
 positive pressure admits too many lower-quality routes.
+
+## 2026-07-16 - Field-grid qloop min-IQ axis
+
+### Context
+
+After the adaptive-weight sweep, `qloop=2` still lost to `qloop=1` because it
+created more accepted and gated routes without improving the aggregate field
+score. The next candidate lever was stricter `I_Q^kv` admission: maybe the
+second route could become useful if low-influence qloop answers were rejected
+before they entered the chorus.
+
+### Change
+
+- `tools/field_grid.sh` now accepts `A2A_FIELD_QLOOP_MIN_IQS` and passes each
+  value to `A2A_QLOOP_MIN_IQ`.
+- The compact TSV includes `qloop_min_iq`.
+- README and tests pin the expanded compact contract.
+
+Focused sweep:
+
+```sh
+A2A_FIELD_XCELLS=0.02 \
+A2A_FIELD_QLOOPS=2 \
+A2A_FIELD_QLOOP_TCONF_ADAPTS=1 \
+A2A_FIELD_QLOOP_TCONFS=0.20 \
+A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS=-0.10 \
+A2A_FIELD_QLOOP_MIN_IQS="0 0.25 0.50 0.75 1.00" \
+A2A_FIELD_ROUNDS_LIST=3 \
+A2A_FIELD_CELLS=4 \
+A2A_FIELD_FRAG=12 \
+make field-grid
+```
+
+Result:
+
+```text
+min_iq  routes  gated  efficiency  prompts  I_Q^kv  qloop_quality  field_score
+0       14      6      0.700       5/5      +0.963  0/14           +2.090
+0.25    9      11      0.450       4/5      +1.338  0/9            +1.668
+0.50    7      13      0.350       4/5      +1.597  0/7            +1.653
+0.75    5      15      0.250       4/5      +1.981  0/5            +1.639
+1.00    3      17      0.150       3/5      +2.677  0/3            +1.225
+```
+
+Soft threshold check:
+
+```text
+min_iq  routes  gated  efficiency  prompts  I_Q^kv  qloop_quality  field_score
+0.05    10      10     0.500       4/5      +1.217  0/10           +1.677
+0.10    10      10     0.500       4/5      +1.217  0/10           +1.677
+0.15     9      11     0.450       4/5      +1.338  0/9            +1.668
+```
+
+Decision: do not raise `A2A_QLOOP_MIN_IQ` as a production or diagnostic
+improvement. Positive thresholds increase average `I_Q^kv`, but they do it by
+dropping prompt coverage and route efficiency; even `0.05` loses one of the
+five canonical prompts. The next useful qloop layer is route ranking or
+second-route policy, not a harder admission threshold.
+
+## 2026-07-16 - Field-grid unique-asker qloop policy
+
+### Context
+
+Raw qloop evidence showed that accepted and gated route scores were nearly the
+same, so score thresholding alone was not the missing layer:
+
+```text
+qloop_score: accepted avg 0.501, gated avg 0.494
+qloop_route_profile: accepted d 0.472, qopen 0.345, tconf 0.222
+qloop_route_profile: gated   d 0.469, qopen 0.359, tconf 0.287
+```
+
+The visible pattern was same-asker fan-out: one question-bearing cell often
+sprayed several target cells in the same selection pass. That made `qloop=2`
+wide, not necessarily deeper.
+
+### Change
+
+- Added `A2A_QLOOP_UNIQUE_ASKER` (default `0`).
+- When enabled for widened qloop (`qloop>1`), route selection keeps only the
+  best target for each asking cell before applying the existing unique-target
+  constraint.
+- `tools/field_grid.sh` exposes this as `A2A_FIELD_QLOOP_UNIQUE_ASKERS` and
+  records `qloop_unique_asker` in the compact TSV.
+- README and tests pin the expanded 40-column compact contract.
+
+Focused sweep:
+
+```sh
+A2A_FIELD_XCELLS=0.02 \
+A2A_FIELD_QLOOPS=2 \
+A2A_FIELD_QLOOP_TCONF_ADAPTS=1 \
+A2A_FIELD_QLOOP_TCONFS=0.20 \
+A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS=-0.10 \
+A2A_FIELD_QLOOP_MIN_IQS=0 \
+A2A_FIELD_QLOOP_UNIQUE_ASKERS="0 1" \
+A2A_FIELD_ROUNDS_LIST=3 \
+A2A_FIELD_CELLS=4 \
+A2A_FIELD_FRAG=12 \
+make field-grid
+```
+
+Result:
+
+```text
+unique_asker  routes  gated  efficiency  prompts  I_Q^kv  qloop_quality  field_score
+0             14      6      0.700       5/5      +0.963  0/14           +2.090
+1              9      1      0.900       5/5      +1.259  0/9            +2.136
+```
+
+Adaptive-weight check under `unique_asker=1`:
+
+```text
+adapt_weight  routes  gated  efficiency  I_Q^kv  field_score
+-0.30          8      1      0.889       +1.336  +2.135
+-0.10          9      1      0.900       +1.259  +2.136
+ 0             9      1      0.900       +0.971  +2.122
+ 0.10         10      1      0.909       +0.919  +2.098
+```
+
+Baseline under the same compact contract:
+
+```text
+qloop  routes  gated  efficiency  I_Q^kv  field_score
+1      11      1      0.917       +1.009  +2.140
+```
+
+Decision: keep production on `qloop=1`, but keep `qloop=2 +
+A2A_QLOOP_UNIQUE_ASKER=1 + A2A_QLOOP_TCONF_ADAPT=1 +
+A2A_QLOOP_TCONF_ADAPT_WEIGHT=-0.10` as the best diagnostic widened-route lane
+so far. It removes same-asker fan-out and nearly matches the one-route baseline
+without losing prompt coverage.

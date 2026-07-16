@@ -950,6 +950,7 @@ static float g_qloop_min_iq = 0.0f; /* reject KV-backed qloop answers whose aske
 static float g_qloop_tconf_weight = 0.20f; /* route prior: target confidence contribution */
 static int   g_qloop_tconf_adapt = 0;      /* 1 = use adaptive target-confidence prior for widened qloop */
 static float g_qloop_tconf_adapt_weight = -0.10f;
+static int   g_qloop_unique_asker = 0;     /* 1 = widened qloop may not fan one asking cell into multiple routes */
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -996,6 +997,7 @@ static void load_qloop_route_env(void) {
     g_qloop_tconf_weight = env_float_clamped("A2A_QLOOP_TCONF_WEIGHT", 0.20f, -1.00f, 1.00f);
     g_qloop_tconf_adapt = env_int_clamped("A2A_QLOOP_TCONF_ADAPT", 0, 0, 1);
     g_qloop_tconf_adapt_weight = env_float_clamped("A2A_QLOOP_TCONF_ADAPT_WEIGHT", -0.10f, -1.00f, 1.00f);
+    g_qloop_unique_asker = env_int_clamped("A2A_QLOOP_UNIQUE_ASKER", 0, 0, 1);
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -2263,6 +2265,57 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
     int lim = n_cells < 8 ? n_cells : 8;
     int n = 0;
     if (!cent || lim < 2) return 0;
+    if (g_qloop_unique_asker && g_qloop > 1) {
+        struct route_candidate {
+            int q, t, qmarks;
+            float score, dist, qopen, tconf;
+        } cand[8];
+        int nc = 0;
+        for (int q = 0; q < lim; q++) {
+            int qmarks = frag_question_count(frag[q]);
+            if (qmarks <= 0) continue;
+            float qopen = g_cell_ent[q] / 8.0f; if (qopen > 1.0f) qopen = 1.0f;
+            int best_t = -1;
+            float best_score = -1.0f, best_dist = 0.0f, best_tconf = 0.0f;
+            for (int t = 0; t < lim; t++) if (t != q) {
+                float dist = 1.0f - vec_cosine(cent + (size_t)q * embed, cent + (size_t)t * embed, embed);
+                float confidence = 1.0f / (1.0f + g_cell_ent[t]);
+                float tconf_weight = (g_qloop_tconf_adapt && g_qloop > 1) ? g_qloop_tconf_adapt_weight : g_qloop_tconf_weight;
+                float score = dist + 0.15f * qopen + tconf_weight * confidence + 0.05f * (float)(qmarks - 1);
+                if (score < g_qloop_min) continue;
+                if (best_t < 0 || score > best_score) {
+                    best_t = t;
+                    best_score = score;
+                    best_dist = dist;
+                    best_tconf = confidence;
+                }
+            }
+            if (best_t >= 0 && nc < 8) {
+                cand[nc++] = (struct route_candidate){ q, best_t, qmarks, best_score, best_dist, qopen, best_tconf };
+            }
+        }
+        for (int i = 1; i < nc; i++) {
+            struct route_candidate c = cand[i];
+            int j = i - 1;
+            while (j >= 0 && cand[j].score < c.score) {
+                cand[j + 1] = cand[j];
+                j--;
+            }
+            cand[j + 1] = c;
+        }
+        for (int c = 0; c < nc && n < max_routes; c++) {
+            int dup = 0;
+            for (int i = 0; i < n; i++) if (out_t[i] == cand[c].t) dup = 1;
+            if (dup) continue;
+            out_q[n] = cand[c].q; out_t[n] = cand[c].t; out_score[n] = cand[c].score;
+            if (out_dist) out_dist[n] = cand[c].dist;
+            if (out_qopen) out_qopen[n] = cand[c].qopen;
+            if (out_tconf) out_tconf[n] = cand[c].tconf;
+            if (out_qmarks) out_qmarks[n] = cand[c].qmarks;
+            n++;
+        }
+        return n;
+    }
     for (int q = 0; q < lim; q++) {
         int qmarks = frag_question_count(frag[q]);
         if (qmarks <= 0) continue;
