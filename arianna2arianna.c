@@ -932,7 +932,7 @@ static int g_nbr_perm[512];     /* the permutation of 0..g_nbr_len-1 used when g
 static int g_kvshuf = 0;        /* 1 = run neighbour diagnostics: Δ_R^kv order control + I_N^kv influence */
 static int g_kvpos = 0;         /* 0 = semantic/bag neighbour lane; 1 = positional order-probe lane */
 static int g_qloop = 0;         /* 0=off; 1..2 = resonant cell-question routes per round */
-static const char *g_user_q = NULL; /* REPL direct-question bridge: user text can become asker KV */
+static const char *g_user_q = NULL; /* REPL direct-turn bridge: user text can become asker KV */
 static int g_clean_answer_start = 0; /* direct user answers should not open with list/bullet debris */
 static int g_answer_form_guard = 0;  /* direct user answers should not turn into question/yes-no loops */
 static int g_answer_sentence_stop = 0; /* direct user answers may stop once a sentence closes */
@@ -1858,9 +1858,27 @@ static void truncate_open_phrase_tail(char *s, size_t cap) {
     }
 }
 
+static int utf8_cyrillic_len(const unsigned char *p) {
+    if (p[0] == 0xD0 && p[1] >= 0x80 && p[1] <= 0xBF) return 2;
+    if (p[0] == 0xD1 && ((p[1] >= 0x80 && p[1] <= 0x8F) || p[1] == 0x91)) return 2;
+    return 0;
+}
+
+static int answer_has_sparse_cyrillic_artifact(const char *s) {
+    int cyr = 0, ascii = 0;
+    for (const unsigned char *p = (const unsigned char*)s; *p;) {
+        int clen = utf8_cyrillic_len(p);
+        if (clen) { cyr++; p += clen; continue; }
+        if (ascii_alpha(*p)) ascii++;
+        p++;
+    }
+    return cyr > 0 && cyr <= 6 && ascii >= 12;
+}
+
 static int answer_has_shape_artifact(const char *s) {
     if (answer_contains_phrase_ci(s, "shall you ") ||
         answer_contains_phrase_ci(s, "don're") ||
+        answer_has_sparse_cyrillic_artifact(s) ||
         answer_contains_phrase_ci(s, "in-put") ||
         answer_contains_phrase_ci(s, "a organ"))
         return 1;
@@ -2654,7 +2672,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             }
         }
     }
-    if (g_user_q && frag_question_count(g_user_q) > 0 && g_qloop && verbose && out_disso && cent && g_xcell > 0) {
+    if (g_user_q && *g_user_q && g_qloop && verbose && out_disso && cent && g_xcell > 0) {
         int qids_prompt[512], qnprompt = bpe_encode(tok, g_user_q, qids_prompt, 512);
         float *qcent = (float*)calloc(m->embed, sizeof(float));
         int tcell = -1; float best = -1.0f;
@@ -2918,7 +2936,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
         for (int r = 0; r < n_rounds; r++) {
             char round_chorus[4096]; round_chorus[0] = 0;
             float disso = 0.0f, kv_delta = 0.0f, kv_floor = 0.0f, kv_infl = 0.0f;
-            g_user_q = (r == 0 && frag_question_count(line) > 0) ? line : NULL;
+            g_user_q = (r == 0) ? line : NULL;
             float avg = run_round(m, tok, prompt, r ? chorus : NULL, n_cells, nfrag, eos,
                                   42u + (unsigned)(turn * 1009u + r * 7919u), 1, r, hist,
                                   round_chorus, sizeof(round_chorus), NULL, NULL, &disso,

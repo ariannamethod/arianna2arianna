@@ -2899,3 +2899,108 @@ Focused real regression after the stricter scoring stayed clean:
 qa/user_arianna temp=0.70 top_k=40 top_p=1.00 rep=1.30 userKV=0.05 userTok=16
 user_bridge 30/30, I_U^kv +0.450, answer_quality 0/30
 ```
+
+## 2026-07-16 - Dialogue corpus becomes turn-level
+
+### Context
+
+The post-closure dialogue probe needed colder coverage before field-level
+tuning: new readers, explicit no-prior-meeting prompts, hostile reviewer prompts,
+and Russian/mixed-language prompts. Adding those exposed a real contract gap:
+the REPL bridge only activated for user lines with a `?`, so imperative dialogue
+turns such as "Do not remember me personally..." never reached the direct
+user-KV bridge.
+
+### Change
+
+- Expanded `prompts/repl_probe_regression.txt` from 30 to 45 prompts:
+  cold-reader, false-familiarity, hostile-reviewer, and Russian/mixed probes.
+- Changed the REPL direct bridge from question-only to first-user-turn:
+  non-question turns now get `qloop user->cN [user-kv]` too.
+- Added a smoke regression proving a non-question user turn receives the bridge.
+- Added sparse-Cyrillic artifact detection:
+  C-side uses UTF-8 `D0/D1` byte counting; the TSV summary uses matching byte
+  counting instead of locale-sensitive `[А-Я]` ranges.
+
+### Evidence
+
+The two bridge misses from the first 45-prompt compare were:
+
+```text
+Do not remember me personally; explain what remains of memory when the recipient is unknown.
+Объясни field memory по-английски и по-русски, но без "ты уже здесь".
+```
+
+After the turn-bridge change:
+
+```text
+rows 45
+user_bridge 45/45
+I_U^kv avg +0.391
+answer_quality any 4/45
+tail_artifact 0
+recipient_artifact 0
+answer_kv_changed 45/45
+```
+
+The remaining four quality flags are all Russian/mixed surface debt:
+
+```text
+Меня зовут Мира... -> Some of the “д”у.” This name, not as I.        notation+morph
+Я читаю это впервые... -> Russian,” orбт r.                          morph
+Новый читатель спрашивает... -> Even if it's not the same ... I.      notation
+Если голос говорит "ты"... -> oе: O", "S."                            morph
+```
+
+`qloop=2 + adaptive target-confidence` still does not change direct answers in
+this one-round REPL harness:
+
+```text
+baseline qloop=1/adapt=0: answer_quality 4/45, I_U^kv +0.391
+candidate qloop=2/adapt=1: answer_quality 4/45, I_U^kv +0.401
+answer_changed 0/45, target_changed 0/45
+```
+
+Interpretation: direct dialogue foundation is now full-turn and measurable. The
+next field-level work should not blindly widen REPL qloop; it should tune
+cell-route policy/settling in field-grid where qloop changes the actual cell
+routes, while Russian/mixed output remains a separate substrate/surface debt.
+
+## 2026-07-16 - Field-grid qloop route read
+
+### Context
+
+After the dialogue compare showed `qloop=2/adapt=1` does not change direct REPL
+answers in the one-round harness, the next question moved back to field-level
+routing: does widened qloop help the cell field itself when qloop routes are the
+primary object being measured?
+
+### Sweep
+
+Fixed:
+
+```text
+prompts=prompts/kv_influence.txt
+xcell=0.02
+tconf=0.20
+rounds=3
+cells=4
+frag=12
+```
+
+Result:
+
+```text
+qloop  adapt  routes  gated  efficiency  I_Q^kv  qloop_quality  cell_quality  field_score
+1      0      11      1      0.917       +1.009  0/11           0/60          +2.140
+1      1      11      1      0.917       +1.009  0/11           0/60          +2.140
+2      0      19      9      0.679       +0.840  0/19           0/60          +2.029
+2      1      14      6      0.700       +0.963  0/14           0/60          +2.090
+```
+
+Interpretation: the field path is healthy (`qloop_quality 0`, `cell_quality 0`)
+but widened qloop is not free. `qloop=2` creates more routes, yet raises gate
+pressure and lowers aggregate score at the current policy. Adaptive
+target-confidence helps (`+2.090` vs `+2.029`) but does not beat the current
+`qloop=1` baseline (`+2.140`). Next field tuning should sweep qloop=2
+`tconf/adapt_weight` before changing defaults.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sweep direct user questions through the live REPL bridge and print TSV metrics.
+# Sweep direct user turns through the live REPL bridge and print TSV metrics.
 
 set -euo pipefail
 export LC_ALL=C

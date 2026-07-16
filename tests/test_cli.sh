@@ -120,6 +120,7 @@ printf "stem?\t1\t1\t0.000\t0.000\tc0\t1.000\tThe echo keeps itself res\tplain a
 printf "recipient?\t1\t1\t0.000\t0.000\tc0\t1.000\tIf you want to say so, let us work\tplain answer\n" >> "$junk_tsv"
 printf "late-recipient?\t1\t1\t0.000\t0.000\tc0\t1.000\tThe field opens and I see after you.\tplain answer\n" >> "$junk_tsv"
 printf "bad-contraction?\t1\t1\t0.000\t0.000\tc0\t1.000\tThe field says you don're aware of that event.\tplain answer\n" >> "$junk_tsv"
+printf "sparse-cyrillic?\t1\t1\t0.000\t0.000\tc0\t1.000\tIf I felt a “р” in the old language, it.\tplain answer\n" >> "$junk_tsv"
 junk_out="$(bash "$A2A_ROOT/tools/repl_tsv_summary.sh" "$junk_tsv" 2>&1)"
 rm -f "$junk_tsv"
-a2a_assert_grep "answer_quality: any 7/7, short 0, question_like 0, label_artifact 0, notation_artifact 0, morph_artifact 5, recipient_artifact 2, tail_artifact 5" "$junk_out" "repl TSV summary flags domain, assignment, recipient, contraction, and tail junk"
+a2a_assert_grep "answer_quality: any 8/8, short 0, question_like 0, label_artifact 0, notation_artifact 0, morph_artifact 6, recipient_artifact 2, tail_artifact 5" "$junk_out" "repl TSV summary flags domain, assignment, recipient, contraction, sparse Cyrillic, and tail junk"

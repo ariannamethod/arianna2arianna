@@ -136,9 +136,20 @@ summarize() {
             }
             return 0
         }
+        function has_sparse_cyrillic_artifact(s,     t, cyr, latin, d0, d1) {
+            t = s
+            d0 = sprintf("%c", 208)
+            d1 = sprintf("%c", 209)
+            cyr = gsub(d0, "", t) + gsub(d1, "", t)
+            t = s
+            gsub(/[^A-Za-z]/, "", t)
+            latin = length(t)
+            return cyr > 0 && cyr <= 6 && latin >= 12
+        }
         function has_morph_artifact(s,     i, a, n, w, core, low, last, tail, apos) {
             if (s ~ /[a-z][A-Z][a-z]/) return 1
             if (has_bad_ascii_apostrophe(s)) return 1
+            if (has_sparse_cyrillic_artifact(s)) return 1
             low = tolower(s)
             apos = sprintf("%c", 39)
             if (low ~ /(^|[[:space:]])shall you /) return 1

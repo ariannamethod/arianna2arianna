@@ -67,8 +67,8 @@ and `rep` (`A2A_TOP_P` / `A2A_REP` can set the last two when omitted).
 `repl` keeps the model loaded and reads prompts from stdin until `:q`, `quit`,
 or `exit`. Each line runs a short live field turn with semantic KV neighbour
 coupling and qloop enabled, then keeps the recent text trajectory as context for
-the next line. If the user line is a question, REPL also builds a direct
-user-question KV route and prints it as `qloop user→cN [user-kv]` with
+the next line. On the first round of a user line, REPL also builds a direct
+user-turn KV route and prints it as `qloop user→cN [user-kv]` with
 `I_U^kv`, the entropy influence of the user's hidden trajectory, plus the
 matched `no-user-kv` answer fragment from the same seed. `A2A_REPL_QLOOP`
 controls the REPL cell-question route limit (`1` by default, `2` for widened
