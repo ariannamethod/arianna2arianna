@@ -2828,3 +2828,40 @@ top_p  rep   I_U^kv  quality_any  morph  tail  repetition
 current best measured direct-user sampler remains `top_p=1.00, rep=1.30`; the
 next fix should target tail closure/answer ending directly instead of
 over-tightening sampling.
+
+## 2026-07-16 - Direct user answers use surface closure
+
+### Context
+
+The token-budget sweep showed that increasing `A2A_USER_ANSWER_TOKENS` from
+`16` to `32` reduced tail cutoffs, but did not remove the underlying failure.
+The code path explained why: routed qloop answers already used the full surface
+cleanup ladder, while direct user-bridge answers only used the lighter
+`clean_answer_fragment()` pass.
+
+### Change
+
+- Added a `clean_direct_answer_surface()` hook for direct user answers.
+- Direct user answer candidates, retries, and no-user-KV shadow answers now run
+  through the same sentence/phrase closure pass as cell surface fragments:
+  trim open second sentences, trim open clause tails, drop terminal function
+  word tails, and close short safe sentences.
+- Kept `A2A_USER_ANSWER_TOKENS=16` as the default. The fix is closure, not
+  making every direct answer longer.
+
+### Evidence
+
+Focused regression corpus, fixed sampler (`temp=0.70`, `top_k=40`, `top_p=1.00`,
+`rep=1.30`, `userKV=0.05`, `qa/user_arianna`):
+
+```text
+user_tokens  I_U^kv  quality_any  morph  tail  repetition
+16           +0.450  0/30         0      0     0
+32           +0.478  1/30         1      0     0
+```
+
+Before this pass, the same `16` setting had `quality_any 24/30` and
+`tail_artifact 23`. The direct user bridge now closes the answer surface without
+weakening route coverage (`user_bridge 30/30`). The no-user-KV shadow remains
+worse (`answer_quality_no_user_kv any 10/30`), so the improvement is not merely
+post-hoc punctuation; it preserves the measured bridge.

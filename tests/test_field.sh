@@ -139,6 +139,7 @@ clean_sweep_summary="$(bash "$A2A_ROOT/tools/repl_tsv_summary.sh" "$clean_sweep_
 rm -f "$clean_sweep_prompts" "$clean_sweep_tsv"
 a2a_assert_grep "answer_bad_start: 0/1" "$clean_sweep_summary" "repl user bridge suppresses bad answer starts"
 a2a_assert_grep "answer_quality: any [0-9]+/1, short [0-9]+, question_like 0, label_artifact [0-9]+, notation_artifact [0-9]+, morph_artifact [0-9]+, recipient_artifact [0-9]+, tail_artifact [0-9]+, yes_no_start 0" "$clean_sweep_summary" "repl user bridge suppresses question and yes/no answer forms"
+a2a_assert_grep "answer_quality: any 0/1, short 0, question_like 0, label_artifact 0, notation_artifact 0, morph_artifact 0, recipient_artifact 0, tail_artifact 0" "$clean_sweep_summary" "repl user bridge closes direct answer tails"
 
 life_out="$("$A2A_BIN" "$A2A_MODEL_F16" "resonance" life 2 4 3 2>&1)"
 a2a_assert_grep "δ-life: Game of Life" "$life_out" "life starts"

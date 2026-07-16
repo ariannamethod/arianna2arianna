@@ -2021,6 +2021,10 @@ static void clean_cell_fragment_surface(char *s, size_t cap) {
     close_short_answer_sentence(s, cap);
 }
 
+static void clean_direct_answer_surface(char *s, size_t cap) {
+    clean_cell_fragment_surface(s, cap);
+}
+
 static int cell_fragment_surface_score(const char *s) {
     if (!s) return 1000;
     while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
@@ -2695,7 +2699,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_nbr = user_kv; g_nbr_len = user_klen; g_nbr_shuf = 0; g_xcell = g_user_kv_weight;
             float qent = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, qtemp, g_user_qtop_k, g_user_qrep,
                                     qseed, eos, max_seq, qfrag, sizeof(qfrag), 0, qids, &qn, NULL, NULL, NULL);
-            clean_answer_fragment(qfrag);
+            clean_direct_answer_surface(qfrag, sizeof(qfrag));
             int qscore = answer_candidate_score_semantic(m, tok, qcent, g_user_q, qfrag);
             if (qscore > 0 || answer_fragment_bad(qfrag)) {
                 static const float retry_temp_mul[] = { 0.85f, 0.70f, 0.95f, 0.60f };
@@ -2715,7 +2719,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                     float qent_retry = cell_speak(m, tok, qctx_ids, qnp, qfrag_n, retry_temp, retry_top_k, g_user_qrep,
                                                   retry_seed, eos, max_seq, qfrag_retry, sizeof(qfrag_retry), 0,
                                                   qids_retry, &qn_retry, NULL, NULL, NULL);
-                    clean_answer_fragment(qfrag_retry);
+                    clean_direct_answer_surface(qfrag_retry, sizeof(qfrag_retry));
                     int retry_score = answer_candidate_score_semantic(m, tok, qcent, g_user_q, qfrag_retry);
                     if (retry_score < qscore) {
                         copy_cstr(qfrag, sizeof(qfrag), qfrag_retry);
@@ -2733,7 +2737,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             g_sampler_top_p = save_sampler_top_p;
             g_answer_form_guard = save_form_guard;
             g_nbr = save_nbr; g_nbr_len = save_nbr_len; g_nbr_shuf = save_nbr_shuf; g_field_on = save_field_on; g_xcell = save_xcell;
-            clean_answer_fragment(qfrag_off);
+            clean_direct_answer_surface(qfrag_off, sizeof(qfrag_off));
             float qinfl = qent_off - qent;
             for (int i = 0; hist && i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) hist[qids[i]]++;
             int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", qfrag);
