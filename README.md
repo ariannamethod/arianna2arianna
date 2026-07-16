@@ -124,7 +124,10 @@ the `I_Q^kv` gate; `0` keeps the default auto pool (`qloop route limit + 2`,
 capped at 8). `A2A_QLOOP_STATEMENT_ROUTES=1` is a diagnostic fallback that
 uses clean non-question source cells (`qmarks=0`) only when the normal
 question-route picker is silent for that round; it does not replace question
-routing and is off by default. KV-backed cell qloop answers are
+routing and is off by default. `A2A_QLOOP_STATEMENT_POOL` caps only that
+statement fallback's pre-generation candidate pool; `0` inherits the normal
+candidate pool, while small values such as `1` or `2` are useful when measuring
+statement-route latency. KV-backed cell qloop answers are
 admitted only when
 `I_Q^kv >= A2A_QLOOP_MIN_IQ` (default `0.0`) and the generated answer passes the
 same qloop surface-debt guard used by `field_sweep.sh` (`short`, `tail`,
@@ -153,6 +156,7 @@ field outputs next to each TSV. Defaults are intentionally small:
 `A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`,
 `A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`,
 `A2A_FIELD_QLOOP_CANDIDATE_POOLS="0"`,
+`A2A_FIELD_QLOOP_STATEMENT_POOLS="0"`,
 `A2A_FIELD_QLOOP_STATEMENT_ROUTES="0"`, and `A2A_FIELD_ROUNDS_LIST="3"`.
 Use `prompts/kv_influence.txt` as the small canonical smoke set and
 `prompts/field_broaden.txt` for broader recipient-lock, mechanism,
@@ -167,6 +171,7 @@ A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_TCONF_ADAPTS="0 1" 
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_TCONF_ADAPTS="1" A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.30 -0.10 0 0.10" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_MIN_IQS="0 0.25 0.50 0.75" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_UNIQUE_ASKERS="0 1" make field-grid
+A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_STATEMENT_POOLS="0 1 2" A2A_FIELD_QLOOP_STATEMENT_ROUTES="1" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_STATEMENT_ROUTES="0 1" make field-grid
 A2A_FIELD_ROUNDS_LIST="1 2 3" A2A_FIELD_CELLS=4 A2A_FIELD_FRAG=12 make field-grid
 A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="1 2" make field-grid

@@ -3404,3 +3404,35 @@ nearly half the accepted route mass while keeping accepted qloop surface debt at
 zero. The same run also proves the cost problem: one broaden prompt hit 118s,
 so statement-route promotion must consider latency and raw voice reads, not only
 `field_score`.
+
+## 2026-07-16 - Statement fallback candidate-pool cap
+
+### Context
+
+Statement fallback was useful but expensive. The first instrumentation run
+showed that inherited candidate pooling could spend many generations on gated
+statement answers. The fallback needed its own cap so question-route tuning and
+statement-route tuning could be separated.
+
+### Change
+
+- Added `A2A_QLOOP_STATEMENT_POOL`; `0` preserves the prior behavior by
+  inheriting the normal qloop candidate pool, while positive values cap only the
+  clean non-question fallback pass.
+- Fixed `insert_qloop_route()` so a one-slot route pool does not compare the
+  first insertion against an uninitialized score slot.
+- Added `A2A_FIELD_QLOOP_STATEMENT_POOLS` to `tools/field_grid.sh` and the
+  compact grid contract.
+
+Focused smoke comparison on `prompts/kv_influence.txt`:
+
+```text
+statement_pool  routes  gated  stmt_acc/gate  efficiency  I_Q^kv  field_score  elapsed_avg/max
+0 inherit       13      8      5/5            0.619       +1.670  +2.128       10.2/12.0
+1              12      4      4/1            0.750       +1.427  +2.145        9.8/13.0
+2              13      5      5/2            0.722       +1.400  +2.142       10.2/13.0
+```
+
+Interpretation: `statement_pool=1` is the first low-cost candidate for the next
+broaden-set voice read. It reduces gated statement churn while preserving full
+prompt coverage and zero counted qloop surface debt on the smoke set.

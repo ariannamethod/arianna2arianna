@@ -953,6 +953,7 @@ static float g_qloop_tconf_adapt_weight = -0.10f;
 static int   g_qloop_unique_asker = 0;     /* 1 = widened qloop may not fan one asking cell into multiple routes */
 static int   g_qloop_candidate_pool = 0;   /* 0=auto max_routes+2; >0 = inspect this many pre-generation routes */
 static int   g_qloop_statement_routes = 0; /* 1 = fallback to clean non-question cells when question routes are silent */
+static int   g_qloop_statement_pool = 0;   /* 0=inherit candidate pool; >0 = cap statement fallback candidates */
 static int g_chorus = 1;       /* 1 = CHORUS (each cell answers the SAME prompt from its own angle, neighbour-aware
                                 * via cross-cell, NOT text); 0 = legacy RELAY (cascade continuation). Default chorus. */
 /* cross-cell repetition penalty: a cell hears neighbours (cross-cell K/V) but must not LITERALLY echo their
@@ -1002,6 +1003,7 @@ static void load_qloop_route_env(void) {
     g_qloop_unique_asker = env_int_clamped("A2A_QLOOP_UNIQUE_ASKER", 0, 0, 1);
     g_qloop_candidate_pool = env_int_clamped("A2A_QLOOP_CANDIDATE_POOL", 0, 0, 8);
     g_qloop_statement_routes = env_int_clamped("A2A_QLOOP_STATEMENT_ROUTES", 0, 0, 1);
+    g_qloop_statement_pool = env_int_clamped("A2A_QLOOP_STATEMENT_POOL", 0, 0, 8);
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -2313,8 +2315,13 @@ static int insert_qloop_route(int *out_q, int *out_t, float *out_score, float *o
     int dup = 0;
     for (int i = 0; i < *n; i++) if (out_t[i] == t || (out_q[i] == q && out_t[i] == t)) dup = 1;
     if (dup) return 0;
-    int pos = *n < max_routes ? (*n)++ : max_routes - 1;
-    if (*n == max_routes && score <= out_score[pos]) return 0;
+    int pos;
+    if (*n < max_routes) {
+        pos = (*n)++;
+    } else {
+        pos = max_routes - 1;
+        if (score <= out_score[pos]) return 0;
+    }
     out_q[pos] = q; out_t[pos] = t; out_score[pos] = score;
     if (out_dist) out_dist[pos] = dist;
     if (out_qopen) out_qopen[pos] = qopen;
@@ -2339,10 +2346,14 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
     int lim = n_cells < 8 ? n_cells : 8;
     int n = 0;
     if (!cent || lim < 2) return 0;
+    int statement_limit = g_qloop_statement_pool > 0 ? g_qloop_statement_pool : max_routes;
+    if (statement_limit > max_routes) statement_limit = max_routes;
+    if (statement_limit < 1) statement_limit = 1;
     /* Same-asker uniqueness is an acceptance policy, not a pre-generation
      * filter: a gated first target must not erase that asker's fallback route. */
     for (int pass = 0; pass < 2; pass++) {
         if (pass == 1 && (!g_qloop_statement_routes || n > 0)) break;
+        int pass_limit = pass == 1 ? statement_limit : max_routes;
         for (int q = 0; q < lim; q++) {
             int qmarks = frag_question_count(frag[q]);
             if (pass == 0) {
@@ -2352,7 +2363,7 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
             }
             float qopen = g_cell_ent[q] / 8.0f; if (qopen > 1.0f) qopen = 1.0f;
             for (int t = 0; t < lim; t++) if (t != q) {
-                if (pass == 1 && n >= max_routes) break;
+                if (pass == 1 && n >= pass_limit) break;
                 float dist = 1.0f - vec_cosine(cent + (size_t)q * embed, cent + (size_t)t * embed, embed);
                 float confidence = 1.0f / (1.0f + g_cell_ent[t]);
                 float tconf_weight = (g_qloop_tconf_adapt && g_qloop > 1) ? g_qloop_tconf_adapt_weight : g_qloop_tconf_weight;
@@ -2361,7 +2372,7 @@ static int pick_question_routes(const char frag[8][1024], const float *cent, int
                 else score -= 0.03f;
                 if (score < g_qloop_min) continue;
                 insert_qloop_route(out_q, out_t, out_score, out_dist, out_qopen, out_tconf, out_qmarks,
-                                   &n, max_routes, q, t, score, dist, qopen, confidence, qmarks);
+                                   &n, pass_limit, q, t, score, dist, qopen, confidence, qmarks);
             }
         }
     }

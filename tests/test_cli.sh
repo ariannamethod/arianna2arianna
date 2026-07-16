@@ -66,6 +66,7 @@ a2a_assert_grep "A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS" "$out" "field grid help na
 a2a_assert_grep "A2A_FIELD_QLOOP_MIN_IQS" "$out" "field grid help names qloop influence threshold grid"
 a2a_assert_grep "A2A_FIELD_QLOOP_UNIQUE_ASKERS" "$out" "field grid help names qloop unique-asker policy grid"
 a2a_assert_grep "A2A_FIELD_QLOOP_CANDIDATE_POOLS" "$out" "field grid help names qloop candidate-pool grid"
+a2a_assert_grep "A2A_FIELD_QLOOP_STATEMENT_POOLS" "$out" "field grid help names qloop statement-pool grid"
 a2a_assert_grep "A2A_FIELD_QLOOP_STATEMENT_ROUTES" "$out" "field grid help names qloop statement-route grid"
 a2a_assert_grep "A2A_FIELD_ROUNDS_LIST" "$out" "field grid help names rounds grid"
 a2a_assert_grep "A2A_FIELD_KEEP_RAW" "$out" "field grid help names raw capture knob"
