@@ -70,7 +70,9 @@ coupling and qloop enabled, then keeps the recent text trajectory as context for
 the next line. If the user line is a question, REPL also builds a direct
 user-question KV route and prints it as `qloop user→cN [user-kv]` with
 `I_U^kv`, the entropy influence of the user's hidden trajectory, plus the
-matched `no-user-kv` answer fragment from the same seed.
+matched `no-user-kv` answer fragment from the same seed. `A2A_REPL_QLOOP`
+controls the REPL cell-question route limit (`1` by default, `2` for widened
+dialogue probes).
 
 `field` and `life` append generated traces to `FIELDLOG.md`. In the default
 chorus, text-order `Δ_R` is marked `n/a`; the neighbour probe is `Δ_R^kv`
@@ -160,6 +162,15 @@ the no-user-KV shadow answer, plus diagnostic `answer_quality` flags for short,
 question-like, label-artifact, notation-artifact, morphology/glue-artifact,
 false-familiarity recipient-artifact, missing-punctuation/terminal
 tail-artifact, yes/no-start, and repeated-word snippets.
+
+`make repl-dialogue-compare` runs the same dialogue probe corpus twice and
+compares candidate against baseline. By default it compares the current REPL
+path (`A2A_REPL_QLOOP=1`, `A2A_QLOOP_TCONF_ADAPT=0`) against the widened field
+candidate (`A2A_REPL_QLOOP=2`, `A2A_QLOOP_TCONF_ADAPT=1`,
+`A2A_QLOOP_TCONF_WEIGHT=0.20`). It writes baseline/candidate TSVs plus a
+combined compare summary under ignored `runs/`. Override with
+`A2A_DIALOGUE_BASE_QLOOP`, `A2A_DIALOGUE_BASE_ADAPT`,
+`A2A_DIALOGUE_CANDIDATE_QLOOP`, and `A2A_DIALOGUE_CANDIDATE_ADAPT`.
 
 `make repl-temp-sweep` runs the same direct-user bridge metrics across sampler
 settings and prints a compact table while writing each TSV/summary under

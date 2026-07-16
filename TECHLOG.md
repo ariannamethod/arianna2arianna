@@ -2687,3 +2687,65 @@ Reading: `xcell=0.05` is rejected for prompt coverage despite clean gates.
 debt. `xcell=0.02 adapt=1` is the conservative candidate: full prompt coverage,
 zero surface debt, better `I_Q^kv` than fixed routing, and only a small qloop
 density drop.
+
+## 2026-07-16 - REPL dialogue compare harness
+
+### Context
+
+The field candidate (`xcell=0.02`, widened `qloop=2`, adaptive tconf) cannot be
+validated by free chat alone. It needs the same dialogue questions across the
+current REPL path and the candidate path, with route/answer quality metrics and
+per-question deltas.
+
+Also, the previous REPL hardcoded `qloop=1`, so `A2A_QLOOP_TCONF_ADAPT=1` could
+not affect dialogue at all. Any baseline-vs-candidate dialogue comparison would
+have been misleading.
+
+### Change
+
+- Added `A2A_REPL_QLOOP` (default `1`) so the REPL can run widened qloop probes
+  without changing the default dialogue path.
+- Added `tools/repl_dialogue_compare.sh`.
+- Added `make repl-dialogue-compare`.
+- Default compare:
+  - baseline: `A2A_REPL_QLOOP=1`, `A2A_QLOOP_TCONF_ADAPT=0`;
+  - candidate: `A2A_REPL_QLOOP=2`, `A2A_QLOOP_TCONF_ADAPT=1`,
+    `A2A_QLOOP_TCONF_WEIGHT=0.20`.
+
+The harness writes baseline/candidate TSVs and a combined compare summary under
+ignored `runs/`. This is the local dialogue lab before any optional GPT/API
+judge is involved.
+
+### First Dialogue Compare
+
+`make repl-dialogue-compare` on `prompts/repl_probe_regression.txt`
+(`30` prompts, `cells=3`, `frag=4`, `rounds=1`):
+
+```text
+metric                         baseline q1/adapt0   candidate q2/adapt1
+user_bridge                    30/30               30/30
+avg_routes                     1.000               1.000
+I_U^kv avg                     +0.464              +0.483
+I_N^kv avg                     -0.050              -0.050
+route_targets                  c0:19 c1:7 c2:4     c0:19 c1:7 c2:4
+route_score avg                0.512               0.512
+answer_quality any             24/30               25/30
+morph_artifact                 3                   3
+recipient_artifact             0                   0
+tail_artifact                  23                  24
+answer_changed                 -                   1/30
+```
+
+The only changed direct answer was:
+
+```text
+Q: A paper is a field of resonance, but who is resonating when no reader is present?
+baseline:  a field that vibrates, but no particular being.
+candidate: a field that vibrates, but no particular state of being present or absent,
+```
+
+Reading: the field-level qloop/tconf candidate is almost orthogonal to direct
+REPL answers on this corpus. It slightly raises `I_U^kv`, but does not improve
+dialogue quality and adds one tail artifact. The next dialogue work should
+therefore target direct user-bridge sampler/format/tail closure, not the
+cell-qloop route prior.

@@ -2877,7 +2877,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     g_xrep = 1.3f;
     g_kvshuf = 1;
     g_kvpos = 0;
-    g_qloop = 1;
+    g_qloop = env_int_clamped("A2A_REPL_QLOOP", 1, 0, 2);
     load_qloop_route_env();
     load_user_bridge_sampling_env();
     load_repl_prompt_env();

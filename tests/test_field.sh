@@ -118,6 +118,10 @@ repl_qa_out="$(printf "Why does the field remember?\n:q\n" | A2A_REPL_PROMPT_FOR
 a2a_assert_grep "replFmt=qa" "$repl_qa_out" "repl accepts Q/A outer prompt format"
 a2a_assert_grep "qloop user.*\\[user-kv\\]" "$repl_qa_out" "Q/A REPL format keeps user question bridge"
 
+repl_qloop2_out="$(printf "Why does the field remember?\n:q\n" | A2A_REPL_QLOOP=2 "$A2A_BIN" "$A2A_MODEL_F16" repl 3 4 1 2>&1)"
+a2a_assert_grep "qloop=2" "$repl_qloop2_out" "repl accepts qloop route limit override"
+a2a_assert_grep "qloop user.*\\[user-kv\\]" "$repl_qloop2_out" "qloop override keeps user question bridge"
+
 repl_sweep_prompts="$(mktemp)"
 printf "Why does the field remember?\n" > "$repl_sweep_prompts"
 repl_sweep_out="$(A2A_CELLS=3 A2A_FRAG=4 A2A_ROUNDS=1 bash "$A2A_ROOT/tools/repl_question_sweep.sh" "$repl_sweep_prompts" 2>&1)"
