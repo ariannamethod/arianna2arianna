@@ -3367,3 +3367,40 @@ restores full broaden coverage without writing the known frame/recipient/tail
 debt into chorus memory. It is not a production default yet. The long broaden
 tail and the higher gate rate mean the next layer should tune statement-route
 voice/latency separately before promoting it.
+
+## 2026-07-16 - Statement-route split and latency instrumentation
+
+### Context
+
+The previous statement fallback read restored broaden-set coverage, but route
+count alone hid two important questions: how much of the route mass came from
+statement-shaped cells, and how expensive the setting became on the slowest
+prompts.
+
+### Change
+
+- `tools/field_sweep.sh` now emits `qloop_stmt_routes`, `qloop_stmt_gated`, and
+  per-prompt `elapsed_sec`.
+- `tools/field_tsv_summary.sh` now prints `qloop_statement` and `latency`
+  aggregate lines.
+- `tools/field_grid.sh` carries `qloop_stmt_routes`, `qloop_stmt_gated`,
+  `elapsed_avg`, and `elapsed_max` into the compact grid.
+
+Focused broaden diagnostic:
+
+```text
+setting: xcell=0.02 qloop=2 adapt=1 adapt_weight=-0.10 min_iq=0 unique_asker=1 statement_routes=1 rounds=3 cells=4 frag=12
+rows: 20
+qloop: routes 59, kv 59, gated 34, prompts 20/20
+qloop_statement: accepted 26/59, gated 24/34
+qloop_quality: any 0/59
+I_Q^kv: avg +1.128, pos 59, neg 0, low 10, strong 24
+field_score: +2.149
+latency: avg_sec 27.500, max_sec 118.000
+```
+
+Interpretation: the statement fallback is not just cosmetic; it accounts for
+nearly half the accepted route mass while keeping accepted qloop surface debt at
+zero. The same run also proves the cost problem: one broaden prompt hit 118s,
+so statement-route promotion must consider latency and raw voice reads, not only
+`field_score`.

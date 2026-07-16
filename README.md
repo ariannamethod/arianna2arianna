@@ -90,7 +90,8 @@ it should stay finite and non-zero.
 `make field-sweep` runs the same prompts through full multi-round `field` mode
 and prints a final-round TSV with settling (`d_r`, floor, margin), neighbour
 KV controls (`Δ_R^kv`, floor, margin, `I_N^kv`), field disagreement (`D_R`,
-`Dpos`), qloop route/gate counts, qloop route-score averages
+`Dpos`), qloop route/gate counts including statement-route split
+(`qloop_stmt_routes`, `qloop_stmt_gated`), qloop route-score averages
 (`qloop_score_avg`, `qloop_gate_score_avg`), qloop route-score component
 averages (`qloop_dist_avg`, `qloop_qopen_avg`, `qloop_tconf_avg`,
 `qloop_qmarks_avg`, plus gated counterparts), qloop answer quality counters
@@ -98,7 +99,8 @@ averages (`qloop_dist_avg`, `qloop_qopen_avg`, `qloop_tconf_avg`,
 `qloop_quality`, `qloop_tail`, `qloop_morph`, `qloop_label`, `qloop_short`,
 `qloop_question`, `qloop_recipient`, `qloop_words_avg`), and ordinary
 cell-surface quality counters (`cell_quality`, `cell_tail`, `cell_morph`,
-`cell_label`, `cell_short`).
+`cell_label`, `cell_short`). `elapsed_sec` records per-prompt runtime so route
+settings can be compared by cost as well as voice quality.
 `cell_question` and `cell_words_avg` are reported separately because questions
 can be valid qloop material rather than surface debt, and answer density helps
 catch settings that look clean only because the chorus became thin;
@@ -136,14 +138,16 @@ accepted chorus.
 `make field-grid` runs `field_sweep.sh` across field-level settings, writes each
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
 comparing qloop coverage, qloop gate pressure, qloop route efficiency,
-accepted/gated qloop route scores and component profiles, qloop/cell surface
-debt, qloop/cell answer density, `I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`,
-`D_R`, and `Dpos`. The compact table also reports
+accepted/gated qloop route scores and component profiles, qloop statement-route
+accepted/gated splits, qloop/cell surface debt, qloop/cell answer density,
+`I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`, `D_R`, and `Dpos`. The compact table
+also reports
 qloop/cell debt rates, `I_N^kv` sign balance, `I_Q^kv` sign balance plus
 weak/strong positive bands, `d_margin` sign balance, and a rough `field_score`
-for sorting candidate settings before reading the raw samples. Set
-`A2A_FIELD_KEEP_RAW=1` to save the full per-prompt field outputs next to each
-TSV. Defaults are intentionally small:
+for sorting candidate settings before reading the raw samples. `elapsed_avg`
+and `elapsed_max` expose slow prompt/settings combinations before they become
+production defaults. Set `A2A_FIELD_KEEP_RAW=1` to save the full per-prompt
+field outputs next to each TSV. Defaults are intentionally small:
 `A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`,
 `A2A_FIELD_QLOOP_TCONFS="0.20"`, `A2A_FIELD_QLOOP_TCONF_ADAPTS="0"`,
 `A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`,

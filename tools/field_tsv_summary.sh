@@ -57,7 +57,9 @@ awk -F '\t' '
         for (i = 1; i <= NF; i++) idx[$i] = i
         col("prompt"); col("kv_influence"); col("d_r"); col("d_margin")
         col("disso"); col("dpos"); col("qloop_routes"); col("qloop_kv_routes")
-        col("qloop_triggers"); col("qloop_gated"); col("qloop_iq_avg"); col("qloop_quality")
+        col("qloop_triggers"); col("qloop_gated")
+        col("qloop_stmt_routes"); col("qloop_stmt_gated")
+        col("qloop_iq_avg"); col("qloop_quality")
         col("qloop_score_avg"); col("qloop_gate_score_avg")
         col("qloop_dist_avg"); col("qloop_gate_dist_avg")
         col("qloop_qopen_avg"); col("qloop_gate_qopen_avg")
@@ -71,6 +73,7 @@ awk -F '\t' '
         col("cell_fragments"); col("cell_words_avg")
         col("cell_quality"); col("cell_tail"); col("cell_morph")
         col("cell_label"); col("cell_short"); col("cell_question")
+        col("elapsed_sec")
         next
     }
     {
@@ -82,6 +85,8 @@ awk -F '\t' '
         qloop_triggers += $(col("qloop_triggers")) + 0
         qgate = $(col("qloop_gated")) + 0
         qloop_gated += qgate
+        qloop_stmt_routes += $(col("qloop_stmt_routes")) + 0
+        qloop_stmt_gated += $(col("qloop_stmt_gated")) + 0
         if (qroutes > 0) qloop_prompt_rows++
 
         v = $(col("qloop_score_avg"))
@@ -152,6 +157,16 @@ awk -F '\t' '
         }
         add_numeric("disso", num_sum, num_n)
         add_numeric("dpos", num_sum, num_n)
+        v = $(col("elapsed_sec"))
+        if (numeric(v)) {
+            elapsed_sum += v + 0
+            elapsed_n++
+            if (!elapsed_seen || v + 0 > elapsed_max) {
+                elapsed_max = v + 0
+                elapsed_max_prompt = $(col("prompt"))
+                elapsed_seen = 1
+            }
+        }
     }
     END {
         qprompt_rate = rows ? qloop_prompt_rows / rows : 0
@@ -175,6 +190,8 @@ awk -F '\t' '
         printf "rows: %d\n", rows
         printf "qloop: routes %d, kv %d, triggers %d, gated %d, prompts %d/%d\n",
             qloop_routes, qloop_kv_routes, qloop_triggers, qloop_gated, qloop_prompt_rows, rows
+        printf "qloop_statement: accepted %d/%d, gated %d/%d\n",
+            qloop_stmt_routes, qloop_routes, qloop_stmt_gated, qloop_gated
         printf "qloop_score: accepted avg %s, gated avg %s\n",
             qscore_n ? sprintf("%.3f", qscore_sum / qscore_n) : "nan",
             qgate_score_n ? sprintf("%.3f", qgate_score_sum / qgate_score_n) : "nan"
@@ -200,6 +217,10 @@ awk -F '\t' '
             num_n["disso"] ? sprintf("%.3f", num_sum["disso"] / num_n["disso"]) : "nan",
             num_n["dpos"] ? sprintf("%.2f", num_sum["dpos"] / num_n["dpos"]) : "nan"
         printf "settling: d_margin pos %d, neg %d, zero %d\n", dm_pos, dm_neg, dm_zero
+        printf "latency: avg_sec %.3f, max_sec %.3f :: %s\n",
+            elapsed_n ? elapsed_sum / elapsed_n : 0,
+            elapsed_seen ? elapsed_max : 0,
+            elapsed_seen ? elapsed_max_prompt : "n/a"
         printf "field_score: %+.3f (rough rank: coverage + influence - debt - disagreement)\n", field_score
     }
 ' "$tsv"

@@ -100,6 +100,8 @@ compact_line() {
             qtrig_sum += $(col("qloop_triggers")) + 0
             qgate = $(col("qloop_gated")) + 0
             qgate_sum += qgate
+            qstmt_sum += $(col("qloop_stmt_routes")) + 0
+            qstmt_gate_sum += $(col("qloop_stmt_gated")) + 0
             if (qroutes > 0) qprompt_rows++
             v = $(col("qloop_score_avg"))
             if (numeric(v) && qroutes > 0) { qscore_sum += (v + 0) * qroutes; qscore_n += qroutes }
@@ -152,6 +154,15 @@ compact_line() {
             if (numeric(v)) { dsum += v + 0; d_n++ }
             v = $(col("dpos"))
             if (numeric(v)) { dpos_sum += v + 0; dpos_n++ }
+            v = $(col("elapsed_sec"))
+            if (numeric(v)) {
+                elapsed_sum += v + 0
+                elapsed_n++
+                if (!elapsed_seen || v + 0 > elapsed_max) {
+                    elapsed_max = v + 0
+                    elapsed_seen = 1
+                }
+            }
         }
         END {
             qprompt_rate = rows ? qprompt_rows / rows : 0
@@ -176,9 +187,9 @@ compact_line() {
                         - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * d_avg - 0.25 * pospart(dm_avg) \
                         - 0.2 * in_neg_rate - 0.4 * iq_neg_rate - 0.2 * dm_pos_rate - 0.15 * qgate_rate
 
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%s\t%d/%d\t%s\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\n",
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%s\t%d/%d\t%s\t%d/%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%s\t%s\t%s\n",
                 xcell, qloop, tconf, adapt, adapt_weight, min_iq, unique_asker, candidate_pool, statement_routes, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
-                qgate_sum, qeff_rate, qscore_avg, qgate_score_avg, qprofile, qgate_profile,
+                qgate_sum, qstmt_sum, qstmt_gate_sum, qeff_rate, qscore_avg, qgate_score_avg, qprofile, qgate_profile,
                 qprompt_rows, rows, avg_text("qwords"), qquality_sum, qroutes_sum,
                 avg_text("cwords"), cquality_sum, cfrag_sum,
                 qprompt_rate, qdebt_rate, cdebt_rate, in_pos, in_neg, in_zero,
@@ -191,12 +202,15 @@ compact_line() {
                 dm_pos, dm_neg, dm_zero,
                 d_n ? sprintf("%.3f", dsum / d_n) : "nan",
                 dpos_n ? sprintf("%.2f", dpos_sum / dpos_n) : "nan",
-                field_score, raw, tsv, summary
+                field_score,
+                elapsed_n ? sprintf("%.3f", elapsed_sum / elapsed_n) : "nan",
+                elapsed_seen ? sprintf("%.3f", elapsed_max) : "nan",
+                raw, tsv, summary
         }
     ' "$tsv_file"
 }
 
-printf "xcell\tqloop\tqloop_tconf_weight\tqloop_tconf_adapt\tqloop_tconf_adapt_weight\tqloop_min_iq\tqloop_unique_asker\tqloop_candidate_pool\tqloop_statement_routes\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_words_avg\tqloop_quality\tcell_words_avg\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\ti_q_bands\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\traw_dir\ttsv\tsummary\n"
+printf "xcell\tqloop\tqloop_tconf_weight\tqloop_tconf_adapt\tqloop_tconf_adapt_weight\tqloop_min_iq\tqloop_unique_asker\tqloop_candidate_pool\tqloop_statement_routes\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_words_avg\tqloop_quality\tcell_words_avg\tcell_quality\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\ti_q_bands\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\telapsed_avg\telapsed_max\traw_dir\ttsv\tsummary\n"
 
 for xcell in $XCELLS; do
     for qloop in $QLOOPS; do
