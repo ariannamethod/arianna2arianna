@@ -48,7 +48,7 @@ raw_name() {
     printf "%03d_%s.txt" "$seq" "$slug"
 }
 
-printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_iq_low\tqloop_iq_strong\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_recipient\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_words_avg\tbase_ms\tbase_gen\tbase_retry\tbase_probe\tbase_rescue\tbase_fail\tqloop_ms\tqloop_gen\tqloop_retry\telapsed_sec\n"
+printf "prompt\tmode\tcells\tfrag\trounds\tavg_entropy\td_r\td_floor\td_margin\tkv_delta\tkv_floor\tkv_margin\tkv_influence\tdisso\tdpos\tqloop_routes\tqloop_kv_routes\tqloop_triggers\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_score_avg\tqloop_gate_score_avg\tqloop_dist_avg\tqloop_gate_dist_avg\tqloop_qopen_avg\tqloop_gate_qopen_avg\tqloop_tconf_avg\tqloop_gate_tconf_avg\tqloop_qmarks_avg\tqloop_gate_qmarks_avg\tqloop_iq_avg\tqloop_iq_pos\tqloop_iq_neg\tqloop_iq_zero\tqloop_iq_low\tqloop_iq_strong\tqloop_quality\tqloop_tail\tqloop_morph\tqloop_label\tqloop_short\tqloop_question\tqloop_recipient\tqloop_lang_mismatch\tqloop_words_avg\tcell_fragments\tcell_quality\tcell_tail\tcell_morph\tcell_label\tcell_short\tcell_question\tcell_lang_mismatch\tcell_words_avg\tbase_ms\tbase_gen\tbase_retry\tbase_probe\tbase_rescue\tbase_fail\tqloop_ms\tqloop_gen\tqloop_retry\telapsed_sec\n"
 
 raw_seq=0
 while IFS= read -r prompt || [[ -n "$prompt" ]]; do
@@ -64,7 +64,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
     line="$(printf "%s\n" "$out" | grep "→ round" | tail -n 1 || true)"
     if [[ -z "$line" ]]; then
         safe_prompt="${prompt//$'\t'/ }"
-        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\tnan\tnan\t0\t0\t0\t0\t0\tnan\t0\t0\t%s\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS" "$elapsed_sec"
+        printf "%s\tERROR\t%s\t%s\t%s\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\tnan\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\tnan\t0\t0\t0\t0\t0\t0\t0\t0\tnan\tnan\t0\t0\t0\t0\t0\tnan\t0\t0\t%s\n" "$safe_prompt" "$CELLS" "$FRAG" "$ROUNDS" "$elapsed_sec"
         continue
     fi
 
@@ -102,13 +102,23 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", base, base_gen, base_retry, base_probe, base_rescue, base_fail, qloop, gen, retry
         }
     ')"
-    qloop_metrics="$(printf "%s\n" "$out" | awk '
+    qloop_metrics="$(printf "%s\n" "$out" | awk -v prompt="$prompt" '
         function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
         function word_count(s,     a, n, i, c) {
             n = split(s, a, /[^A-Za-z]+/)
             c = 0
             for (i = 1; i <= n; i++) if (a[i] != "") c++
             return c
+        }
+        function non_ascii_count(s,     t) {
+            t = s
+            return gsub(/[^\001-\177]/, "", t)
+        }
+        function language_mismatch(s,     wc, na) {
+            if (non_ascii_count(prompt) < 4) return 0
+            na = non_ascii_count(s)
+            wc = word_count(s)
+            return na < 4 || (wc >= 3 && na < 8)
         }
         function terminal_function_word(w) {
             w = tolower(w)
@@ -195,7 +205,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             }
         }
         function avg_or_nan(sum, n) { return n ? sprintf("%.3f", sum / n) : "nan" }
-        function add_answer(s,     ans, wc, flagged, shortf, tailf, morphf, labelf, questionf, recipientf) {
+        function add_answer(s,     ans, wc, flagged, shortf, tailf, morphf, labelf, questionf, recipientf, langf) {
             ans = trim(s)
             if (ans == "") return
             n++
@@ -207,13 +217,15 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             labelf = has_label_artifact(ans)
             questionf = (index(ans, "?") > 0)
             recipientf = has_recipient_artifact(ans)
+            langf = language_mismatch(ans)
             if (shortf) short_n++
             if (tailf) tail_n++
             if (morphf) morph_n++
             if (labelf) label_n++
             if (questionf) question_n++
             if (recipientf) recipient_n++
-            flagged = shortf || tailf || morphf || labelf || questionf || recipientf
+            if (langf) lang_n++
+            flagged = shortf || tailf || morphf || labelf || questionf || recipientf || langf
             if (flagged) quality_n++
         }
         /qloop c[0-9]/ {
@@ -249,23 +261,33 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             gate_score_avg = gate_score_n ? sprintf("%.3f", gate_score_sum / gate_score_n) : "nan"
             avg = iq_n ? sprintf("%+.3f", iq_sum / iq_n) : "nan"
             words_avg = n ? sprintf("%.3f", words_sum / n) : "nan"
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s",
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s",
                 score_avg, gate_score_avg,
                 avg_or_nan(dist_sum, dist_n), avg_or_nan(gate_dist_sum, gate_dist_n),
                 avg_or_nan(qopen_sum, qopen_n), avg_or_nan(gate_qopen_sum, gate_qopen_n),
                 avg_or_nan(tconf_sum, tconf_n), avg_or_nan(gate_tconf_sum, gate_tconf_n),
                 avg_or_nan(qmarks_sum, qmarks_n), avg_or_nan(gate_qmarks_sum, gate_qmarks_n),
                 avg, iq_pos, iq_neg, iq_zero, iq_low, iq_strong,
-                quality_n, tail_n, morph_n, label_n, short_n, question_n, recipient_n, words_avg
+                quality_n, tail_n, morph_n, label_n, short_n, question_n, recipient_n, lang_n, words_avg
         }
     ')"
-    surface_metrics="$(printf "%s\n" "$out" | awk '
+    surface_metrics="$(printf "%s\n" "$out" | awk -v prompt="$prompt" '
         function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
         function word_count(s,     a, n, i, c) {
             n = split(s, a, /[^A-Za-z]+/)
             c = 0
             for (i = 1; i <= n; i++) if (a[i] != "") c++
             return c
+        }
+        function non_ascii_count(s,     t) {
+            t = s
+            return gsub(/[^\001-\177]/, "", t)
+        }
+        function language_mismatch(s,     wc, na) {
+            if (non_ascii_count(prompt) < 4) return 0
+            na = non_ascii_count(s)
+            wc = word_count(s)
+            return na < 4 || (wc >= 3 && na < 8)
         }
         function terminal_function_word(w) {
             w = tolower(w)
@@ -326,7 +348,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             sub(/[ \t]+\[entropy=.*/, "", s)
             return trim(s)
         }
-        function add_fragment(s,     f, wc, flagged, shortf, tailf, morphf, labelf) {
+        function add_fragment(s,     f, wc, flagged, shortf, tailf, morphf, labelf, langf) {
             f = strip_diag(s)
             if (f == "") return
             n++
@@ -336,12 +358,14 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
             tailf = has_tail_artifact(f)
             morphf = has_morph_artifact(f)
             labelf = has_label_artifact(f)
+            langf = language_mismatch(f)
             if (shortf) short_n++
             if (tailf) tail_n++
             if (morphf) morph_n++
             if (labelf) label_n++
             if (index(f, "?") > 0) question_n++
-            flagged = shortf || tailf || morphf || labelf
+            if (langf) lang_n++
+            flagged = shortf || tailf || morphf || labelf || langf
             if (flagged) quality_n++
         }
         /^[ \t]*r[0-9]+ cell [0-9]+ \(T=/ {
@@ -359,7 +383,7 @@ while IFS= read -r prompt || [[ -n "$prompt" ]]; do
         END {
             if (in_cell) add_fragment(frag)
             words_avg = n ? sprintf("%.3f", words_sum / n) : "nan"
-            printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s", n, quality_n, tail_n, morph_n, label_n, short_n, question_n, words_avg
+            printf "%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s", n, quality_n, tail_n, morph_n, label_n, short_n, question_n, lang_n, words_avg
         }
     ')"
 

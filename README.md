@@ -149,8 +149,9 @@ attempt.
 per-setting TSV and summary under ignored `runs/`, and prints a compact TSV for
 comparing qloop coverage, qloop gate pressure, qloop route efficiency,
 accepted/gated qloop route scores and component profiles, qloop statement-route
-accepted/gated splits, qloop/cell surface debt, qloop/cell answer density,
-`I_N^kv`, `I_Q^kv`, `d_r`, `d_margin`, `D_R`, and `Dpos`. The compact table
+accepted/gated splits, qloop/cell surface debt, qloop/cell language mismatch
+on non-ASCII prompts, qloop/cell answer density, `I_N^kv`, `I_Q^kv`, `d_r`,
+`d_margin`, `D_R`, and `Dpos`. The compact table
 also reports
 qloop/cell debt rates, `I_N^kv` sign balance, `I_Q^kv` sign balance plus
 weak/strong positive bands, `d_margin` sign balance, and a rough `field_score`
@@ -159,7 +160,8 @@ for sorting candidate settings before reading the raw samples. `base_ms_avg`,
 `base_fail`, `qloop_ms_avg`, `qloop_ms_max`, `qloop_gen`, and `qloop_retry` show
 whether a slow setting burns time in base generation, cell surface retries,
 diagnostic probes, failed retry churn, or qloop generation; `field_prompt_format`
-records whether base cells saw the prompt as raw text or `Q:/A:` frame;
+records whether base cells saw the prompt as raw text, `Q:/A:` frame, or an
+automatic raw/non-ASCII split;
 `elapsed_avg` and `elapsed_max` expose slow prompt/settings
 combinations before they become production defaults. Set `A2A_FIELD_KEEP_RAW=1`
 to save the full per-prompt field outputs next to each TSV. Defaults are

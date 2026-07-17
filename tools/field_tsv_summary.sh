@@ -71,10 +71,12 @@ awk -F '\t' '
         col("qloop_iq_low"); col("qloop_iq_strong")
         col("qloop_tail"); col("qloop_morph"); col("qloop_label")
         col("qloop_short"); col("qloop_question"); col("qloop_recipient")
+        col("qloop_lang_mismatch")
         col("qloop_words_avg")
         col("cell_fragments"); col("cell_words_avg")
         col("cell_quality"); col("cell_tail"); col("cell_morph")
         col("cell_label"); col("cell_short"); col("cell_question")
+        col("cell_lang_mismatch")
         col("base_ms"); col("base_gen"); col("base_retry"); col("base_probe")
         col("base_rescue"); col("base_fail")
         col("qloop_ms"); col("qloop_gen"); col("qloop_retry")
@@ -125,6 +127,7 @@ awk -F '\t' '
         qloop_short += $(col("qloop_short")) + 0
         qloop_question += $(col("qloop_question")) + 0
         qloop_recipient += $(col("qloop_recipient")) + 0
+        qloop_lang_mismatch += $(col("qloop_lang_mismatch")) + 0
         add_weighted("qloop_words_avg", qroutes, "qwords")
 
         cell_fragments += $(col("cell_fragments")) + 0
@@ -135,6 +138,7 @@ awk -F '\t' '
         cell_label += $(col("cell_label")) + 0
         cell_short += $(col("cell_short")) + 0
         cell_question += $(col("cell_question")) + 0
+        cell_lang_mismatch += $(col("cell_lang_mismatch")) + 0
 
         v = $(col("qloop_iq_avg"))
         if (numeric(v) && qkv > 0) {
@@ -231,10 +235,10 @@ awk -F '\t' '
         printf "qloop_route_profile: accepted d %s, qopen %s, tconf %s, qmarks %s; gated d %s, qopen %s, tconf %s, qmarks %s\n",
             avg_text("dist"), avg_text("qopen"), avg_text("tconf"), avg_text("qmarks"),
             avg_text("gate_dist"), avg_text("gate_qopen"), avg_text("gate_tconf"), avg_text("gate_qmarks")
-        printf "qloop_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d, recipient %d\n",
-            qloop_quality, qloop_routes, qloop_tail, qloop_morph, qloop_label, qloop_short, qloop_question, qloop_recipient
-        printf "cell_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d\n",
-            cell_quality, cell_fragments, cell_tail, cell_morph, cell_label, cell_short, cell_question
+        printf "qloop_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d, recipient %d, lang_mismatch %d\n",
+            qloop_quality, qloop_routes, qloop_tail, qloop_morph, qloop_label, qloop_short, qloop_question, qloop_recipient, qloop_lang_mismatch
+        printf "cell_quality: any %d/%d, tail %d, morph %d, label %d, short %d, question %d, lang_mismatch %d\n",
+            cell_quality, cell_fragments, cell_tail, cell_morph, cell_label, cell_short, cell_question, cell_lang_mismatch
         printf "density: qloop_words_avg %s, cell_words_avg %s\n",
             avg_text("qwords"), avg_text("cwords")
         printf "I_N^kv: avg %s, pos %d, neg %d, zero %d\n",

@@ -945,7 +945,7 @@ static float g_user_kv_weight = 0.05f;
 static int   g_user_answer_tokens = 16;
 static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw */
 static int   g_repl_prompt_format = 0; /* 0=user_arianna, 1=qa */
-static int   g_field_prompt_format = 0; /* 0=raw, 1=qa */
+static int   g_field_prompt_format = 0; /* 0=raw, 1=qa, 2=auto */
 static float g_qloop_min = 0.42f;
 static float g_qloop_min_iq = 0.0f; /* reject KV-backed qloop answers whose asker KV lowers confidence */
 static float g_qloop_tconf_weight = 0.20f; /* route prior: target confidence contribution */
@@ -1015,6 +1015,7 @@ static void load_field_generation_env(void) {
     if (fmt && *fmt) {
         if (strcmp(fmt, "raw") == 0) g_field_prompt_format = 0;
         else if (strcmp(fmt, "qa") == 0) g_field_prompt_format = 1;
+        else if (strcmp(fmt, "auto") == 0) g_field_prompt_format = 2;
         else fprintf(stderr, "warning: ignoring invalid A2A_FIELD_PROMPT_FORMAT=%s\n", fmt);
     }
 }
@@ -1047,13 +1048,29 @@ static const char *repl_prompt_format_name(void) {
 static const char *field_prompt_format_name(void) {
     switch (g_field_prompt_format) {
     case 1: return "qa";
+    case 2: return "auto";
     default: return "raw";
     }
 }
 
+static int prompt_has_non_ascii(const char *s) {
+    if (!s) return 0;
+    while (*s) {
+        if ((unsigned char)*s >= 0x80) return 1;
+        s++;
+    }
+    return 0;
+}
+
+static int field_prompt_uses_qa(const char *prompt) {
+    if (g_field_prompt_format == 1) return 1;
+    if (g_field_prompt_format == 2) return prompt_has_non_ascii(prompt);
+    return 0;
+}
+
 static void build_field_cell_prompt(char *dst, size_t cap, const char *prompt) {
     if (!prompt) prompt = "";
-    if (g_field_prompt_format == 1) snprintf(dst, cap, "Q: %s\nA:", prompt);
+    if (field_prompt_uses_qa(prompt)) snprintf(dst, cap, "Q: %s\nA:", prompt);
     else snprintf(dst, cap, "%s", prompt);
 }
 

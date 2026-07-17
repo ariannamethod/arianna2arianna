@@ -3631,3 +3631,64 @@ it keeps full prompt coverage, beats raw `retry=2` on quality/score, and is far
 cheaper than `qa + retry=4`. Next broaden candidate: compare `raw/retry=4`
 against `qa/retry=2` on the full `field_broaden.txt` set before any default
 move.
+
+Full `field_broaden.txt` read, same qloop candidate:
+
+```text
+fmt  retry  routes/gated  prompts  qloop_quality  cell_quality  I_Q^kv  field_score  base_gen/retry/probe/rescue/fail  qloop_gen/retry  elapsed_avg/max
+raw  4      45/22         20/20    0/45           25/240        +1.146  +2.267       173/93/0/24/7                     99/59            21.2/91.0
+qa   2      47/19         20/20    0/47           29/240        +1.028  +2.303       101/21/0/13/8                     92/52            17.0/63.0
+```
+
+Reading: global `qa` is not the default. It helps the Russian/non-ASCII block
+(`cell_quality` 25 -> 17, `elapsed_max` 91s -> 63s), but introduces English and
+statement-prompt surface debt (`tail`/`label`/`short`) where `raw` was clean.
+The next measured lane is conditional formatting: keep `raw` for ASCII prompts,
+use `Q: ...\nA:` for non-ASCII prompts, and test that `auto` path on the full
+broaden set before moving production defaults.
+
+### Follow-up
+
+- Added `A2A_FIELD_PROMPT_FORMAT=auto`.
+- `auto` keeps ASCII prompts on the raw base-cell path and wraps non-ASCII
+  prompts as `Q: <prompt>\nA:`.
+- `field_grid.sh` accepts `A2A_FIELD_PROMPT_FORMATS="auto"` so the conditional
+  lane is measured exactly like `raw` and `qa`.
+
+Full broaden auto read:
+
+```text
+fmt   retry  routes/gated  prompts  qloop_quality  cell_quality  I_Q^kv  field_score  base_gen/retry/probe/rescue/fail  qloop_gen/retry  elapsed_avg/max
+auto  2      47/28         20/20    0/47           28/240        +1.424  +2.239       110/30/0/16/14                    115/69           15.7/58.0
+auto  4      45/28         20/20    0/45           11/240        +1.225  +2.295       170/90/0/26/4                     123/75           22.0/96.0
+```
+
+Class split for `auto/retry=4`:
+
+```text
+class     prompts  cell_quality  tail  short  base_retry/rescue/fail  elapsed_avg
+ASCII     17       0             0     0      63/21/0                 10.7
+nonASCII  3        11            2     10     27/5/4                  86.0
+```
+
+Reading: `auto/retry=4` is the cleanest full-broaden surface lane so far. It
+preserves raw cleanliness on ASCII prompts and reduces Russian debt from raw's
+25/240 overall to 11/240 overall. The cost is real: latency is worse than
+`raw/retry=4` (22.0s avg vs 21.2s, 96s max vs 91s) and qloop retry pressure is
+higher. Keep default `raw` for now; use `auto/retry=4` as the high-quality
+candidate and next test whether qloop pressure, not base formatting, is the
+remaining bottleneck.
+
+Raw capture on the Russian slice shows the real residual defect: many accepted
+fragments are formally clean but semantically/language wrong for a Russian
+prompt (`Name of code.`, `I don'ts.`, `The word -- to the origin.`). The old
+surface counters saw `short`/`tail`, but not the language mismatch itself.
+
+Follow-up measurement layer:
+
+- Added `qloop_lang_mismatch` and `cell_lang_mismatch` TSV columns.
+- For non-ASCII prompts, a fragment/answer is marked mismatched when it has too
+  little non-ASCII signal, or enough Latin words with only a tiny non-ASCII
+  trace. This is deliberately a heuristic counter, not a language classifier.
+- Language mismatch contributes to qloop/cell quality debt and therefore to
+  `field_score`.
