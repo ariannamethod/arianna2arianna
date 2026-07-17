@@ -158,12 +158,14 @@ for sorting candidate settings before reading the raw samples. `base_ms_avg`,
 `base_ms_max`, `base_gen`, `base_retry`, `base_probe`, `base_rescue`,
 `base_fail`, `qloop_ms_avg`, `qloop_ms_max`, `qloop_gen`, and `qloop_retry` show
 whether a slow setting burns time in base generation, cell surface retries,
-diagnostic probes, failed retry churn, or qloop generation; `elapsed_avg` and
-`elapsed_max` expose slow prompt/settings
+diagnostic probes, failed retry churn, or qloop generation; `field_prompt_format`
+records whether base cells saw the prompt as raw text or `Q:/A:` frame;
+`elapsed_avg` and `elapsed_max` expose slow prompt/settings
 combinations before they become production defaults. Set `A2A_FIELD_KEEP_RAW=1`
 to save the full per-prompt field outputs next to each TSV. Defaults are
 intentionally small:
 `A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`,
+`A2A_FIELD_PROMPT_FORMATS="raw"`,
 `A2A_FIELD_QLOOP_TCONFS="0.20"`, `A2A_FIELD_QLOOP_TCONF_ADAPTS="0"`,
 `A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`,
 `A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`,

@@ -3581,3 +3581,53 @@ the remaining Russian base-cell surface is still mostly bad. Keep runtime defaul
 at `4` for now because it buys qloop routes and three rescues on the hardest
 slice; use `retry=2` as the latency diagnostic lane. The root fix remains
 mixed-language/frame handling, not blind retry growth.
+
+## 2026-07-17 - Field base prompt format axis
+
+### Context
+
+The rescue counters showed that retry policy can only partly recover the
+mixed-language base-cell surface. The next plausible root cause is prompt frame:
+field chorus cells were fed the raw prompt, while other working paths in the
+project often use an explicit `Q: ...\nA:` frame. The code needed a measured
+axis before any default could move.
+
+### Change
+
+- Added `A2A_FIELD_PROMPT_FORMAT=raw|qa` for base-cell chorus prompts.
+- The default remains `raw`.
+- `qa` wraps only the base-cell prompt as `Q: <prompt>\nA:`; qloop/meta contexts
+  are unchanged for this probe.
+- `field_grid.sh` adds `A2A_FIELD_PROMPT_FORMATS` and records
+  `field_prompt_format` in compact TSV rows.
+
+Interpretation: this is a format probe, not a voice-policy change. The next run
+should compare `raw` vs `qa` on the Russian/mixed-language slice with the same
+retry/qloop settings.
+
+Targeted mixed-language slice, `retry=4`, `KVSHUF=0`, same qloop candidate:
+
+```text
+fmt  routes/gated  prompts  qloop_quality  cell_quality  I_Q^kv  field_score  base_gen/retry/probe/rescue/fail  qloop_gen/retry  elapsed_avg/max
+raw  8/2           3/3      0/8            25/36         +0.711  +1.695       42/30/0/3/7                       7/1              82.7/92.0
+qa   8/8           3/3      0/8            11/36         +1.154  +2.040       39/27/0/5/4                       31/17            90.0/104.0
+```
+
+Reading: `qa` is a real quality candidate for the mixed-language base-cell
+surface: it cuts cell debt by more than half and raises measured qloop influence.
+But it also creates much higher qloop gate/retry pressure, so it should not
+become the global default before a broader prompt read and a `qa + retry=2`
+latency check.
+
+`qa + retry=2` on the same slice:
+
+```text
+fmt  retry  routes/gated  prompts  qloop_quality  cell_quality  I_Q^kv  field_score  base_gen/retry/probe/rescue/fail  qloop_gen/retry  elapsed_avg/max
+qa   2      11/4          3/3      0/11           17/36         +1.617  +1.994       21/9/0/3/6                        19/11            57.3/60.0
+```
+
+Reading: `qa + retry=2` is the best current mixed-language diagnostic lane:
+it keeps full prompt coverage, beats raw `retry=2` on quality/score, and is far
+cheaper than `qa + retry=4`. Next broaden candidate: compare `raw/retry=4`
+against `qa/retry=2` on the full `field_broaden.txt` set before any default
+move.

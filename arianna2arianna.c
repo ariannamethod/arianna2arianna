@@ -945,6 +945,7 @@ static float g_user_kv_weight = 0.05f;
 static int   g_user_answer_tokens = 16;
 static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw */
 static int   g_repl_prompt_format = 0; /* 0=user_arianna, 1=qa */
+static int   g_field_prompt_format = 0; /* 0=raw, 1=qa */
 static float g_qloop_min = 0.42f;
 static float g_qloop_min_iq = 0.0f; /* reject KV-backed qloop answers whose asker KV lowers confidence */
 static float g_qloop_tconf_weight = 0.20f; /* route prior: target confidence contribution */
@@ -1009,6 +1010,13 @@ static void load_qloop_route_env(void) {
 
 static void load_field_generation_env(void) {
     g_cell_retry_max = env_int_clamped("A2A_CELL_RETRY_MAX", 4, 1, 4);
+    const char *fmt = getenv("A2A_FIELD_PROMPT_FORMAT");
+    g_field_prompt_format = 0;
+    if (fmt && *fmt) {
+        if (strcmp(fmt, "raw") == 0) g_field_prompt_format = 0;
+        else if (strcmp(fmt, "qa") == 0) g_field_prompt_format = 1;
+        else fprintf(stderr, "warning: ignoring invalid A2A_FIELD_PROMPT_FORMAT=%s\n", fmt);
+    }
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -1034,6 +1042,19 @@ static const char *repl_prompt_format_name(void) {
     case 1: return "qa";
     default: return "user_arianna";
     }
+}
+
+static const char *field_prompt_format_name(void) {
+    switch (g_field_prompt_format) {
+    case 1: return "qa";
+    default: return "raw";
+    }
+}
+
+static void build_field_cell_prompt(char *dst, size_t cap, const char *prompt) {
+    if (!prompt) prompt = "";
+    if (g_field_prompt_format == 1) snprintf(dst, cap, "Q: %s\nA:", prompt);
+    else snprintf(dst, cap, "%s", prompt);
 }
 
 static void build_repl_turn_prompt(char *dst, size_t cap, const char *trajectory, const char *line) {
@@ -2449,7 +2470,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     double base_t0 = now_ms();
     int base_gen = 0, base_retry = 0, base_probe = 0, base_rescue = 0, base_fail = 0;
     for (int c = 0; c < n_cells; c++) {
-        if (g_chorus) snprintf(ctx, sizeof(ctx), "%s", prompt);   /* CHORUS: each cell answers the SAME prompt from its own angle; awareness via cross-cell, not text */
+        if (g_chorus) build_field_cell_prompt(ctx, sizeof(ctx), prompt);   /* CHORUS: each cell answers the SAME prompt from its own angle; awareness via cross-cell, not text */
         else if (g_leap_mode && r > 0) {             /* RELAY (legacy): dissonance-into-forward route */
             g_leap_total++;
             if (g_dpeak >= THETA_HI) {
@@ -2965,7 +2986,7 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
     int vocab = m->vocab;
     FILE *flog = fopen("FIELDLOG.md", "a");   /* her journal — every chorus saved (Oleg: "сохраняй её ответы") */
     if (flog) { time_t now = time(NULL); fprintf(flog, "\n## %.24s — \"%s\" (%d cells × %d rounds, soma alpha=%.1f)\n", ctime(&now), prompt, n_cells, n_rounds, alpha); }
-    printf("\n=== δ-field: %d cells × %d rounds over ONE nanoArianna — \"%s\" (soma alpha=%.1f) ===\n", n_cells, n_rounds, prompt, alpha);
+    printf("\n=== δ-field: %d cells × %d rounds over ONE nanoArianna — \"%s\" (soma alpha=%.1f, prompt_fmt=%s) ===\n", n_cells, n_rounds, prompt, alpha, field_prompt_format_name());
 
     /* FLOOR: two independent round-0 choruses on the SAME (prompt-only) context, different seeds. Their
      * histogram distance is the sampling-noise floor d_R cannot beat — the attractor target, not zero. */
