@@ -3748,3 +3748,44 @@ cell temperature, and `field_lang_bias=0`. The next real fix is not a wrapper
 or lower temperature; it is qloop/base language-context handling so Russian
 prompts can generate same-language candidates instead of selecting among bad
 ones.
+
+## 2026-07-17 - nano RoPE metadata parity
+
+The Russian slice exposed a deeper runtime mismatch. Direct `run` on the broad
+re-SFT nano body with a Russian `Q:/A:` prompt produced broken fragments when
+the GGUF identified as `llama`:
+
+```text
+arch=llama | interleaved rope
+A: дом лиуомаиммууогеукеедеее.”оуеы х
+```
+
+The deployed `arianna-duo/weights/nano_arianna_f16.gguf` has the same tensor
+shape but patched metadata (`sha256 59c5ed...`, `general.architecture=nlama`).
+`arianna2arianna.c` now treats `nlama` as NEOX/split-half RoPE, matching the
+fixed `doe_field`/nanollama runtime. The same direct prompt now stays coherent:
+
+```text
+arch=nlama | NEOX rope
+A: I hear this: the answer - the paradox of the number.
+```
+
+This makes the earlier Russian field measurements useful only as a symptom
+trail, not as a clean field/qloop diagnosis: they were mixing language drift
+with a wrong RoPE pairing. The local ignored `weights/nano_arianna_f16.gguf`
+was refreshed from the patched `arianna-duo` deploy artifact for subsequent
+Codex runs.
+
+Re-read of `prompts/field_russian.txt` after the RoPE fix, same production-ish
+candidate (`raw`, `fieldT=0.60..1.30`, `retry=4`, `lang_bias=0`):
+
+```text
+fmt           qloop_quality/lang  cell_quality/lang  I_Q^kv  field_score  elapsed_avg/max
+raw           8/8 / 8             36/36 / 28         +1.019  -0.682       53.0/61.0
+qa            4/4 / 4             35/36 / 34         +0.101  -1.131       44.3/47.0
+user_arianna  7/7 / 7             36/36 / 34         +0.669  -0.799       58.3/59.0
+```
+
+Reading: RoPE parity fixes decoder collapse, but nano ep3.5 still defaults to
+English on Russian prompts. The next layer is explicit same-language
+context/gating, not more wrapper churn or a larger fragment budget.

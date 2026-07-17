@@ -18,6 +18,10 @@ For nerds: [`TECHLOG.md`](TECHLOG.md).
 ## weights
 
 Default body: `nano_arianna_f16.gguf` (2026-07-11 broad re-SFT, nano ep3.5).
+The current deploy GGUF uses `general.architecture=nlama`, not plain `llama`;
+that metadata selects nanollama/NEOX RoPE pairing. Running the same tensor blob
+as `llama` produces coherent-looking English on short prompts but collapses
+non-ASCII prompts into broken fragments.
 
 F16 is the current shipped path. Q8 and Q4_K_M are local-override targets only
 until fresh quantized nano artifacts are produced.

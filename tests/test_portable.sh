@@ -19,7 +19,10 @@ if [[ ! -x "$PORT_BIN" ]]; then
 fi
 
 out="$("$PORT_BIN" "$A2A_MODEL_F16" "ok" 2 0 2>&1)"
-a2a_assert_grep "model: arch=llama" "$out" "portable binary runs inference"
+a2a_assert_grep "model: arch=(llama|nlama)" "$out" "portable binary runs inference"
+if echo "$out" | grep -q "model: arch=nlama"; then
+    a2a_assert_grep "NEOX rope" "$out" "portable nlama uses nanollama RoPE pairing"
+fi
 a2a_assert_grep "loaded in" "$out" "portable reports load time"
 a2a_assert_grep "decode:" "$out" "portable decode completes"
 

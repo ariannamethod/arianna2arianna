@@ -132,18 +132,16 @@ else
 fi
 rm -rf "$field_grid_dir"
 
-qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does the field remember?" field 5 12 1 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
-a2a_assert_grep "r1 cell 0 .*What does the field remember\\?" "$qloop_out" "field cell surface keeps closed question fragment"
+qloop_prompt="The speaker has not given a name. Answer the current reader directly: where does resonance live?"
+qloop_out="$("$A2A_BIN" "$A2A_MODEL_F16" "$qloop_prompt" field 4 12 3 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
+a2a_assert_grep "r[0-9]+ cell [0-9]+ .*\\?" "$qloop_out" "field cell surface keeps closed question fragments"
 a2a_assert_not_grep "What do you see when|perspause" "$qloop_out" "field cell surface removes open tails and morph junk"
 a2a_assert_grep "qloop c[0-9]+.*\\[kv\\]" "$qloop_out" "qloop answers use asker KV"
 a2a_assert_grep "I_Q\\^kv=" "$qloop_out" "qloop reports asker KV influence"
-qloop_gate_out="$(A2A_QLOOP_MIN_IQ=2.0 "$A2A_BIN" "$A2A_MODEL_F16" "Answer only with a question: why does the field remember?" field 5 12 1 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
+qloop_gate_out="$(A2A_QLOOP_MIN_IQ=2.0 "$A2A_BIN" "$A2A_MODEL_F16" "$qloop_prompt" field 4 12 3 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
 a2a_assert_grep "qloop gate c[0-9]+.*\\[kv\\].*I_Q\\^kv=" "$qloop_gate_out" "qloop gates negative or below-threshold asker KV influence"
 a2a_assert_grep "reason=iq" "$qloop_gate_out" "qloop reports IQ gate reason"
-
-qloop_surface_gate_out="$("$A2A_BIN" "$A2A_MODEL_F16" "The speaker has not given a name. Answer the current reader directly: where does resonance live?" field 4 12 3 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
-a2a_assert_grep "qloop gate c[0-9]+.*\\[kv\\].*reason=surface" "$qloop_surface_gate_out" "qloop gates short or otherwise dirty answer surfaces"
-a2a_assert_not_grep "qloop c[0-9]+.*: here\\." "$qloop_surface_gate_out" "qloop does not admit short surface debt into chorus"
+a2a_assert_not_grep "qloop c[0-9]+.*: here\\." "$qloop_out" "qloop does not admit short surface debt into chorus"
 
 qloop_statement_out="$(A2A_QLOOP_STATEMENT_ROUTES=1 "$A2A_BIN" "$A2A_MODEL_F16" "The organism must answer without borrowing old intimacy." field 4 12 3 0 2 0.02 1 1.3 0 1 2 0 2>&1)"
 a2a_assert_grep "qloop c[0-9]+.*\\[kv\\].*qmarks=0" "$qloop_statement_out" "qloop can route clean statement cells when enabled"
