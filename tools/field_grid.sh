@@ -23,7 +23,10 @@ Knobs:
   A2A_FIELD_QLOOP_STATEMENT_POOLS="0" qloop statement fallback candidate caps (0=inherit pool)
   A2A_FIELD_QLOOP_STATEMENT_ROUTES="0" qloop clean non-question fallback flags when question routes are silent
   A2A_FIELD_CELL_RETRY_MAXS="4" base-cell surface retry caps (1 disables retries)
-  A2A_FIELD_PROMPT_FORMATS="raw" base-cell prompt frames (raw, qa, auto)
+  A2A_FIELD_PROMPT_FORMATS="raw" base-cell prompt frames (raw, qa, auto, user_arianna)
+  A2A_FIELD_TEMP_BASES="0.60" base-cell temperature bases
+  A2A_FIELD_TEMP_SPANS="0.70" base-cell temperature spans across cells
+  A2A_FIELD_LANG_BIASES="0" base-cell language-match retry biases (0=measure only)
   A2A_FIELD_ROUNDS_LIST="3"        round counts to compare
   A2A_FIELD_CELLS=4                field cells
   A2A_FIELD_FRAG=12                tokens per cell fragment
@@ -62,6 +65,9 @@ QLOOP_STATEMENT_POOLS="${A2A_FIELD_QLOOP_STATEMENT_POOLS:-${A2A_QLOOP_STATEMENT_
 QLOOP_STATEMENT_ROUTES="${A2A_FIELD_QLOOP_STATEMENT_ROUTES:-${A2A_QLOOP_STATEMENT_ROUTES:-0}}"
 CELL_RETRY_MAXS="${A2A_FIELD_CELL_RETRY_MAXS:-${A2A_CELL_RETRY_MAX:-4}}"
 FIELD_PROMPT_FORMATS="${A2A_FIELD_PROMPT_FORMATS:-${A2A_FIELD_PROMPT_FORMAT:-raw}}"
+FIELD_TEMP_BASES="${A2A_FIELD_TEMP_BASES:-${A2A_FIELD_TEMP_BASE:-0.60}}"
+FIELD_TEMP_SPANS="${A2A_FIELD_TEMP_SPANS:-${A2A_FIELD_TEMP_SPAN:-0.70}}"
+FIELD_LANG_BIASES="${A2A_FIELD_LANG_BIASES:-${A2A_FIELD_LANG_BIAS:-0}}"
 ROUNDS_LIST="${A2A_FIELD_ROUNDS_LIST:-${A2A_ROUNDS:-3}}"
 KEEP_RAW="${A2A_FIELD_KEEP_RAW:-0}"
 
@@ -80,8 +86,8 @@ safe_num() {
 }
 
 compact_line() {
-    local xcell="$1" qloop="$2" tconf="$3" adapt="$4" adapt_weight="$5" min_iq="$6" unique_asker="$7" candidate_pool="$8" statement_pool="$9" statement_routes="${10}" cell_retry_max="${11}" field_prompt_format="${12}" rounds="${13}" cells="${14}" frag="${15}" tsv_file="${16}" summary_file="${17}" raw_dir="${18}"
-    awk -F '\t' -v xcell="$xcell" -v qloop="$qloop" -v tconf="$tconf" -v adapt="$adapt" -v adapt_weight="$adapt_weight" -v min_iq="$min_iq" -v unique_asker="$unique_asker" -v candidate_pool="$candidate_pool" -v statement_pool="$statement_pool" -v statement_routes="$statement_routes" -v cell_retry_max="$cell_retry_max" -v field_prompt_format="$field_prompt_format" -v rounds="$rounds" -v cells="$cells" -v frag="$frag" \
+    local xcell="$1" qloop="$2" tconf="$3" adapt="$4" adapt_weight="$5" min_iq="$6" unique_asker="$7" candidate_pool="$8" statement_pool="$9" statement_routes="${10}" cell_retry_max="${11}" field_prompt_format="${12}" field_temp_base="${13}" field_temp_span="${14}" field_lang_bias="${15}" rounds="${16}" cells="${17}" frag="${18}" tsv_file="${19}" summary_file="${20}" raw_dir="${21}"
+    awk -F '\t' -v xcell="$xcell" -v qloop="$qloop" -v tconf="$tconf" -v adapt="$adapt" -v adapt_weight="$adapt_weight" -v min_iq="$min_iq" -v unique_asker="$unique_asker" -v candidate_pool="$candidate_pool" -v statement_pool="$statement_pool" -v statement_routes="$statement_routes" -v cell_retry_max="$cell_retry_max" -v field_prompt_format="$field_prompt_format" -v field_temp_base="$field_temp_base" -v field_temp_span="$field_temp_span" -v field_lang_bias="$field_lang_bias" -v rounds="$rounds" -v cells="$cells" -v frag="$frag" \
         -v tsv="$tsv_file" -v summary="$summary_file" -v raw="$raw_dir" '
         function numeric(x) { return x ~ /^[-+]?[0-9]+([.][0-9]+)?$/ }
         function clamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x) }
@@ -223,8 +229,8 @@ compact_line() {
                         - 2.0 * qdebt_rate - cdebt_rate - 0.5 * dpos_avg - 0.5 * d_avg - 0.25 * pospart(dm_avg) \
                         - 0.2 * in_neg_rate - 0.4 * iq_neg_rate - 0.2 * dm_pos_rate - 0.15 * qgate_rate
 
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%s\t%d/%d\t%d\t%s\t%d/%d\t%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
-                xcell, qloop, tconf, adapt, adapt_weight, min_iq, unique_asker, candidate_pool, statement_pool, statement_routes, cell_retry_max, field_prompt_format, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%s\t%s\t%s\t%s\t%d/%d\t%s\t%d/%d\t%d\t%s\t%d/%d\t%d\t%.3f\t%.3f\t%.3f\t%d/%d/%d\t%s\t%d/%d/%d\t%s\t%s\t%s\t%s\t%d/%d/%d\t%s\t%s\t%+.3f\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
+                xcell, qloop, tconf, adapt, adapt_weight, min_iq, unique_asker, candidate_pool, statement_pool, statement_routes, cell_retry_max, field_prompt_format, field_temp_base, field_temp_span, field_lang_bias, rounds, cells, frag, rows, qroutes_sum, qkv_sum,
                 qgate_sum, qstmt_sum, qstmt_gate_sum, qeff_rate, qscore_avg, qgate_score_avg, qprofile, qgate_profile,
                 qprompt_rows, rows, avg_text("qwords"), qquality_sum, qroutes_sum, qlang_sum,
                 avg_text("cwords"), cquality_sum, cfrag_sum, clang_sum,
@@ -252,7 +258,7 @@ compact_line() {
     ' "$tsv_file"
 }
 
-printf "xcell\tqloop\tqloop_tconf_weight\tqloop_tconf_adapt\tqloop_tconf_adapt_weight\tqloop_min_iq\tqloop_unique_asker\tqloop_candidate_pool\tqloop_statement_pool\tqloop_statement_routes\tcell_retry_max\tfield_prompt_format\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_words_avg\tqloop_quality\tqloop_lang_mismatch\tcell_words_avg\tcell_quality\tcell_lang_mismatch\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\ti_q_bands\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\tbase_ms_avg\tbase_ms_max\tbase_gen\tbase_retry\tbase_probe\tbase_rescue\tbase_fail\tqloop_ms_avg\tqloop_ms_max\tqloop_gen\tqloop_retry\telapsed_avg\telapsed_max\traw_dir\ttsv\tsummary\n"
+printf "xcell\tqloop\tqloop_tconf_weight\tqloop_tconf_adapt\tqloop_tconf_adapt_weight\tqloop_min_iq\tqloop_unique_asker\tqloop_candidate_pool\tqloop_statement_pool\tqloop_statement_routes\tcell_retry_max\tfield_prompt_format\tfield_temp_base\tfield_temp_span\tfield_lang_bias\trounds\tcells\tfrag\trows\tqloop_routes\tqloop_kv\tqloop_gated\tqloop_stmt_routes\tqloop_stmt_gated\tqloop_efficiency\tqloop_score_avg\tqloop_gate_score_avg\tqloop_profile\tqloop_gate_profile\tqloop_prompts\tqloop_words_avg\tqloop_quality\tqloop_lang_mismatch\tcell_words_avg\tcell_quality\tcell_lang_mismatch\tqloop_prompt_rate\tqloop_debt_rate\tcell_debt_rate\ti_n_signs\tavg_i_n_kv\ti_q_signs\ti_q_bands\tavg_i_q_kv\tavg_d_r\tavg_d_margin\td_margin_signs\tavg_disso\tavg_dpos\tfield_score\tbase_ms_avg\tbase_ms_max\tbase_gen\tbase_retry\tbase_probe\tbase_rescue\tbase_fail\tqloop_ms_avg\tqloop_ms_max\tqloop_gen\tqloop_retry\telapsed_avg\telapsed_max\traw_dir\ttsv\tsummary\n"
 
 for xcell in $XCELLS; do
     for qloop in $QLOOPS; do
@@ -266,35 +272,44 @@ for xcell in $XCELLS; do
                                     for statement_routes in $QLOOP_STATEMENT_ROUTES; do
                                         for cell_retry_max in $CELL_RETRY_MAXS; do
                                             for field_prompt_format in $FIELD_PROMPT_FORMATS; do
-                                                for rounds in $ROUNDS_LIST; do
-                                                    tag="x$(safe_num "$xcell")_qloop$(safe_num "$qloop")_tconf$(safe_num "$tconf")_adapt$(safe_num "$adapt")_adaptw$(safe_num "$adapt_weight")_miniq$(safe_num "$min_iq")_uniqueq$(safe_num "$unique_asker")_pool$(safe_num "$candidate_pool")_stmtpool$(safe_num "$statement_pool")_stmt$(safe_num "$statement_routes")_retry$(safe_num "$cell_retry_max")_fmt${field_prompt_format}_rounds$(safe_num "$rounds")_cells$(safe_num "$CELLS")_frag$(safe_num "$FRAG")"
-                                                    tsv_file="$OUTDIR/field_grid_${prompt_stem}_${tag}_${stamp}.tsv"
-                                                    summary_file="${tsv_file%.tsv}.summary.txt"
-                                                    raw_dir="-"
-                                                    if [[ "$KEEP_RAW" != "0" ]]; then
-                                                        raw_dir="${tsv_file%.tsv}.raw"
-                                                    fi
-                                                    raw_env="$raw_dir"
-                                                    [[ "$raw_env" == "-" ]] && raw_env=""
+                                                for field_temp_base in $FIELD_TEMP_BASES; do
+                                                    for field_temp_span in $FIELD_TEMP_SPANS; do
+                                                        for field_lang_bias in $FIELD_LANG_BIASES; do
+                                                            for rounds in $ROUNDS_LIST; do
+                                                                tag="x$(safe_num "$xcell")_qloop$(safe_num "$qloop")_tconf$(safe_num "$tconf")_adapt$(safe_num "$adapt")_adaptw$(safe_num "$adapt_weight")_miniq$(safe_num "$min_iq")_uniqueq$(safe_num "$unique_asker")_pool$(safe_num "$candidate_pool")_stmtpool$(safe_num "$statement_pool")_stmt$(safe_num "$statement_routes")_retry$(safe_num "$cell_retry_max")_fmt${field_prompt_format}_tbase$(safe_num "$field_temp_base")_tspan$(safe_num "$field_temp_span")_lbias$(safe_num "$field_lang_bias")_rounds$(safe_num "$rounds")_cells$(safe_num "$CELLS")_frag$(safe_num "$FRAG")"
+                                                                tsv_file="$OUTDIR/field_grid_${prompt_stem}_${tag}_${stamp}.tsv"
+                                                                summary_file="${tsv_file%.tsv}.summary.txt"
+                                                                raw_dir="-"
+                                                                if [[ "$KEEP_RAW" != "0" ]]; then
+                                                                    raw_dir="${tsv_file%.tsv}.raw"
+                                                                fi
+                                                                raw_env="$raw_dir"
+                                                                [[ "$raw_env" == "-" ]] && raw_env=""
 
-                                                    echo "sweeping xcell=$xcell qloop=$qloop tconf=$tconf adapt=$adapt adapt_weight=$adapt_weight min_iq=$min_iq unique_asker=$unique_asker candidate_pool=$candidate_pool statement_pool=$statement_pool statement_routes=$statement_routes cell_retry_max=$cell_retry_max field_prompt_format=$field_prompt_format rounds=$rounds cells=$CELLS frag=$FRAG -> $tsv_file" >&2
-                                                    A2A_CELLS="$CELLS" A2A_FRAG="$FRAG" A2A_ROUNDS="$rounds" \
-                                                    A2A_XCELL="$xcell" A2A_QLOOP="$qloop" \
-                                                    A2A_QLOOP_TCONF_WEIGHT="$tconf" \
-                                                    A2A_QLOOP_TCONF_ADAPT="$adapt" \
-                                                    A2A_QLOOP_TCONF_ADAPT_WEIGHT="$adapt_weight" \
-                                                    A2A_QLOOP_MIN_IQ="$min_iq" \
-                                                    A2A_QLOOP_UNIQUE_ASKER="$unique_asker" \
-                                                    A2A_QLOOP_CANDIDATE_POOL="$candidate_pool" \
-                                                    A2A_QLOOP_STATEMENT_POOL="$statement_pool" \
-                                                    A2A_QLOOP_STATEMENT_ROUTES="$statement_routes" \
-                                                    A2A_CELL_RETRY_MAX="$cell_retry_max" \
-                                                    A2A_FIELD_PROMPT_FORMAT="$field_prompt_format" \
-                                                    A2A_FIELD_RAW_DIR="$raw_env" \
-                                                        bash "$ROOT/tools/field_sweep.sh" "$PROMPTS" > "$tsv_file"
+                                                                echo "sweeping xcell=$xcell qloop=$qloop tconf=$tconf adapt=$adapt adapt_weight=$adapt_weight min_iq=$min_iq unique_asker=$unique_asker candidate_pool=$candidate_pool statement_pool=$statement_pool statement_routes=$statement_routes cell_retry_max=$cell_retry_max field_prompt_format=$field_prompt_format field_temp_base=$field_temp_base field_temp_span=$field_temp_span field_lang_bias=$field_lang_bias rounds=$rounds cells=$CELLS frag=$FRAG -> $tsv_file" >&2
+                                                                A2A_CELLS="$CELLS" A2A_FRAG="$FRAG" A2A_ROUNDS="$rounds" \
+                                                                A2A_XCELL="$xcell" A2A_QLOOP="$qloop" \
+                                                                A2A_QLOOP_TCONF_WEIGHT="$tconf" \
+                                                                A2A_QLOOP_TCONF_ADAPT="$adapt" \
+                                                                A2A_QLOOP_TCONF_ADAPT_WEIGHT="$adapt_weight" \
+                                                                A2A_QLOOP_MIN_IQ="$min_iq" \
+                                                                A2A_QLOOP_UNIQUE_ASKER="$unique_asker" \
+                                                                A2A_QLOOP_CANDIDATE_POOL="$candidate_pool" \
+                                                                A2A_QLOOP_STATEMENT_POOL="$statement_pool" \
+                                                                A2A_QLOOP_STATEMENT_ROUTES="$statement_routes" \
+                                                                A2A_CELL_RETRY_MAX="$cell_retry_max" \
+                                                                A2A_FIELD_PROMPT_FORMAT="$field_prompt_format" \
+                                                                A2A_FIELD_TEMP_BASE="$field_temp_base" \
+                                                                A2A_FIELD_TEMP_SPAN="$field_temp_span" \
+                                                                A2A_FIELD_LANG_BIAS="$field_lang_bias" \
+                                                                A2A_FIELD_RAW_DIR="$raw_env" \
+                                                                    bash "$ROOT/tools/field_sweep.sh" "$PROMPTS" > "$tsv_file"
 
-                                                    bash "$ROOT/tools/field_tsv_summary.sh" "$tsv_file" > "$summary_file"
-                                                    compact_line "$xcell" "$qloop" "$tconf" "$adapt" "$adapt_weight" "$min_iq" "$unique_asker" "$candidate_pool" "$statement_pool" "$statement_routes" "$cell_retry_max" "$field_prompt_format" "$rounds" "$CELLS" "$FRAG" "$tsv_file" "$summary_file" "$raw_dir"
+                                                                bash "$ROOT/tools/field_tsv_summary.sh" "$tsv_file" > "$summary_file"
+                                                                compact_line "$xcell" "$qloop" "$tconf" "$adapt" "$adapt_weight" "$min_iq" "$unique_asker" "$candidate_pool" "$statement_pool" "$statement_routes" "$cell_retry_max" "$field_prompt_format" "$field_temp_base" "$field_temp_span" "$field_lang_bias" "$rounds" "$CELLS" "$FRAG" "$tsv_file" "$summary_file" "$raw_dir"
+                                                            done
+                                                        done
+                                                    done
                                                 done
                                             done
                                         done

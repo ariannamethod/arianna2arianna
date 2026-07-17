@@ -3692,3 +3692,59 @@ Follow-up measurement layer:
   trace. This is deliberately a heuristic counter, not a language classifier.
 - Language mismatch contributes to qloop/cell quality debt and therefore to
   `field_score`.
+
+## 2026-07-17 - Field language drift: wrapper and temperature verdict
+
+### Re-read after language-mismatch debt
+
+After `qloop_lang_mismatch` and `cell_lang_mismatch` became first-class debt,
+the earlier `auto` interpretation changed. Same full `field_broaden.txt`
+candidate (`xcell=0.02`, `qloop=2`, adaptive tconf `-0.10`, statement routes
+on, `retry=4`):
+
+```text
+fmt   prompts  qloop_quality/lang  cell_quality/lang  I_Q^kv  field_score  base_gen/retry/probe/rescue/fail  qloop_gen/retry  elapsed_avg/max
+raw   20/20    8/45 / 8            30/240 / 15        +1.146  +1.890       173/93/0/24/7                     99/59            21.2/93.0
+auto  20/20    8/45 / 8            34/240 / 25        +1.225  +1.844       170/90/0/26/4                     123/75           22.6/105.0
+```
+
+Reading: `auto` is not a default candidate under the corrected metric. It
+reduced some old short/tail counters, but moved the Russian slice into stronger
+language mismatch and higher qloop latency.
+
+### Targeted Russian slice
+
+Added `prompts/field_russian.txt` to keep the non-ASCII failure isolated and
+cheap enough for repeated sweeps. Targeted results:
+
+```text
+setting                 qloop_quality/lang  cell_quality/lang  base_fail  field_score  elapsed_avg/max
+raw 0.60+0.70*cell       8/8 / 8            30/36 / 15         7          -0.444       77.3/88.0
+user_arianna wrapper     7/7 / 7            35/36 / 21         9          -0.509       70.7/75.0
+raw T=0.45 flat          5/6 / 5            36/36 / 14         10         -0.580       88.0/113.0
+raw T=0.45..0.75         6/6 / 6            34/36 / 16         10         -0.924       89.3/92.0
+raw lang_bias=1          9/9 / 9            31/36 / 12         11         -0.458       85.3/89.0
+```
+
+Raw captures show the same pattern in all failing variants: low-temperature
+cells often emit very short Cyrillic shards, while hotter cells/qloop answers
+drift into English or mixed broken fragments. `User:/Arianna:` is worse than
+raw for field base cells; it behaves like a broken bilingual label-completion
+frame, not a conversational repair.
+
+### Change
+
+- Added `A2A_FIELD_TEMP_BASE` / `A2A_FIELD_TEMP_SPAN` and matching
+  `A2A_FIELD_TEMP_BASES` / `A2A_FIELD_TEMP_SPANS` grid axes. Defaults preserve
+  the old `0.60..1.30` spread.
+- Added `A2A_FIELD_PROMPT_FORMAT=user_arianna` for measurement only. It is not a
+  default candidate.
+- Added `A2A_FIELD_LANG_BIAS` and `A2A_FIELD_LANG_BIASES` as an experimental
+  retry-selection bias. Default is `0`: language drift is measured but does not
+  alter candidate selection.
+
+Decision: keep production field defaults at raw prompt format, `0.60..1.30`
+cell temperature, and `field_lang_bias=0`. The next real fix is not a wrapper
+or lower temperature; it is qloop/base language-context handling so Russian
+prompts can generate same-language candidates instead of selecting among bad
+ones.

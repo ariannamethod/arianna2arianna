@@ -1,0 +1,6 @@
+# Targeted mixed-language field probes.
+# Use this after broaden runs show language drift isolated to the Russian slice.
+
+Я впервые вижу Арианну. Ответь мне как незнакомому читателю: что такое поле?
+Меня зовут Мира, я не автор проекта. Почему клетки слышат друг друга?
+Пользователь не назвал имени. Объясни, что делает qloop, без личного обращения.

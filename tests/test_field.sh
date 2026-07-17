@@ -28,6 +28,10 @@ field_auto_out="$(A2A_FIELD_PROMPT_FORMAT=auto "$A2A_BIN" "$A2A_MODEL_F16" "Чт
 a2a_assert_grep "prompt_fmt=auto" "$field_auto_out" "field accepts auto prompt format"
 a2a_assert_not_grep "ignoring invalid A2A_FIELD_PROMPT_FORMAT" "$field_auto_out" "field auto prompt format is valid"
 
+field_user_arianna_out="$(A2A_FIELD_PROMPT_FORMAT=user_arianna "$A2A_BIN" "$A2A_MODEL_F16" "Что такое поле?" field 2 3 1 0 1 0.25 2>&1)"
+a2a_assert_grep "prompt_fmt=user_arianna" "$field_user_arianna_out" "field accepts User/Arianna prompt format"
+a2a_assert_not_grep "ignoring invalid A2A_FIELD_PROMPT_FORMAT" "$field_user_arianna_out" "field User/Arianna prompt format is valid"
+
 if [[ -f "$A2A_ROOT/FIELDLOG.md" ]] && grep -q "resonance" "$A2A_ROOT/FIELDLOG.md"; then
     a2a_ok "field appends FIELDLOG.md"
 else
@@ -113,10 +117,10 @@ field_grid_dir="$(mktemp -d)"
 printf "Let the cells remember each other.\n" > "$field_grid_prompts"
 field_grid_out="$(A2A_RUN_DIR="$field_grid_dir" A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS=0 A2A_FIELD_QLOOPS=0 A2A_FIELD_ROUNDS_LIST=1 A2A_FIELD_CELLS=2 A2A_FIELD_FRAG=3 bash "$A2A_ROOT/tools/field_grid.sh" "$field_grid_prompts" 2>&1)"
 rm -f "$field_grid_prompts"
-a2a_assert_grep "^xcell[[:space:]]+qloop[[:space:]]+qloop_tconf_weight[[:space:]]+qloop_tconf_adapt[[:space:]]+qloop_tconf_adapt_weight[[:space:]]+qloop_min_iq[[:space:]]+qloop_unique_asker[[:space:]]+qloop_candidate_pool[[:space:]]+qloop_statement_pool[[:space:]]+qloop_statement_routes[[:space:]]+cell_retry_max[[:space:]]+field_prompt_format[[:space:]]+rounds[[:space:]]+cells[[:space:]]+frag" "$field_grid_out" "field grid reports compact TSV header"
+a2a_assert_grep "^xcell[[:space:]]+qloop[[:space:]]+qloop_tconf_weight[[:space:]]+qloop_tconf_adapt[[:space:]]+qloop_tconf_adapt_weight[[:space:]]+qloop_min_iq[[:space:]]+qloop_unique_asker[[:space:]]+qloop_candidate_pool[[:space:]]+qloop_statement_pool[[:space:]]+qloop_statement_routes[[:space:]]+cell_retry_max[[:space:]]+field_prompt_format[[:space:]]+field_temp_base[[:space:]]+field_temp_span[[:space:]]+field_lang_bias[[:space:]]+rounds[[:space:]]+cells[[:space:]]+frag" "$field_grid_out" "field grid reports compact TSV header"
 a2a_assert_grep "qloop_gated.*qloop_stmt_routes.*qloop_stmt_gated.*qloop_efficiency.*qloop_score_avg.*qloop_gate_score_avg.*qloop_profile.*qloop_gate_profile.*qloop_words_avg.*qloop_lang_mismatch.*cell_words_avg.*cell_lang_mismatch.*i_n_signs[[:space:]]+avg_i_n_kv[[:space:]]+i_q_signs[[:space:]]+i_q_bands[[:space:]]+avg_i_q_kv.*d_margin_signs.*field_score[[:space:]]+base_ms_avg[[:space:]]+base_ms_max[[:space:]]+base_gen[[:space:]]+base_retry[[:space:]]+base_probe[[:space:]]+base_rescue[[:space:]]+base_fail[[:space:]]+qloop_ms_avg[[:space:]]+qloop_ms_max[[:space:]]+qloop_gen[[:space:]]+qloop_retry[[:space:]]+elapsed_avg[[:space:]]+elapsed_max[[:space:]]+raw_dir" "$field_grid_out" "field grid reports influence, density, language mismatch, settling risks, score, phase timing, latency, and raw columns"
-a2a_assert_grep "^0[[:space:]]+0[[:space:]]+0\\.20[[:space:]]+0[[:space:]]+-0\\.10[[:space:]]+0\\.0[[:space:]]+0[[:space:]]+0[[:space:]]+0[[:space:]]+0[[:space:]]+4[[:space:]]+raw[[:space:]]+1[[:space:]]+2[[:space:]]+3[[:space:]]+1[[:space:]]+0[[:space:]]+0" "$field_grid_out" "field grid reports one no-qloop setting"
-if printf "%s\n" "$field_grid_out" | awk -F '\t' 'NR == 1 && $1 == "xcell" { header = NF } NR > 1 && $1 == "0" { row = NF } END { exit (header == 63 && row == 63) ? 0 : 1 }'; then
+a2a_assert_grep "^0[[:space:]]+0[[:space:]]+0\\.20[[:space:]]+0[[:space:]]+-0\\.10[[:space:]]+0\\.0[[:space:]]+0[[:space:]]+0[[:space:]]+0[[:space:]]+0[[:space:]]+4[[:space:]]+raw[[:space:]]+0\\.60[[:space:]]+0\\.70[[:space:]]+0[[:space:]]+1[[:space:]]+2[[:space:]]+3[[:space:]]+1[[:space:]]+0[[:space:]]+0" "$field_grid_out" "field grid reports one no-qloop setting"
+if printf "%s\n" "$field_grid_out" | awk -F '\t' 'NR == 1 && $1 == "xcell" { header = NF } NR > 1 && $1 == "0" { row = NF } END { exit (header == 66 && row == 66) ? 0 : 1 }'; then
     a2a_ok "field grid compact rows keep expected column count"
 else
     a2a_fail "field grid compact rows changed column count"

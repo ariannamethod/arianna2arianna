@@ -945,7 +945,10 @@ static float g_user_kv_weight = 0.05f;
 static int   g_user_answer_tokens = 16;
 static int   g_user_ctx_format = 2; /* 0=field_qa, 1=plain_field_qa, 2=qa, 3=raw */
 static int   g_repl_prompt_format = 0; /* 0=user_arianna, 1=qa */
-static int   g_field_prompt_format = 0; /* 0=raw, 1=qa, 2=auto */
+static int   g_field_prompt_format = 0; /* 0=raw, 1=qa, 2=auto, 3=user_arianna */
+static float g_field_temp_base = 0.60f; /* base cell sampler: 0.60..1.30 by default */
+static float g_field_temp_span = 0.70f;
+static float g_field_lang_bias = 0.00f; /* 0 = measure language drift only; >0 biases retry selection */
 static float g_qloop_min = 0.42f;
 static float g_qloop_min_iq = 0.0f; /* reject KV-backed qloop answers whose asker KV lowers confidence */
 static float g_qloop_tconf_weight = 0.20f; /* route prior: target confidence contribution */
@@ -1010,14 +1013,27 @@ static void load_qloop_route_env(void) {
 
 static void load_field_generation_env(void) {
     g_cell_retry_max = env_int_clamped("A2A_CELL_RETRY_MAX", 4, 1, 4);
+    g_field_temp_base = env_float_clamped("A2A_FIELD_TEMP_BASE", 0.60f, 0.05f, 2.00f);
+    g_field_temp_span = env_float_clamped("A2A_FIELD_TEMP_SPAN", 0.70f, -1.50f, 1.50f);
+    g_field_lang_bias = env_float_clamped("A2A_FIELD_LANG_BIAS", 0.00f, 0.00f, 4.00f);
     const char *fmt = getenv("A2A_FIELD_PROMPT_FORMAT");
     g_field_prompt_format = 0;
     if (fmt && *fmt) {
         if (strcmp(fmt, "raw") == 0) g_field_prompt_format = 0;
         else if (strcmp(fmt, "qa") == 0) g_field_prompt_format = 1;
         else if (strcmp(fmt, "auto") == 0) g_field_prompt_format = 2;
+        else if (strcmp(fmt, "user_arianna") == 0) g_field_prompt_format = 3;
         else fprintf(stderr, "warning: ignoring invalid A2A_FIELD_PROMPT_FORMAT=%s\n", fmt);
     }
+}
+
+static float field_temp_for_cell(int cell, int n_cells) {
+    float frac = n_cells > 1 ? (float)cell / (float)(n_cells - 1) : 0.5f;
+    float t = g_field_temp_base + g_field_temp_span * frac;
+    if (!isfinite(t)) t = 0.60f;
+    if (t < 0.05f) t = 0.05f;
+    if (t > 2.00f) t = 2.00f;
+    return t;
 }
 
 static float user_bridge_temp_for_cell(int cell, int n_cells) {
@@ -1049,6 +1065,7 @@ static const char *field_prompt_format_name(void) {
     switch (g_field_prompt_format) {
     case 1: return "qa";
     case 2: return "auto";
+    case 3: return "user_arianna";
     default: return "raw";
     }
 }
@@ -1070,7 +1087,8 @@ static int field_prompt_uses_qa(const char *prompt) {
 
 static void build_field_cell_prompt(char *dst, size_t cap, const char *prompt) {
     if (!prompt) prompt = "";
-    if (field_prompt_uses_qa(prompt)) snprintf(dst, cap, "Q: %s\nA:", prompt);
+    if (g_field_prompt_format == 3) snprintf(dst, cap, "User: %s\nArianna:", prompt);
+    else if (field_prompt_uses_qa(prompt)) snprintf(dst, cap, "Q: %s\nA:", prompt);
     else snprintf(dst, cap, "%s", prompt);
 }
 
@@ -1930,6 +1948,27 @@ static int utf8_cyrillic_len(const unsigned char *p) {
     return 0;
 }
 
+static int text_cyrillic_count(const char *s) {
+    int cyr = 0;
+    if (!s) return 0;
+    for (const unsigned char *p = (const unsigned char*)s; *p;) {
+        int clen = utf8_cyrillic_len(p);
+        if (clen) { cyr++; p += clen; continue; }
+        p++;
+    }
+    return cyr;
+}
+
+static int answer_language_mismatch_score(const char *prompt, const char *answer) {
+    if (text_cyrillic_count(prompt) < 4) return 0;
+    if (g_field_lang_bias <= 0.0f) return 0;
+    int cyr = text_cyrillic_count(answer);
+    int ascii_words = answer_alpha_word_count(answer);
+    if (cyr < 2) return (int)lrintf(8.0f * g_field_lang_bias);
+    if (cyr < 4 && ascii_words >= 3) return (int)lrintf(4.0f * g_field_lang_bias);
+    return 0;
+}
+
 static int answer_has_sparse_cyrillic_artifact(const char *s) {
     int cyr = 0, ascii = 0;
     for (const unsigned char *p = (const unsigned char*)s; *p;) {
@@ -2138,12 +2177,13 @@ static void clean_direct_answer_surface(char *s, size_t cap) {
     clean_cell_fragment_surface(s, cap);
 }
 
-static int cell_fragment_surface_score(const char *s) {
+static int cell_fragment_surface_score(const char *prompt, const char *s) {
     if (!s) return 1000;
     while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') s++;
     if (!*s) return 1000;
     int score = 0;
     int words = answer_word_count(s);
+    score += answer_language_mismatch_score(prompt, s);
     if (words < 2) score += 6;
     if (answer_find_bad_morph(s, NULL)) score += 25;
     if (answer_has_shape_artifact(s)) score += 14;
@@ -2502,7 +2542,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             } else snprintf(ctx, sizeof(ctx), "%s%s%s", prompt, prev_chorus ? prev_chorus : "", this_chorus);  /* CONVERGE: full */
         } else snprintf(ctx, sizeof(ctx), "%s%s%s", prompt, prev_chorus ? prev_chorus : "", this_chorus);
         int np = bpe_encode(tok, ctx, ids, max_seq - nfrag - 1);
-        float temp = (g_life_on && c < POP_MAX) ? g_pop[c].temp : 0.6f + 0.7f * (n_cells > 1 ? (float)c / (n_cells - 1) : 0.5f);
+        float temp = (g_life_on && c < POP_MAX) ? g_pop[c].temp : field_temp_for_cell(c, n_cells);
         unsigned seed = (g_life_on && c < POP_MAX) ? (g_pop[c].seed ^ ((unsigned)r * 2654435761u)) : seed_base + (unsigned)c * 7919u;  /* identity persists, utterance renews each tick */
         if (g_life_on && c < POP_MAX) { g_xcell = g_pop[c].lambda; g_xrep = g_pop[c].xrep; }   /* per-cell perception (genome) */
         int nfrag_c = (g_life_on && c < POP_MAX) ? (int)(nfrag * (0.4f + 0.6f * g_pop[c].fitness)) : nfrag;  /* δ-life: dying cells speak QUIETER */
@@ -2550,7 +2590,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                 cand_n = visible_n;
                 for (int vi = 0; vi < visible_n && vi < 256; vi++) cand_ids[vi] = visible_ids[vi];
             }
-            int cand_score = cell_fragment_surface_score(cand_frag);
+            int cand_score = cell_fragment_surface_score(prompt, cand_frag);
             if (cand_score < best_score) {
                 if (best_kv) kv_free(best_kv);
                 copy_cstr(best_frag, sizeof(best_frag), cand_frag);
@@ -2692,7 +2732,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                 snprintf(qctx, sizeof(qctx), "%s\ncell %d stated: %s\ncell %d responds from another angle:",
                          prompt, qcell[route], cur_frag[qcell[route]], tcell[route]);
             int qnp = bpe_encode(tok, qctx, qctx_ids, max_seq - 8);
-            float qtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)tcell[route] / (n_cells - 1) : 0.5f);
+            float qtemp = field_temp_for_cell(tcell[route], n_cells);
             int qfrag_n = nfrag / 2; if (qfrag_n < 2) qfrag_n = 2; if (qfrag_n > 8) qfrag_n = 8;
             float save_xcell = g_xcell;
             float answer_xcell = (g_life_on && tcell[route] < POP_MAX) ? g_pop[tcell[route]].lambda : g_xcell;
@@ -2823,7 +2863,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                         snprintf(rctx, sizeof(rctx), "%s\ncell %d answered: %s\ncell %d is triggered and answers briefly:",
                                  prompt, tcell[route], qfrag, next);
                         int rnp = bpe_encode(tok, rctx, rctx_ids, max_seq - 8);
-                        float rtemp = 0.6f + 0.7f * (n_cells > 1 ? (float)next / (n_cells - 1) : 0.5f);
+                        float rtemp = field_temp_for_cell(next, n_cells);
                         qloop_gen++;
                         float rent = cell_speak(m, tok, rctx_ids, rnp, 2, rtemp, 40, 1.4f,
                                                 seed_base ^ 0xb17a5u ^ (unsigned)(qcell[route] * 131 + tcell[route] * 7919 + next * 4057 + r * 7919),
@@ -3003,7 +3043,8 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
     int vocab = m->vocab;
     FILE *flog = fopen("FIELDLOG.md", "a");   /* her journal — every chorus saved (Oleg: "сохраняй её ответы") */
     if (flog) { time_t now = time(NULL); fprintf(flog, "\n## %.24s — \"%s\" (%d cells × %d rounds, soma alpha=%.1f)\n", ctime(&now), prompt, n_cells, n_rounds, alpha); }
-    printf("\n=== δ-field: %d cells × %d rounds over ONE nanoArianna — \"%s\" (soma alpha=%.1f, prompt_fmt=%s) ===\n", n_cells, n_rounds, prompt, alpha, field_prompt_format_name());
+    printf("\n=== δ-field: %d cells × %d rounds over ONE nanoArianna — \"%s\" (soma alpha=%.1f, prompt_fmt=%s, fieldT=%.2f%+.2f*cell, lang_bias=%.2f) ===\n",
+           n_cells, n_rounds, prompt, alpha, field_prompt_format_name(), g_field_temp_base, g_field_temp_span, g_field_lang_bias);
 
     /* FLOOR: two independent round-0 choruses on the SAME (prompt-only) context, different seeds. Their
      * histogram distance is the sampling-noise floor d_R cannot beat — the attractor target, not zero. */
@@ -3194,7 +3235,7 @@ static void field_resonance_test(model_t *m, bpe_tokenizer *tok, const char *pro
                 snprintf(ctx, sizeof(ctx), "%s%s%s", prompt, prev_chorus, this_chorus);
                 int np = bpe_encode(tok, ctx, ids, max_seq - nfrag - 1);
                 if (control && np > np_prompt) shuffle_ids(ids, np_prompt, np, 12345u + (unsigned)(r * 31 + c));
-                float temp = 0.6f + 0.7f * (n_cells > 1 ? (float)c / (n_cells - 1) : 0.5f);
+                float temp = field_temp_for_cell(c, n_cells);
                 ent_sum += cell_speak(m, tok, ids, np, nfrag, temp, 40, 1.4f,
                                       42u + (unsigned)(r * 1000 + c) * 7919u, eos, max_seq, frag, sizeof(frag), 0, NULL, NULL, NULL, NULL, NULL);
                 int add = snprintf(this_chorus + tc, sizeof(this_chorus) - tc, " %s", frag);

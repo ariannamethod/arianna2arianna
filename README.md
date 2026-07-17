@@ -160,14 +160,20 @@ for sorting candidate settings before reading the raw samples. `base_ms_avg`,
 `base_fail`, `qloop_ms_avg`, `qloop_ms_max`, `qloop_gen`, and `qloop_retry` show
 whether a slow setting burns time in base generation, cell surface retries,
 diagnostic probes, failed retry churn, or qloop generation; `field_prompt_format`
-records whether base cells saw the prompt as raw text, `Q:/A:` frame, or an
-automatic raw/non-ASCII split;
+records whether base cells saw the prompt as raw text, `Q:/A:` frame, an
+automatic raw/non-ASCII split, or a `User:/Arianna:` bridge. `field_temp_base`
+and `field_temp_span` record the base-cell temperature spread (`base + span *
+cell_fraction`, default `0.60..1.30`); `field_lang_bias` records whether
+non-ASCII prompts bias base-cell retry selection toward same-script fragments
+(`0` means measure language drift only);
 `elapsed_avg` and `elapsed_max` expose slow prompt/settings
 combinations before they become production defaults. Set `A2A_FIELD_KEEP_RAW=1`
 to save the full per-prompt field outputs next to each TSV. Defaults are
 intentionally small:
 `A2A_FIELD_XCELLS="0 0.01 0.02 0.05"`, `A2A_FIELD_QLOOPS="1 2"`,
 `A2A_FIELD_PROMPT_FORMATS="raw"`,
+`A2A_FIELD_TEMP_BASES="0.60"`, `A2A_FIELD_TEMP_SPANS="0.70"`,
+`A2A_FIELD_LANG_BIASES="0"`,
 `A2A_FIELD_QLOOP_TCONFS="0.20"`, `A2A_FIELD_QLOOP_TCONF_ADAPTS="0"`,
 `A2A_FIELD_QLOOP_TCONF_ADAPT_WEIGHTS="-0.10"`,
 `A2A_FIELD_QLOOP_MIN_IQS="0.0"`, `A2A_FIELD_QLOOP_UNIQUE_ASKERS="0"`,
@@ -191,9 +197,14 @@ A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_UNIQUE_ASKERS="0 1"
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_STATEMENT_POOLS="0 1 2" A2A_FIELD_QLOOP_STATEMENT_ROUTES="1" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="2" A2A_FIELD_QLOOP_STATEMENT_ROUTES="0 1" make field-grid
 A2A_FIELD_XCELLS="0.02" A2A_FIELD_CELL_RETRY_MAXS="1 2 4" make field-grid
+A2A_FIELD_XCELLS="0.02" A2A_FIELD_TEMP_BASES="0.35 0.45 0.60" A2A_FIELD_TEMP_SPANS="0 0.30 0.70" make field-grid
+A2A_FIELD_XCELLS="0.02" A2A_FIELD_LANG_BIASES="0 0.5 1.0" make field-grid
 A2A_FIELD_ROUNDS_LIST="1 2 3" A2A_FIELD_CELLS=4 A2A_FIELD_FRAG=12 make field-grid
 A2A_FIELD_KEEP_RAW=1 A2A_FIELD_XCELLS="0.02" A2A_FIELD_QLOOPS="1 2" make field-grid
 ```
+
+Use `prompts/field_russian.txt` as a small mixed-language regression set when
+the broad field grid isolates language drift to non-ASCII prompts.
 
 `make repl-sweep` runs the direct REPL questions in `prompts/repl_questions.txt`
 and prints a TSV with `user_bridge`, route count, average `I_U^kv`, and average
