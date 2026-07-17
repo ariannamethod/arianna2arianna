@@ -55,6 +55,8 @@ awk -F '\t' '
     function avg_text(key) { return wn[key] ? sprintf("%.3f", wsum[key] / wn[key]) : "nan" }
     NR == 1 {
         for (i = 1; i <= NF; i++) idx[$i] = i
+        have_base_rescue = ("base_rescue" in idx)
+        have_base_fail = ("base_fail" in idx)
         col("prompt"); col("kv_influence"); col("d_r"); col("d_margin")
         col("disso"); col("dpos"); col("qloop_routes"); col("qloop_kv_routes")
         col("qloop_triggers"); col("qloop_gated")
@@ -74,6 +76,7 @@ awk -F '\t' '
         col("cell_quality"); col("cell_tail"); col("cell_morph")
         col("cell_label"); col("cell_short"); col("cell_question")
         col("base_ms"); col("base_gen"); col("base_retry"); col("base_probe")
+        col("base_rescue"); col("base_fail")
         col("qloop_ms"); col("qloop_gen"); col("qloop_retry")
         col("elapsed_sec")
         next
@@ -163,6 +166,8 @@ awk -F '\t' '
         base_gen += $(col("base_gen")) + 0
         base_retry += $(col("base_retry")) + 0
         base_probe += $(col("base_probe")) + 0
+        base_rescue += have_base_rescue ? $(col("base_rescue")) + 0 : 0
+        base_fail += have_base_fail ? $(col("base_fail")) + 0 : 0
         qloop_gen += $(col("qloop_gen")) + 0
         qloop_retry += $(col("qloop_retry")) + 0
 
@@ -245,11 +250,11 @@ awk -F '\t' '
             num_n["disso"] ? sprintf("%.3f", num_sum["disso"] / num_n["disso"]) : "nan",
             num_n["dpos"] ? sprintf("%.2f", num_sum["dpos"] / num_n["dpos"]) : "nan"
         printf "settling: d_margin pos %d, neg %d, zero %d\n", dm_pos, dm_neg, dm_zero
-        printf "timing: base_ms_avg %.0f, base_ms_max %.0f :: %s, base_gen %d, base_retry %d, base_probe %d, qloop_ms_avg %.0f, qloop_ms_max %.0f :: %s, qloop_gen %d, qloop_retry %d\n",
+        printf "timing: base_ms_avg %.0f, base_ms_max %.0f :: %s, base_gen %d, base_retry %d, base_probe %d, base_rescue %d, base_fail %d, qloop_ms_avg %.0f, qloop_ms_max %.0f :: %s, qloop_gen %d, qloop_retry %d\n",
             base_ms_n ? base_ms_sum / base_ms_n : 0,
             base_ms_seen ? base_ms_max : 0,
             base_ms_seen ? base_ms_max_prompt : "n/a",
-            base_gen, base_retry, base_probe,
+            base_gen, base_retry, base_probe, base_rescue, base_fail,
             qloop_ms_n ? qloop_ms_sum / qloop_ms_n : 0,
             qloop_ms_seen ? qloop_ms_max : 0,
             qloop_ms_seen ? qloop_ms_max_prompt : "n/a",

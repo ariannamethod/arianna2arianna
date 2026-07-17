@@ -2447,7 +2447,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     int keep_qloop_kv = (g_qloop && out_disso);   /* qloop answers can hear the asking cell's KV, not only pasted text */
     g_round_tokn = 0;   /* fresh shared word-memory for this round's cross-cell rep-penalty */
     double base_t0 = now_ms();
-    int base_gen = 0, base_retry = 0, base_probe = 0;
+    int base_gen = 0, base_retry = 0, base_probe = 0, base_rescue = 0, base_fail = 0;
     for (int c = 0; c < n_cells; c++) {
         if (g_chorus) snprintf(ctx, sizeof(ctx), "%s", prompt);   /* CHORUS: each cell answers the SAME prompt from its own angle; awareness via cross-cell, not text */
         else if (g_leap_mode && r > 0) {             /* RELAY (legacy): dissonance-into-forward route */
@@ -2486,7 +2486,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         static const float cell_retry_temp_mul[] = { 1.00f, 0.85f, 0.70f, 0.60f };
         static const int   cell_retry_top_k[]    = { 40,    32,    24,    16    };
         static const unsigned cell_retry_salt[]  = { 0u, 0x91e10da5u, 0x7f4a7c15u, 0x85ebca6bu };
-        int max_attempts = 1;
+        int max_attempts = 1, first_score = -1;
         for (int attempt = 0; attempt < max_attempts; attempt++) {
             char cand_frag[2048]; int cand_ids[256], cand_n = 0, cand_commit[64];
             kv_cache *cand_kv = NULL; int cand_len = 0;
@@ -2526,7 +2526,14 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
                 best_score = cand_score;
             }
             if (cand_kv) kv_free(cand_kv);
-            if (attempt == 0 && cand_score > 0) max_attempts = g_cell_retry_max;
+            if (attempt == 0) {
+                first_score = cand_score;
+                if (cand_score > 0) max_attempts = g_cell_retry_max;
+            }
+        }
+        if (first_score > 0) {
+            if (best_score <= 0) base_rescue++;
+            else base_fail++;
         }
         g_round_tokn = tok_before;
         if (field_snap_n) memcpy(g_field_dir, field_before, (size_t)field_snap_n * sizeof(float));
@@ -2795,8 +2802,8 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         }
         qloop_ms = now_ms() - qloop_t0;
     }
-    if (verbose) printf("\n  timing: base_ms=%.0f base_gen=%d base_retry=%d base_probe=%d qloop_ms=%.0f qloop_gen=%d qloop_retry=%d", base_ms, base_gen, base_retry, base_probe, qloop_ms, qloop_gen, qloop_retry);
-    if (flog) fprintf(flog, "- timing base_ms=%.0f base_gen=%d base_retry=%d base_probe=%d qloop_ms=%.0f qloop_gen=%d qloop_retry=%d\n", base_ms, base_gen, base_retry, base_probe, qloop_ms, qloop_gen, qloop_retry);
+    if (verbose) printf("\n  timing: base_ms=%.0f base_gen=%d base_retry=%d base_probe=%d base_rescue=%d base_fail=%d qloop_ms=%.0f qloop_gen=%d qloop_retry=%d", base_ms, base_gen, base_retry, base_probe, base_rescue, base_fail, qloop_ms, qloop_gen, qloop_retry);
+    if (flog) fprintf(flog, "- timing base_ms=%.0f base_gen=%d base_retry=%d base_probe=%d base_rescue=%d base_fail=%d qloop_ms=%.0f qloop_gen=%d qloop_retry=%d\n", base_ms, base_gen, base_retry, base_probe, base_rescue, base_fail, qloop_ms, qloop_gen, qloop_retry);
     if (g_user_q && *g_user_q && g_qloop && verbose && out_disso && cent && g_xcell > 0) {
         int qids_prompt[512], qnprompt = bpe_encode(tok, g_user_q, qids_prompt, 512);
         float *qcent = (float*)calloc(m->embed, sizeof(float));

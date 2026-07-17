@@ -3541,3 +3541,43 @@ Interpretation: `retry=1` is too strict because it loses qloop coverage.
 cutting the slow-set wall time roughly in half versus the historical default.
 Keep global default at `4` until a broader read confirms no regression, but use
 `A2A_FIELD_CELL_RETRY_MAXS="2 4"` in the next broaden comparison.
+
+## 2026-07-17 - Base retry rescue counters
+
+### Context
+
+The broaden retry comparison showed the next missing measurement: `base_retry`
+counts how many extra base-cell generations were spent, but not whether those
+attempts actually repaired a bad surface. On Russian/mixed-language prompts,
+`retry=4` often spent many more attempts than `retry=2` while leaving the same
+base-cell debris. The tuning loop needed a rescue/fail split before changing
+the production cap.
+
+### Change
+
+- `field` timing now includes `base_rescue` and `base_fail`.
+- `base_rescue` counts cells whose first base fragment was bad but whose retry
+  path found a zero-debt replacement.
+- `base_fail` counts cells whose retry path was entered but still ended with
+  surface debt.
+- `field_sweep.sh`, `field_tsv_summary.sh`, and `field_grid.sh` carry the two
+  counters through the TSV contracts and compact grid output.
+
+Interpretation: this is measurement only, not a behavior change. The next
+broaden read should compare `retry=2` and `retry=4` by rescue rate, not just
+latency and aggregate field score.
+
+Targeted mixed-language slice (`field_broaden.txt` Russian lines, `KVSHUF=0`,
+same field/qloop candidate):
+
+```text
+retry  routes  prompts  cell_quality  field_score  base_gen/retry/probe/rescue/fail  elapsed_avg/max
+2      5       3/3      27/36         +1.637       22/10/0/0/10                      41.3/47.0
+4      8       3/3      25/36         +1.695       42/30/0/3/7                       82.7/92.0
+```
+
+Reading: retries three and four do rescue real cells, but the cost is steep and
+the remaining Russian base-cell surface is still mostly bad. Keep runtime default
+at `4` for now because it buys qloop routes and three rescues on the hardest
+slice; use `retry=2` as the latency diagnostic lane. The root fix remains
+mixed-language/frame handling, not blind retry growth.
