@@ -55,6 +55,34 @@ typedef struct {
     float rope_freq_base, rms_eps; char arch[64];
 } gguf_file;
 
+/* Fail-loud allocators: OOM in this one-shot organism is unrecoverable because
+ * callers immediately write into the returned buffers. */
+static void *xalloc(size_t n) {
+    void *p = malloc(n ? n : 1);
+    if (!p) { fprintf(stderr, "chorus: OOM (alloc %zu)\n", n); exit(1); }
+    return p;
+}
+static void *xzalloc(size_t n, size_t sz) {
+    size_t total = n * sz;
+    if (sz != 0 && total / sz != n) { fprintf(stderr, "chorus: alloc overflow (%zu x %zu)\n", n, sz); exit(1); }
+    void *p = malloc(total ? total : 1);
+    if (!p) { fprintf(stderr, "chorus: OOM (alloc %zu x %zu)\n", n, sz); exit(1); }
+    memset(p, 0, total);
+    return p;
+}
+static size_t xmul3_size(size_t a, size_t b, size_t c, const char *what) {
+    if ((b && a > SIZE_MAX / b) || (c && a * b > SIZE_MAX / c)) {
+        fprintf(stderr, "chorus: size overflow in %s (%zu x %zu x %zu)\n", what, a, b, c);
+        exit(1);
+    }
+    return a * b * c;
+}
+static char *xstrdup(const char *s) {
+    char *r = strdup(s ? s : "");
+    if (!r) { fprintf(stderr, "chorus: OOM (strdup)\n"); exit(1); }
+    return r;
+}
+
 static int read_u32(FILE* f, uint32_t* v) { return fread(v, 4, 1, f) == 1; }
 static int read_u64(FILE* f, uint64_t* v) { return fread(v, 8, 1, f) == 1; }
 static int read_f32(FILE* f, float* v)    { return fread(v, 4, 1, f) == 1; }
@@ -62,7 +90,11 @@ static int read_f32(FILE* f, float* v)    { return fread(v, 4, 1, f) == 1; }
 static int read_string(FILE* f, char* buf, int max) {
     uint64_t len;
     if (!read_u64(f, &len)) return 0;
-    if (len >= (uint64_t)max) { for (uint64_t i = 0; i < len; i++) fgetc(f); buf[0] = 0; return 1; }
+    if (len >= (uint64_t)max) {
+        for (uint64_t i = 0; i < len; i++) if (fgetc(f) == EOF) return 0;
+        buf[0] = 0;
+        return 0;
+    }
     if (fread(buf, 1, len, f) != len) return 0;
     buf[len] = 0; return 1;
 }
@@ -146,14 +178,14 @@ static int skip_array(FILE* f) {
 }
 static int skip_value(FILE* f, uint32_t type) {
     switch (type) {
-        case 4: fseek(f, 4, SEEK_CUR); return 1;
-        case 5: fseek(f, 4, SEEK_CUR); return 1;
-        case 6: fseek(f, 4, SEEK_CUR); return 1;
-        case 7: fseek(f, 1, SEEK_CUR); return 1;
+        case 4: return fseek(f, 4, SEEK_CUR) == 0;
+        case 5: return fseek(f, 4, SEEK_CUR) == 0;
+        case 6: return fseek(f, 4, SEEK_CUR) == 0;
+        case 7: return fseek(f, 1, SEEK_CUR) == 0;
         case 8: { char buf[4096]; return read_string(f, buf, sizeof(buf)); }
         case 9: return skip_array(f);
-        case 10: fseek(f, 8, SEEK_CUR); return 1;
-        case 12: fseek(f, 8, SEEK_CUR); return 1;
+        case 10: return fseek(f, 8, SEEK_CUR) == 0;
+        case 12: return fseek(f, 8, SEEK_CUR) == 0;
         default: return 0;
     }
 }
@@ -163,37 +195,40 @@ static gguf_file* gguf_open(const char* path) {
     if (!f) { fprintf(stderr, "gguf: cannot open %s\n", path); return NULL; }
     uint32_t magic;
     if (!read_u32(f, &magic) || magic != GGUF_MAGIC) { fprintf(stderr, "gguf: bad magic 0x%08x\n", magic); fclose(f); return NULL; }
-    gguf_file* gf = (gguf_file*)calloc(1, sizeof(gguf_file));
-    if (!gf) { fclose(f); return NULL; }
-    read_u32(f, &gf->version); read_u64(f, &gf->n_tensors); read_u64(f, &gf->n_kv);
+    gguf_file* gf = (gguf_file*)xzalloc(1, sizeof(gguf_file));
+    if (!read_u32(f, &gf->version) || !read_u64(f, &gf->n_tensors) || !read_u64(f, &gf->n_kv)) {
+        fprintf(stderr, "gguf: truncated header\n"); fclose(f); free(gf); return NULL;
+    }
     if (gf->n_tensors > GGUF_MAX_TENSORS) { fprintf(stderr, "gguf: too many tensors\n"); fclose(f); free(gf); return NULL; }
 
     gf->n_kv_parsed = 0;
     for (uint64_t i = 0; i < gf->n_kv; i++) {
         char key[512] = {0}; uint32_t vtype;
-        read_string(f, key, sizeof(key)); read_u32(f, &vtype);
+        if (!read_string(f, key, sizeof(key)) || !read_u32(f, &vtype)) {
+            fprintf(stderr, "gguf: truncated kv metadata\n"); fclose(f); free(gf); return NULL;
+        }
         if (gf->n_kv_parsed < GGUF_MAX_KV && vtype != 9) {
             gguf_kv* kv = &gf->kv[gf->n_kv_parsed];
             copy_cstr(kv->key, sizeof(kv->key), key); kv->type = vtype;
             switch (vtype) {
-                case 4: read_u32(f, &kv->val.u32); break;
+                case 4: if (!read_u32(f, &kv->val.u32)) { fclose(f); free(gf); return NULL; } break;
                 case 5: {
                     int32_t v;
                     if (fread(&v, sizeof(v), 1, f) != 1) { fclose(f); free(gf); return NULL; }
                     kv->val.i32 = v; break;
                 }
-                case 6: read_f32(f, &kv->val.f32); break;
+                case 6: if (!read_f32(f, &kv->val.f32)) { fclose(f); free(gf); return NULL; } break;
                 case 7: {
                     uint8_t v;
                     if (fread(&v, sizeof(v), 1, f) != 1) { fclose(f); free(gf); return NULL; }
                     kv->val.b = v; break;
                 }
-                case 8: read_string(f, kv->val.str, sizeof(kv->val.str)); break;
-                case 10: case 12: read_u64(f, &kv->val.u64); break;
-                default: skip_value(f, vtype); break;
+                case 8: if (!read_string(f, kv->val.str, sizeof(kv->val.str))) { fclose(f); free(gf); return NULL; } break;
+                case 10: case 12: if (!read_u64(f, &kv->val.u64)) { fclose(f); free(gf); return NULL; } break;
+                default: if (!skip_value(f, vtype)) { fclose(f); free(gf); return NULL; } break;
             }
             gf->n_kv_parsed++;
-        } else skip_value(f, vtype);
+        } else if (!skip_value(f, vtype)) { fclose(f); free(gf); return NULL; }
     }
     for (int i = 0; i < gf->n_kv_parsed; i++) {
         gguf_kv* kv = &gf->kv[i];
@@ -214,21 +249,42 @@ static gguf_file* gguf_open(const char* path) {
 
     for (uint64_t i = 0; i < gf->n_tensors && i < GGUF_MAX_TENSORS; i++) {
         gguf_tensor_info* ti = &gf->tensors[i];
-        read_string(f, ti->name, GGUF_MAX_NAME); read_u32(f, &ti->ndim);
+        if (!read_string(f, ti->name, GGUF_MAX_NAME)) {
+            fprintf(stderr, "gguf: tensor %llu name too long or truncated\n", (unsigned long long)i); fclose(f); free(gf); return NULL;
+        }
+        if (!read_u32(f, &ti->ndim)) { fprintf(stderr, "gguf: truncated tensor ndim\n"); fclose(f); free(gf); return NULL; }
+        if (ti->ndim > 4) {
+            fprintf(stderr, "gguf: tensor '%s' ndim %u unsupported\n", ti->name, ti->ndim);
+            fclose(f); free(gf); return NULL;
+        }
         ti->n_elements = 1;
-        for (uint32_t d = 0; d < ti->ndim && d < 4; d++) { read_u64(f, &ti->shape[d]); ti->n_elements *= ti->shape[d]; }
-        read_u32(f, &ti->dtype); read_u64(f, &ti->offset);
+        for (uint32_t d = 0; d < ti->ndim; d++) {
+            if (!read_u64(f, &ti->shape[d])) { fprintf(stderr, "gguf: truncated tensor shape\n"); fclose(f); free(gf); return NULL; }
+            if (ti->shape[d] != 0 && ti->n_elements > UINT64_MAX / ti->shape[d]) {
+                fprintf(stderr, "gguf: tensor '%s' element count overflow\n", ti->name); fclose(f); free(gf); return NULL;
+            }
+            ti->n_elements *= ti->shape[d];
+        }
+        if (!read_u32(f, &ti->dtype) || !read_u64(f, &ti->offset)) {
+            fprintf(stderr, "gguf: truncated tensor record\n"); fclose(f); free(gf); return NULL;
+        }
     }
     long pos = ftell(f);
-    gf->data_offset = (pos + 31) & ~31UL;
-    fseek(f, 0, SEEK_END); long fsize = ftell(f);
-    long data_size = fsize - gf->data_offset;
+    if (pos < 0 || pos > LONG_MAX - 31) { fprintf(stderr, "gguf: cannot determine tensor data offset\n"); fclose(f); free(gf); return NULL; }
+    gf->data_offset = (uint64_t)((pos + 31L) & ~31L);
+    if (fseek(f, 0, SEEK_END) != 0) { fprintf(stderr, "gguf: cannot seek end\n"); fclose(f); free(gf); return NULL; }
+    long fsize = ftell(f);
+    if (fsize < 0 || (uint64_t)fsize < gf->data_offset) {
+        fprintf(stderr, "gguf: file shorter than header\n"); fclose(f); free(gf); return NULL;
+    }
+    long data_size = fsize - (long)gf->data_offset;
     size_t pg = (size_t)getpagesize();
     size_t alloc = ((size_t)data_size + pg - 1) & ~(pg - 1);
     gf->data = NULL;
     if (posix_memalign((void**)&gf->data, pg, alloc) != 0 || !gf->data) { fclose(f); free(gf); return NULL; }
     gf->data_size = (uint64_t)alloc;
-    if (fseek(f, gf->data_offset, SEEK_SET) != 0 ||
+    if (gf->data_offset > (uint64_t)LONG_MAX ||
+        fseek(f, (long)gf->data_offset, SEEK_SET) != 0 ||
         fread(gf->data, 1, (size_t)data_size, f) != (size_t)data_size) {
         fprintf(stderr, "gguf: failed to read tensor data\n");
         fclose(f); free(gf->data); free(gf); return NULL;
@@ -261,13 +317,15 @@ static char** gguf_read_str_array(const char* path, const char* key, int* out_n)
         if (strcmp(k, key) == 0 && vtype == 9) {
             uint32_t atype; uint64_t alen;
             if (!read_u32(f, &atype) || !read_u64(f, &alen) || atype != 8) break;
-            result = (char**)calloc(alen ? alen : 1, sizeof(char*));
+            result = (char**)xzalloc(alen ? alen : 1, sizeof(char*));
+            uint64_t nrd = 0;
             for (uint64_t j = 0; j < alen; j++) {
                 char buf[2048] = {0};
                 if (!read_string(f, buf, sizeof(buf))) break;
-                result[j] = strdup(buf);
+                result[j] = xstrdup(buf);
+                nrd++;
             }
-            if (out_n) *out_n = (int)alen;
+            if (out_n) *out_n = (int)nrd;
             break;
         }
         if (!skip_value(f, vtype)) break;
@@ -289,9 +347,10 @@ static float* gguf_read_f32_array(const char* path, const char* key, int* out_n)
         if (strcmp(k, key) == 0 && vtype == 9) {
             uint32_t atype; uint64_t alen;
             if (!read_u32(f, &atype) || !read_u64(f, &alen) || atype != 6) break;  /* 6 = float32 */
-            result = (float*)calloc(alen ? alen : 1, sizeof(float));
-            for (uint64_t j = 0; j < alen; j++) { float v; if (!read_f32(f, &v)) break; result[j] = v; }
-            if (out_n) *out_n = (int)alen;
+            result = (float*)xzalloc(alen ? alen : 1, sizeof(float));
+            uint64_t nrd = 0;
+            for (uint64_t j = 0; j < alen; j++) { float v; if (!read_f32(f, &v)) break; result[j] = v; nrd++; }
+            if (out_n) *out_n = (int)nrd;
             break;
         }
         if (!skip_value(f, vtype)) break;
@@ -390,7 +449,10 @@ static float* gguf_dequant(const gguf_file* gf, int idx) {
         fprintf(stderr, "gguf: tensor '%s' out of bounds/invalid\n", ti->name); return NULL;
     }
     const uint8_t* src = gf->data + ti->offset;
-    float* dst = (float*)malloc(ti->n_elements * sizeof(float)); if (!dst) return NULL;
+    if (ti->n_elements > SIZE_MAX / sizeof(float)) {
+        fprintf(stderr, "gguf: tensor '%s' too large to dequant\n", ti->name); return NULL;
+    }
+    float* dst = (float*)xalloc((size_t)ti->n_elements * sizeof(float));
     switch (ti->dtype) {
     case GGUF_TYPE_F32:  memcpy(dst, src, ti->n_elements * sizeof(float)); break;
     case GGUF_TYPE_F16: { const uint16_t* h = (const uint16_t*)src; for (uint64_t i = 0; i < ti->n_elements; i++) dst[i] = f16_to_f32(h[i]); break; }
@@ -410,11 +472,11 @@ static float* gguf_dequant(const gguf_file* gf, int idx) {
 
 typedef struct { char **keys; int *vals; int cap; int n; } smap;
 static unsigned long fnv1a(const char *s) { unsigned long h = 1469598103934665603UL; while (*s) { h ^= (unsigned char)*s++; h *= 1099511628211UL; } return h; }
-static void smap_init(smap *m, int cap) { if (cap < 8) cap = 8; m->cap = cap; m->n = 0; m->keys = (char**)calloc(cap, sizeof(char*)); m->vals = (int*)calloc(cap, sizeof(int)); }
+static void smap_init(smap *m, int cap) { if (cap < 8) cap = 8; m->cap = cap; m->n = 0; m->keys = (char**)xzalloc((size_t)cap, sizeof(char*)); m->vals = (int*)xzalloc((size_t)cap, sizeof(int)); }
 static void smap_put(smap *m, const char *k, int v) {
     unsigned long h = fnv1a(k) % m->cap;
     while (m->keys[h]) { if (strcmp(m->keys[h], k) == 0) { m->vals[h] = v; return; } h = (h + 1) % m->cap; }
-    m->keys[h] = strdup(k); m->vals[h] = v; m->n++;
+    m->keys[h] = xstrdup(k); m->vals[h] = v; m->n++;
 }
 static int smap_get(const smap *m, const char *k) {
     unsigned long h = fnv1a(k) % m->cap;
@@ -453,8 +515,8 @@ static void gpt2_byte_maps(bpe_tokenizer *t) {
 /* GPT-2 byte-level BPE encode: bytes→b2u symbols, then merge the adjacent pair with the lowest rank. */
 static int bpe_encode_gpt2(const bpe_tokenizer *t, const char *text, int *out, int cap) {
     int tl = (int)strlen(text); if (tl == 0) return 0;
-    char **sym = (char**)malloc(((size_t)tl + 1) * sizeof(char*)); int nsym = 0;
-    for (int i = 0; i < tl; i++) sym[nsym++] = strdup(t->b2u[(unsigned char)text[i]]);
+    char **sym = (char**)xalloc(((size_t)tl + 1) * sizeof(char*)); int nsym = 0;
+    for (int i = 0; i < tl; i++) sym[nsym++] = xstrdup(t->b2u[(unsigned char)text[i]]);
     while (nsym > 1) {
         int best = 1<<30, bi = -1; char key[1024];
         for (int i = 0; i < nsym - 1; i++) {
@@ -463,7 +525,7 @@ static int bpe_encode_gpt2(const bpe_tokenizer *t, const char *text, int *out, i
             if (r >= 0 && r < best) { best = r; bi = i; }
         }
         if (bi < 0) break;
-        char *mg = (char*)malloc(strlen(sym[bi]) + strlen(sym[bi+1]) + 1);
+        char *mg = (char*)xalloc(strlen(sym[bi]) + strlen(sym[bi+1]) + 1);
         strcpy(mg, sym[bi]); strcat(mg, sym[bi+1]); free(sym[bi]); free(sym[bi+1]); sym[bi] = mg;
         for (int i = bi + 1; i < nsym - 1; i++) sym[i] = sym[i+1];
         nsym--;
@@ -489,7 +551,7 @@ static bpe_tokenizer *bpe_load(const char *path) {
     if (!toks || nt <= 0) return NULL;
     int nsc = 0; float *scores = gguf_read_f32_array(path, "tokenizer.ggml.scores", &nsc);
     int nmg = 0; char **merges = gguf_read_str_array(path, "tokenizer.ggml.merges", &nmg);
-    bpe_tokenizer *t = (bpe_tokenizer*)calloc(1, sizeof(*t));
+    bpe_tokenizer *t = (bpe_tokenizer*)xzalloc(1, sizeof(*t));
     t->tokens = toks; t->n_tokens = nt; t->scores = scores;
     t->bos_id = -1;
     smap_init(&t->vocab, nt * 2); for (int i = 0; i < nt; i++) if (toks[i]) smap_put(&t->vocab, toks[i], i);
@@ -507,15 +569,15 @@ static int bpe_n_vocab(const bpe_tokenizer *t) { return t ? t->n_tokens : 0; }
 static int bpe_encode(const bpe_tokenizer *t, const char *text, int *out, int cap) {
     if (t->is_bpe) return bpe_encode_gpt2(t, text, out, cap);
     int tl = (int)strlen(text);
-    char *s = (char*)malloc((size_t)tl*3 + 4); int sl = 0;
+    char *s = (char*)xalloc((size_t)tl*3 + 4); int sl = 0;
     s[sl++]=(char)0xE2; s[sl++]=(char)0x96; s[sl++]=(char)0x81;            /* leading ▁ */
     for (int p = 0; p < tl; p++) {
         if (text[p] == ' ') { s[sl++]=(char)0xE2; s[sl++]=(char)0x96; s[sl++]=(char)0x81; }
         else s[sl++] = text[p];
     }
     s[sl] = 0;
-    char **sym = (char**)malloc(((size_t)sl + 1) * sizeof(char*)); int nsym = 0;
-    for (int i = 0; i < sl; ) { int adv = utf8_len1(s + i); char *c = (char*)malloc(adv + 1); memcpy(c, s + i, adv); c[adv] = 0; sym[nsym++] = c; i += adv; }
+    char **sym = (char**)xalloc(((size_t)sl + 1) * sizeof(char*)); int nsym = 0;
+    for (int i = 0; i < sl; ) { int adv = utf8_len1(s + i); char *c = (char*)xalloc(adv + 1); memcpy(c, s + i, adv); c[adv] = 0; sym[nsym++] = c; i += adv; }
     free(s);
     while (nsym > 1) {
         float best = -1e30f; int bi = -1; char key[512];
@@ -525,7 +587,7 @@ static int bpe_encode(const bpe_tokenizer *t, const char *text, int *out, int ca
             if (id >= 0) { float sco = t->scores ? t->scores[id] : 0.0f; if (sco > best) { best = sco; bi = i; } }
         }
         if (bi < 0) break;
-        char *mg = (char*)malloc(strlen(sym[bi]) + strlen(sym[bi+1]) + 1);
+        char *mg = (char*)xalloc(strlen(sym[bi]) + strlen(sym[bi+1]) + 1);
         strcpy(mg, sym[bi]); strcat(mg, sym[bi+1]); free(sym[bi]); free(sym[bi+1]); sym[bi] = mg;
         for (int i = bi + 1; i < nsym - 1; i++) sym[i] = sym[i+1];
         nsym--;
@@ -826,10 +888,19 @@ static void rope_interleaved(float *x, int pos, int hd, float base) {
 static void rope_neox(float *x, int pos, int hd, float base) {
     int h2 = hd/2; for (int i = 0; i < h2; i++) { float a = pos/powf(base, 2.0f*i/hd), c = cosf(a), s = sinf(a); float x0 = x[i], x1 = x[i+h2]; x[i] = x0*c - x1*s; x[i+h2] = x0*s + x1*c; }
 }
-static int arch_uses_neox_rope(const char *arch) {
-    if (!arch) return 0;
-    return strcmp(arch, "nlama") == 0 ||
-           strstr(arch, "qwen") || strstr(arch, "gemma") || strstr(arch, "phi");
+static int arch_uses_neox_rope(const char *arch, int *known) {
+    if (known) *known = 0;
+    if (!arch || !*arch) return 0;
+    if (strcmp(arch, "nlama") == 0 ||
+        strstr(arch, "qwen") || strstr(arch, "gemma") || strstr(arch, "phi")) {
+        if (known) *known = 1;
+        return 1;
+    }
+    if (strcmp(arch, "llama") == 0) {
+        if (known) *known = 1;
+        return 0;
+    }
+    return 0;
 }
 
 typedef struct {
@@ -879,15 +950,44 @@ static void weight_matvec(const weight_t *W, const float *x, float *y) {
 }
 
 static model_t *model_load(gguf_file *gf) {
-    model_t *m = (model_t*)calloc(1, sizeof(model_t));
+    model_t *m = (model_t*)xzalloc(1, sizeof(model_t));
     m->n_layers = gf->n_layers; m->n_heads = gf->n_heads; m->n_kv_heads = gf->n_kv_heads;
     m->embed = gf->embed_dim; m->ffn = gf->ffn_dim; m->rope_base = gf->rope_freq_base; m->rms_eps = gf->rms_eps;
+    if (m->n_heads <= 0 || m->n_kv_heads <= 0 || m->n_kv_heads > m->n_heads || (m->n_heads % m->n_kv_heads) != 0 ||
+        m->embed <= 0 || m->embed > 8192 || m->ffn <= 0 || m->n_layers <= 0) {
+        fprintf(stderr, "chorus: GGUF arch out of bounds (H=%d KV=%d E=%d FFN=%d L=%d)\n",
+                m->n_heads, m->n_kv_heads, m->embed, m->ffn, m->n_layers);
+        free(m); return NULL;
+    }
     int ti = gguf_find_tensor(gf, "blk.0.attn_q.weight");
+    if (ti >= 0 && gf->tensors[ti].shape[1] > (uint64_t)INT_MAX) {
+        fprintf(stderr, "chorus: q_dim overflow in blk.0.attn_q.weight\n");
+        free(m); return NULL;
+    }
     m->q_dim = ti >= 0 ? (int)gf->tensors[ti].shape[1] : m->embed;
+    if (m->q_dim <= 0 || (m->q_dim % m->n_heads) != 0) {
+        fprintf(stderr, "chorus: incompatible q/head geometry (Q=%d H=%d)\n", m->q_dim, m->n_heads);
+        free(m); return NULL;
+    }
     m->head_dim = m->q_dim / m->n_heads; m->kv_dim = m->head_dim * m->n_kv_heads;
+    if (m->head_dim <= 0 || (m->head_dim % 2) != 0 || m->n_kv_heads > INT_MAX / m->head_dim) {
+        fprintf(stderr, "chorus: incompatible rope/KV geometry (HD=%d KV=%d)\n", m->head_dim, m->n_kv_heads);
+        free(m); return NULL;
+    }
     ti = gguf_find_tensor(gf, "token_embd.weight");
+    if (ti >= 0 && gf->tensors[ti].shape[1] > (uint64_t)INT_MAX) {
+        fprintf(stderr, "chorus: vocab overflow in token_embd.weight\n");
+        free(m); return NULL;
+    }
     m->vocab = ti >= 0 ? (int)gf->tensors[ti].shape[1] : gf->vocab_size;
-    m->neox = arch_uses_neox_rope(gf->arch) ? 1 : 0;
+    if (m->vocab <= 0) { fprintf(stderr, "chorus: GGUF vocab_size %d invalid\n", m->vocab); free(m); return NULL; }
+    int rope_known = 0;
+    m->neox = arch_uses_neox_rope(gf->arch, &rope_known) ? 1 : 0;
+    if (!rope_known) {
+        fprintf(stderr, "chorus: unsupported GGUF architecture '%s' — refusing to guess RoPE convention\n",
+                gf->arch[0] ? gf->arch : "<empty>");
+        free(m); return NULL;
+    }
     m->is_qwen3 = (gguf_find_tensor(gf, "blk.0.attn_q_norm.weight") >= 0) ? 1 : 0;
 
     m->tok_emb  = deq(gf, "token_embd.weight");
@@ -895,15 +995,17 @@ static model_t *model_load(gguf_file *gf) {
     if (load_weight(gf, "output.weight", &m->output, m)) m->has_output = 1;
     else { m->output.f32 = m->tok_emb; m->output.m = m->vocab; m->output.k = m->embed; m->output.dtype = GGUF_TYPE_F32; m->has_output = 0; }
 
-    m->L = calloc(m->n_layers, sizeof(*m->L)); char nm[160];
+    m->L = xzalloc((size_t)m->n_layers, sizeof(*m->L)); char nm[160];
     for (int l = 0; l < m->n_layers; l++) {
-        #define LD(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); m->L[l].f = deq(gf, nm); } while(0)
-        #define LW(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); load_weight(gf, nm, &m->L[l].f, m); } while(0)
+        #define LD(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); m->L[l].f = deq(gf, nm); if (!m->L[l].f) { fprintf(stderr, "chorus: missing/bad tensor '%s'\n", nm); return NULL; } } while(0)
+        #define LD_OPT(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); m->L[l].f = deq(gf, nm); } while(0)
+        #define LW(f, fmt) do { snprintf(nm, sizeof(nm), fmt, l); if (!load_weight(gf, nm, &m->L[l].f, m)) { fprintf(stderr, "chorus: missing/bad weight '%s'\n", nm); return NULL; } } while(0)
         LD(attn_norm, "blk.%d.attn_norm.weight"); LD(ffn_norm, "blk.%d.ffn_norm.weight");
         LW(wq, "blk.%d.attn_q.weight"); LW(wk, "blk.%d.attn_k.weight"); LW(wv, "blk.%d.attn_v.weight"); LW(wo, "blk.%d.attn_output.weight");
         LW(wgate, "blk.%d.ffn_gate.weight"); LW(wup, "blk.%d.ffn_up.weight"); LW(wdown, "blk.%d.ffn_down.weight");
-        LD(q_norm, "blk.%d.attn_q_norm.weight"); LD(k_norm, "blk.%d.attn_k_norm.weight");
+        LD_OPT(q_norm, "blk.%d.attn_q_norm.weight"); LD_OPT(k_norm, "blk.%d.attn_k_norm.weight");
         #undef LD
+        #undef LD_OPT
         #undef LW
     }
     printf("model: arch=%s E=%d H=%d KV=%d HD=%d Q=%d FFN=%d V=%d L=%d | %s rope%s%s\n",
@@ -916,9 +1018,14 @@ static model_t *model_load(gguf_file *gf) {
 
 typedef struct { float *k, *v, *ku; int max_seq, kv_dim; } kv_cache;
 static kv_cache *kv_new(int nl, int max_seq, int kv_dim) {
-    kv_cache *c = calloc(1, sizeof(kv_cache));
-    c->k = calloc((long)nl*max_seq*kv_dim, sizeof(float)); c->v = calloc((long)nl*max_seq*kv_dim, sizeof(float));
-    c->ku = calloc((long)nl*max_seq*kv_dim, sizeof(float));   /* un-rope'd K — phase-coherent cross-cell scores */
+    kv_cache *c = xzalloc(1, sizeof(kv_cache));
+    if (nl <= 0 || max_seq <= 0 || kv_dim <= 0) {
+        fprintf(stderr, "chorus: invalid KV cache shape (%d x %d x %d)\n", nl, max_seq, kv_dim);
+        exit(1);
+    }
+    size_t n = xmul3_size((size_t)nl, (size_t)max_seq, (size_t)kv_dim, "kv-cache");
+    c->k = xzalloc(n, sizeof(float)); c->v = xzalloc(n, sizeof(float));
+    c->ku = xzalloc(n, sizeof(float));   /* un-rope'd K — phase-coherent cross-cell scores */
     c->max_seq = max_seq; c->kv_dim = kv_dim; return c;
 }
 static void kv_free(kv_cache *kv) {
@@ -1138,11 +1245,11 @@ static void forward(model_t *m, kv_cache *kv, int token, int pos, float *logits)
     int KVD = m->kv_dim, FFN = m->ffn, QD = m->q_dim, gqa = H / KV; float eps = m->rms_eps;
     void (*ropef)(float*,int,int,float) = m->neox ? rope_neox : rope_interleaved;
 
-    float *x = calloc(E, sizeof(float)); memcpy(x, m->tok_emb + (long)token*E, E*sizeof(float));
-    float *xn = calloc(E, sizeof(float)), *q = calloc(QD, sizeof(float)), *kk = calloc(KVD, sizeof(float));
-    float *vv = calloc(KVD, sizeof(float)), *ao = calloc(QD, sizeof(float)), *g = calloc(FFN, sizeof(float)), *qu = calloc(QD, sizeof(float)), *nk = calloc(HD, sizeof(float));
-    float *u = calloc(FFN, sizeof(float)), *t = calloc(E, sizeof(float)), *sc = calloc((size_t)kv->max_seq, sizeof(float));
-    float *scn = calloc((size_t)kv->max_seq, sizeof(float));   /* neighbour-channel scores (separate softmax) */
+    float *x = xzalloc(E, sizeof(float)); memcpy(x, m->tok_emb + (long)token*E, E*sizeof(float));
+    float *xn = xzalloc(E, sizeof(float)), *q = xzalloc(QD, sizeof(float)), *kk = xzalloc(KVD, sizeof(float));
+    float *vv = xzalloc(KVD, sizeof(float)), *ao = xzalloc(QD, sizeof(float)), *g = xzalloc(FFN, sizeof(float)), *qu = xzalloc(QD, sizeof(float)), *nk = xzalloc(HD, sizeof(float));
+    float *u = xzalloc(FFN, sizeof(float)), *t = xzalloc(E, sizeof(float)), *sc = xzalloc((size_t)kv->max_seq, sizeof(float));
+    float *scn = xzalloc((size_t)kv->max_seq, sizeof(float));   /* neighbour-channel scores (separate softmax) */
 
     for (int l = 0; l < m->n_layers; l++) {
         rmsnorm(xn, x, m->L[l].attn_norm, E, eps);
@@ -1234,7 +1341,7 @@ static int cmp_sample_item_desc(const void *a, const void *b) {
 
 static int sample_top_p(float *x, int n, float top_p) {
     if (top_p <= 0.0f || top_p >= 1.0f) return -1;
-    sample_item_t *items = (sample_item_t*)malloc((size_t)n * sizeof(sample_item_t));
+    sample_item_t *items = (sample_item_t*)xalloc((size_t)n * sizeof(sample_item_t));
     if (!items) return -1;
     float mx = x[0];
     for (int i = 1; i < n; i++) if (x[i] > mx) mx = x[i];
@@ -1284,7 +1391,7 @@ static int sample2(float *x, int n, float temp, int top_k, float rep, const int 
         if (id >= 0) return id;
     }
     if (top_k > 0 && top_k < n) {
-        float *tmp = (float*)malloc((size_t)n * sizeof(float)); memcpy(tmp, x, (size_t)n * sizeof(float));
+        float *tmp = (float*)xalloc((size_t)n * sizeof(float)); memcpy(tmp, x, (size_t)n * sizeof(float));
         qsort(tmp, n, sizeof(float), cmp_desc); float thr = tmp[top_k - 1]; free(tmp);
         for (int i = 0; i < n; i++) if (x[i] < thr) x[i] = -1e30f;
     }
@@ -1296,7 +1403,7 @@ static int sample2(float *x, int n, float temp, int top_k, float rep, const int 
 
 /* Shannon entropy of softmax(logits/temp) — a REAL metric from live logits (low = decisive cell). */
 static float logit_entropy(const float *logits, int n, float temp) {
-    float *p = (float*)malloc((size_t)n * sizeof(float)); memcpy(p, logits, (size_t)n * sizeof(float));
+    float *p = (float*)xalloc((size_t)n * sizeof(float)); memcpy(p, logits, (size_t)n * sizeof(float));
     if (temp > 0) for (int i = 0; i < n; i++) p[i] /= temp;
     softmax(p, n);
     float h = 0; for (int i = 0; i < n; i++) if (p[i] > 1e-12f) h -= p[i] * logf(p[i]);
@@ -2273,8 +2380,8 @@ static float cell_speak(model_t *m, bpe_tokenizer *tok, const int *ids, int np, 
                         kv_cache **out_kv, int *out_klen) {
     srand(seed);
     kv_cache *kv = kv_new(m->n_layers, max_seq, m->kv_dim);
-    float *logits = (float*)calloc(m->vocab, sizeof(float));
-    float *fproj  = (g_field_on && g_field_alpha > 0) ? (float*)calloc(m->vocab, sizeof(float)) : NULL;
+    float *logits = (float*)xzalloc(m->vocab, sizeof(float));
+    float *fproj  = (g_field_on && g_field_alpha > 0) ? (float*)xzalloc(m->vocab, sizeof(float)) : NULL;
     for (int i = 0; i < np; i++) forward(m, kv, ids[i], i, logits);
     int hist[256], hlen = 0; char buf[256]; float ent_acc = 0; int ent_n = 0, fl = 0, klen = np;
     for (int s = 0; s < nfrag; s++) {
@@ -2321,7 +2428,7 @@ static float probe_entropy(model_t *m, bpe_tokenizer *tok, const char *prompt) {
     int max_seq = 512, ids[512];
     int np = bpe_encode(tok, prompt, ids, max_seq - 1);
     kv_cache *kv = kv_new(m->n_layers, max_seq, m->kv_dim);
-    float *logits = (float*)calloc(m->vocab, sizeof(float));
+    float *logits = (float*)xzalloc(m->vocab, sizeof(float));
     for (int i = 0; i < np; i++) forward(m, kv, ids[i], i, logits);
     float ent = logit_entropy(logits, m->vocab, 1.0f);
     free(logits); kv_free(kv);
@@ -2523,7 +2630,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     char ctx[8704], frag[2048];
     float ent_sum = 0, shuf_sum = 0, kv_delta_sum = 0, kv_floor_sum = 0, kv_infl_sum = 0;
     int kv_n = 0;
-    float *cent = out_disso ? (float*)calloc((size_t)n_cells * m->embed, sizeof(float)) : NULL;  /* per-cell fragment centroids → D_R */
+    float *cent = out_disso ? (float*)xzalloc((size_t)n_cells * m->embed, sizeof(float)) : NULL;  /* per-cell fragment centroids → D_R */
     char cur_frag[8][1024];   /* this round's per-cell fragments → cached to g_round_frag for next round's leap */
     kv_cache *prev_kv = NULL; int prev_len = 0, prev_cell_owned = 0;   /* cross-cell: the prior cell's KV, attended by the next cell */
     kv_cache *cell_kv[8] = {0}; int cell_klen[8] = {0};
@@ -2850,7 +2957,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
             }
 
             if (frag_question_count(qfrag) > 0 && qn > 0) {
-                float *qcent = (float*)calloc(m->embed, sizeof(float));
+                float *qcent = (float*)xzalloc(m->embed, sizeof(float));
                 if (qcent) {
                     for (int i = 0; i < qn; i++) if (qids[i] >= 0 && qids[i] < m->vocab) {
                         const float *e = m->tok_emb + (long)qids[i] * m->embed;
@@ -2889,7 +2996,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
     if (flog) fprintf(flog, "- timing base_ms=%.0f base_gen=%d base_retry=%d base_probe=%d base_rescue=%d base_fail=%d qloop_ms=%.0f qloop_gen=%d qloop_retry=%d\n", base_ms, base_gen, base_retry, base_probe, base_rescue, base_fail, qloop_ms, qloop_gen, qloop_retry);
     if (g_user_q && *g_user_q && g_qloop && verbose && out_disso && cent && g_xcell > 0) {
         int qids_prompt[512], qnprompt = bpe_encode(tok, g_user_q, qids_prompt, 512);
-        float *qcent = (float*)calloc(m->embed, sizeof(float));
+        float *qcent = (float*)xzalloc(m->embed, sizeof(float));
         int tcell = -1; float best = -1.0f;
         if (qcent && qnprompt > 0) {
             for (int i = 0; i < qnprompt; i++) if (qids_prompt[i] >= 0 && qids_prompt[i] < m->vocab) {
@@ -3006,7 +3113,7 @@ static float run_round(model_t *m, bpe_tokenizer *tok, const char *prompt, const
         *out_disso = dn ? (float)(dsum / dn) : 0.0f;
         if (g_life_on) {   /* δ-life fitness = sqrt(theme_n·distinct_n) — an INTERPRETIVE heuristic (calibrated magic constants),
                             * NOT a measurement of the floor/Δ_R/D_R kind. Selection pressure, not a claim. → g_nextfit, committed in pop_tick */
-            float *F = (float*)calloc(m->embed, sizeof(float));
+            float *F = (float*)xzalloc(m->embed, sizeof(float));
             for (int a = 0; a < n_cells; a++) { const float *ca = cent + (size_t)a*m->embed; for (int d = 0; d < m->embed; d++) F[d] += ca[d]; }
             if (n_cells) for (int d = 0; d < m->embed; d++) F[d] /= n_cells;
             for (int a = 0; a < n_cells && a < POP_MAX; a++) {
@@ -3053,7 +3160,7 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
 
     /* FLOOR: two independent round-0 choruses on the SAME (prompt-only) context, different seeds. Their
      * histogram distance is the sampling-noise floor d_R cannot beat — the attractor target, not zero. */
-    int *hA = (int*)calloc(vocab, sizeof(int)), *hB = (int*)calloc(vocab, sizeof(int));
+    int *hA = (int*)xzalloc(vocab, sizeof(int)), *hB = (int*)xzalloc(vocab, sizeof(int));
     field_reset(m->embed, alpha > 0, alpha);
     run_round(m, tok, prompt, NULL, n_cells, nfrag, eos, 7u,   0, -1, hA, NULL, 0, NULL, NULL, NULL, NULL, NULL, NULL);
     field_reset(m->embed, alpha > 0, alpha);
@@ -3067,7 +3174,7 @@ static void field_chorus(model_t *m, bpe_tokenizer *tok, const char *prompt, int
     field_reset(m->embed, alpha > 0, alpha);
     g_leap_flips = g_leap_total = 0;
     char prev_chorus[4096]; prev_chorus[0] = 0;
-    int *hist_prev = (int*)calloc(vocab, sizeof(int)), *hist_cur = (int*)calloc(vocab, sizeof(int));
+    int *hist_prev = (int*)xzalloc(vocab, sizeof(int)), *hist_cur = (int*)xzalloc(vocab, sizeof(int));
     for (int r = 0; r < n_rounds; r++) {
         for (int i = 0; i < vocab; i++) hist_cur[i] = 0;
         printf("\n  --- round %d/%d ---", r + 1, n_rounds);
@@ -3127,7 +3234,7 @@ static void field_repl(model_t *m, bpe_tokenizer *tok, int eos, int n_cells, int
     load_repl_prompt_env();
 
     int interactive = isatty(STDIN_FILENO);
-    int *hist = (int*)calloc(m->vocab, sizeof(int));
+    int *hist = (int*)xzalloc(m->vocab, sizeof(int));
     char line[2048], trajectory[4096], prompt[8192], chorus[4096];
     trajectory[0] = 0;
 
@@ -3198,7 +3305,7 @@ static void field_life(model_t *m, bpe_tokenizer *tok, const char *prompt, int n
     FILE *flog = fopen("FIELDLOG.md", "a");
     if (flog) { time_t now = time(NULL); fprintf(flog, "\n## %.24s — δ-life \"%s\" (%d ticks)\n", ctime(&now), prompt, n_ticks); }
     printf("\n=== δ-life: Game of Life over ONE nanoArianna — \"%s\" (%d ticks, the population breathes) ===\n", prompt, n_ticks);
-    int vocab = m->vocab; int *hist = (int*)calloc(vocab, sizeof(int));
+    int vocab = m->vocab; int *hist = (int*)xzalloc(vocab, sizeof(int));
     char this_chorus[4096];
     for (int t = 0; t < n_ticks && g_pop_n > 0; t++) {
         for (int i = 0; i < vocab; i++) hist[i] = 0;
@@ -3271,6 +3378,8 @@ int main(int argc, char **argv) {
     }
     const char *prompt = argc > 2 ? argv[2] : "What is resonance?";
     int max_tokens = argc > 3 ? atoi(argv[3]) : 48;
+    if (max_tokens < 1) max_tokens = 1;
+    if (max_tokens > 510) max_tokens = 510;
     float temp = argc > 4 ? (float)atof(argv[4]) : 0.8f;
     g_direct_top_p = argc > 5 ? clamp_float((float)atof(argv[5]), 0.05f, 1.00f) : env_float_clamped("A2A_TOP_P", 1.00f, 0.05f, 1.00f);
     g_direct_rep = argc > 6 ? clamp_float((float)atof(argv[6]), 1.00f, 5.00f) : env_float_clamped("A2A_REP", 1.00f, 1.00f, 5.00f);
@@ -3280,6 +3389,11 @@ int main(int argc, char **argv) {
     gguf_file *gf = gguf_open(argv[1]); if (!gf) return 1;
     model_t *m = model_load(gf); if (!m) return 1;
     bpe_tokenizer *tok = bpe_load(argv[1]); if (!tok) { fprintf(stderr, "bpe_load failed\n"); return 1; }
+    if (bpe_n_vocab(tok) > m->vocab) {
+        fprintf(stderr, "chorus: tokenizer vocab %d > embedding vocab %d — token ids would index tok_emb out of bounds\n",
+                bpe_n_vocab(tok), m->vocab);
+        return 1;
+    }
     int eos = -1; const gguf_kv *e = gguf_get_kv(gf, "tokenizer.ggml.eos_token_id"); if (e) eos = (int)e->val.u32;
     const gguf_kv *b = gguf_get_kv(gf, "tokenizer.ggml.bos_token_id"); if (b) tok->bos_id = (int)b->val.u32;
     printf("loaded in %.0f ms (vocab=%d eos=%d) -- arianna.q heart, single file, no -lnotorch\n", now_ms() - t0, bpe_n_vocab(tok), eos);
@@ -3344,7 +3458,7 @@ int main(int argc, char **argv) {
 
     int max_seq = 512;
     kv_cache *kv = kv_new(m->n_layers, max_seq, m->kv_dim);
-    float *logits = calloc(m->vocab, sizeof(float));
+    float *logits = xzalloc(m->vocab, sizeof(float));
     int ids[512]; int n = bpe_encode_prompt(tok, prompt, ids, max_seq - max_tokens - 1);
     printf("\nprompt: \"%s\" (%d tokens, temp=%.2f, top_p=%.2f, rep=%.2f)\n---\n%s",
            prompt, n, temp, g_direct_top_p, g_direct_rep, prompt); fflush(stdout);
